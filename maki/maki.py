@@ -10,6 +10,16 @@ class Maki:
 
     @classmethod
     def __init__(self, url: str, port: str, model: str, temperature=0):
+
+        """ Initialize the Maki object 
+
+        Args:
+            url: the Ollama url
+            port: the Ollama port
+            model: the model to use
+            temperature: the LLM temperature 
+        """
+
         self.url = url
         self.port = port
         self.model = model
@@ -17,12 +27,19 @@ class Maki:
 
     @classmethod
     def request(self, prompt: str) -> str:
+        """ Send the request to the LLM
+
+        Args:
+            prompt: user prompt
+
+        returns a string containing the payload
+        """
         url = Utils.compose_url(self.url, self.port)
         result = Connector.simple(url, self.compose_data(prompt))
         return result
     
     @classmethod
-    def compose_data(self, prompt:str) -> str:
+    def _compose_data(self, prompt:str) -> str:
         OLLAMA_PAYLOAD["model"] = self.get_model()
         OLLAMA_PAYLOAD["prompt"] = prompt
 
@@ -32,9 +49,9 @@ class Maki:
         return OLLAMA_PAYLOAD
 
     @classmethod
-    def get_model(self)->str:
+    def _get_model(self)->str:
         return self.model
     
     @classmethod
-    def get_temperature(self)->int:
+    def _get_temperature(self)->int:
         return self.teperature
