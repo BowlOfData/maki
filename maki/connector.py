@@ -10,3 +10,9 @@ class Connector:
         jsonify = Utils.jsonify(response.text)
         return jsonify["response"]
     
+    @classmethod
+    def version(self, url: str)-> dict:
+        response = requests.post(url)
+        #jsonify = Utils.jsonify(response.text)
+        return response.text
+    
