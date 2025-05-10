@@ -1,0 +1,1 @@
+GENERIC_LLAMA_URL = "{domain}:{port}/api/generate"

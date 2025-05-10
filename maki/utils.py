@@ -1,5 +1,11 @@
+import json
+from .urls import GENERIC_LLAMA_URL
+
 class Utils:
 
     def compose_url(url: str, port: str) -> str:
 
-        return "url:port".format(url=url,port=port)
+        return GENERIC_LLAMA_URL.format(domain=url,port=port)
+    
+    def jsonify(data)-> json:
+        return json.loads(data)
