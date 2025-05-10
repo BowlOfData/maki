@@ -1,10 +1,12 @@
 import requests
 
-from . import utils
+from .utils import Utils
 
 class Connector:
 
-    def simple(url: str, data: dict)-> dict:
-        response = requests.post(url, json = data)
-        jsonify = utils.Utils.jsonify(response.text)
+    @classmethod
+    def simple(self, url: str, prompt: dict)-> dict:
+        response = requests.post(url, json = prompt)
+        jsonify = Utils.jsonify(response.text)
         return jsonify["response"]
+    
