@@ -1,7 +1,3 @@
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
-
 from maki.utils import Utils
 from maki.connector import Connector
 from maki.llm_objects.ollama_payload import OLLAMA_PAYLOAD

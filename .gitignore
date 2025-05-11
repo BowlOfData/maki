@@ -172,3 +172,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+maki/examples/.DS_Store
+.DS_Store
