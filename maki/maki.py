@@ -32,7 +32,8 @@ class Maki:
         returns a string containing the payload
         """
         url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
-        result = Connector.simple(url, self._compose_data(prompt))
+        data = self._compose_data(prompt)
+        result = Connector.simple(url, data)
         return result
     
     @classmethod
@@ -48,14 +49,28 @@ class Maki:
         return result
 
     @classmethod
-    def _compose_data(self, prompt:str) -> str:
+    def _compose_data(self, prompt:str, imgs=None) -> str:
         OLLAMA_PAYLOAD["model"] = self._get_model()
         OLLAMA_PAYLOAD["prompt"] = prompt
 
         if(self._get_temperature()):
             OLLAMA_PAYLOAD["options"] = {"temperature":self._get_temperature()}
+
+        if(imgs):
+            OLLAMA_PAYLOAD["images"] = imgs
         
         return OLLAMA_PAYLOAD
+    
+    def request_with_images(self, prompt: str, img:str)-> str:
+        url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
+        converted_imgs = Utils.convert64(img)
+        imgs = []
+        imgs.append(converted_imgs.decode("utf-8"))
+        data = self._compose_data(prompt, imgs=imgs)
+        result = Connector.simple(url, data)
+        return result
+        
+        return result
 
     @classmethod
     def _get_model(self)->str:
