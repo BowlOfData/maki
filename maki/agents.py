@@ -85,7 +85,7 @@ class AgentManager:
         self.agents: Dict[str, Agent] = {}
         self.task_queue: List[Dict] = []
 
-    def add_agent(self, name: str, role: str = "", instructions: str = "") -> Agent:
+    def add_agent(self, name: str, role: str = "", instructions: str = "", maki_instance: Maki = None) -> Agent:
         """
         Add a new agent to the manager
 
@@ -93,11 +93,15 @@ class AgentManager:
             name: Unique identifier for the agent
             role: The role of the agent
             instructions: Specific instructions for this agent
+            maki_instance: Optional Maki instance to use for this agent.
+                          If not provided, uses the manager's default Maki instance.
 
         Returns:
             The created Agent instance
         """
-        agent = Agent(name, self.maki, role, instructions)
+        # Use the provided maki_instance or fall back to the manager's default
+        maki_to_use = maki_instance if maki_instance is not None else self.maki
+        agent = Agent(name, maki_to_use, role, instructions)
         self.agents[name] = agent
         return agent
 
