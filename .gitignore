@@ -172,10 +172,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+.vscode/
 maki/examples/.DS_Store
 .DS_Store
 TEST_SUMMARY.md
 IMPLEMENTATION_SUMMARY.md
+REASONING_ANALYSIS.md
 demo_implementation.py
 final_test.py
 test_different_llms.py
