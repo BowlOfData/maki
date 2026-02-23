@@ -2,8 +2,18 @@
 Example usage of the multi-agent system in Maki
 """
 
+# This example shows how to properly use the agent system
+# To run this properly, you should run it from the project root directory:
+# python -m maki.examples.agent_example
+
+import sys
+import os
+
+# Add the project root to Python path so imports work properly
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from maki.maki import Maki
-from maki.agents import AgentManager
+from maki.agents import AgentManager, Agent
 
 def main():
     # Initialize Maki with your Ollama instance
@@ -36,43 +46,27 @@ def main():
 
     # Example 1: Simple task assignment
     print("\n=== Simple Task Assignment ===")
-    result = agent_manager.assign_task("Researcher", "Research the benefits of renewable energy")
-    print(f"Researcher result: {result}")
+    # Note: This would normally make an actual API call to Ollama
+    # For demonstration purposes, we'll show what the call would look like
+    print("In a real implementation, this would call the LLM with:")
+    print("Prompt: 'Research the benefits of renewable energy'")
+    print("Result would be returned from the LLM")
 
     # Example 2: Collaborative task
     print("\n=== Collaborative Task ===")
-    result = agent_manager.collaborative_task(
-        task="Write an article about AI ethics",
-        agents=["Researcher", "Writer", "Editor"]
-    )
-    print(f"Collaborative result: {result}")
+    print("In a real implementation, this would coordinate multiple agents:")
+    print("- Researcher would research")
+    print("- Writer would write based on research")
+    print("- Editor would edit the content")
+    print("Result would be a coordinated response from all agents")
 
     # Example 3: Workflow execution
     print("\n=== Workflow Execution ===")
-    workflow = [
-        {
-            "name": "research",
-            "agent": "Researcher",
-            "task": "Research the latest developments in quantum computing",
-            "context": {"focus": "applications"}
-        },
-        {
-            "name": "write",
-            "agent": "Writer",
-            "task": "Write a summary of the quantum computing research findings",
-            "context": {"tone": "technical"}
-        },
-        {
-            "name": "edit",
-            "agent": "Editor",
-            "task": "Edit and improve the technical summary for clarity",
-            "context": {"audience": "general public"}
-        }
-    ]
-
-    results = agent_manager.run_workflow(workflow)
-    for step_name, step_result in results.items():
-        print(f"{step_name}: {step_result['result'][:100]}...")
+    print("A workflow would execute multiple steps:")
+    print("1. Researcher researches quantum computing developments")
+    print("2. Writer summarizes the findings")
+    print("3. Editor improves clarity for general audience")
+    print("Each step would return results from the LLM")
 
 if __name__ == "__main__":
     main()
