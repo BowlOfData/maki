@@ -5,7 +5,7 @@ from .utils import Utils
 class Connector:
 
     @staticmethod
-    def simple(url: str, prompt: dict)-> dict:
+    def simple(url: str, prompt: dict) -> str:
         """Send a simple request to the Ollama API
 
         Args:
@@ -13,7 +13,7 @@ class Connector:
             prompt: the data to send
 
         Returns:
-            The parsed response from the API
+            The LLM response text as a string
 
         Raises:
             ValueError: If url or prompt is invalid
@@ -45,7 +45,7 @@ class Connector:
             raise Exception(f"API response structure error: {str(e)}")
 
     @staticmethod
-    def version(url: str)-> dict:
+    def version(url: str) -> str:
         """Get version information from the Ollama API
 
         Args:
