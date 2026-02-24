@@ -3,12 +3,12 @@ from setuptools import setup, find_packages
 setup(
     name="maki",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Bowl of Data",
+    author_email="bowlofdata@gmail.com",
     description="A Python framework for multi-agent LLM interactions",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/maki",
+    url="https://github.com/bowlofdata/maki",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",

@@ -1,10 +1,16 @@
+from typing import Union
 from .utils import Utils
 from .connector import Connector
 from .urls import Actions
 import re
+import logging
+from .logging_config import configure_logging
+
+# Configure logging when module is imported
+configure_logging()
 
 class Maki:
-    def __init__(self, url: str, port: str, model: str, temperature=0):
+    def __init__(self, url: str, port: Union[str, int], model: str, temperature=0):
         """ Initialize the Maki object
 
         Args:
@@ -16,16 +22,22 @@ class Maki:
         Raises:
             ValueError: If any parameter is invalid
         """
+        # Setup logging
+        self.logger = logging.getLogger(__name__)
+
         # Validate URL
         if not isinstance(url, str) or not url.strip():
             raise ValueError("URL must be a non-empty string")
 
         # Validate port
-        if not isinstance(port, str):
-            raise ValueError("Port must be a string")
+        if not isinstance(port, (str, int)):
+            raise ValueError("Port must be a string or integer")
 
-        if not re.match(r'^[0-9]+$', port):
+        if isinstance(port, str) and not re.match(r'^[0-9]+$', port):
             raise ValueError("Port must be a valid port number (numeric string)")
+
+        if isinstance(port, int):
+            port = str(port)
 
         # Validate model
         if not isinstance(model, str) or not model.strip():
@@ -43,6 +55,8 @@ class Maki:
         self.model = model.strip()
         self.temperature = float(temperature)
 
+        self.logger.info(f"Maki initialized with URL: {self.url}, Port: {self.port}, Model: {self.model}")
+
     def request(self, prompt: str) -> str:
         """ Send the request to the LLM
 
@@ -59,10 +73,16 @@ class Maki:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be a non-empty string")
 
+        self.logger.debug(f"Sending request with prompt: {prompt[:100]}...")
         url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
         data = self._compose_data(prompt)
-        result = Connector.simple(url, data)
-        return result
+        try:
+            result = Connector.simple(url, data)
+            self.logger.debug("Request completed successfully")
+            return result
+        except Exception as e:
+            self.logger.error(f"Request failed: {str(e)}")
+            raise
 
     def version(self) -> str:
         """ Returns the LLM version
@@ -73,9 +93,15 @@ class Maki:
         Raises:
             Exception: For HTTP request errors
         """
+        self.logger.debug("Fetching version information")
         url = Utils.compose_url(self.url, self.port, Actions.VERSION)
-        result = Connector.version(url)
-        return result
+        try:
+            result = Connector.version(url)
+            self.logger.debug("Version information retrieved successfully")
+            return result
+        except Exception as e:
+            self.logger.error(f"Failed to retrieve version: {str(e)}")
+            raise
 
     def _compose_data(self, prompt:str, imgs=None) -> dict:
         """Compose the data payload for the LLM request
@@ -93,6 +119,7 @@ class Maki:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be a non-empty string")
 
+        self.logger.debug("Composing data payload")
         # Create a new payload dict for each request (thread-safe)
         payload = {
             "model": self._get_model(),
@@ -109,6 +136,7 @@ class Maki:
                 raise ValueError("Images must be provided as a list")
             payload["images"] = imgs
 
+        self.logger.debug("Data payload composed successfully")
         return payload
 
     def request_with_images(self, prompt: str, img:str)-> str:
@@ -131,13 +159,18 @@ class Maki:
         if not isinstance(img, str) or not img.strip():
             raise ValueError("Image path must be a non-empty string")
 
+        self.logger.debug(f"Sending request with image: {img}")
         url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
-        converted_imgs = Utils.convert64(img)
-        imgs = []
-        imgs.append(converted_imgs.decode("utf-8"))
-        data = self._compose_data(prompt, imgs=imgs)
-        result = Connector.simple(url, data)
-        return result
+        try:
+            converted_imgs = Utils.convert64(img)
+            imgs = [converted_imgs.decode("utf-8")]
+            data = self._compose_data(prompt, imgs=imgs)
+            result = Connector.simple(url, data)
+            self.logger.debug("Request with image completed successfully")
+            return result
+        except Exception as e:
+            self.logger.error(f"Request with image failed: {str(e)}")
+            raise
 
     def _get_model(self)->str:
         return self.model

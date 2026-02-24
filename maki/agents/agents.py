@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional
 from maki.maki import Maki
 import json
 import time
+import logging
 
 
 class Agent:
@@ -29,6 +30,8 @@ class Agent:
             ValueError: If name is not a valid string
             TypeError: If maki_instance is not a Maki instance
         """
+        logger = logging.getLogger(__name__)
+
         if not isinstance(name, str) or not name.strip():
             raise ValueError("Agent name must be a non-empty string")
 
@@ -49,6 +52,8 @@ class Agent:
         self.reasoning_history = []
         self.task_history = []
 
+        logger.info(f"Agent '{self.name}' initialized with role '{self.role}'")
+
     def __repr__(self):
         return f"Agent(name='{self.name}', role='{self.role}')"
 
@@ -67,6 +72,8 @@ class Agent:
             ValueError: If task is not a valid string
             Exception: For HTTP request or other errors
         """
+        logger = logging.getLogger(__name__)
+
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
@@ -83,9 +90,12 @@ class Agent:
         """
 
         try:
+            logger.debug(f"Executing task '{task}' for agent '{self.name}'")
             result = self.maki.request(prompt)
+            logger.debug(f"Task '{task}' completed successfully for agent '{self.name}'")
         except Exception as e:
             # Re-raise with more context
+            logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}")
             raise Exception(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}")
 
         # Record the task execution in history
@@ -267,9 +277,13 @@ class AgentManager:
         Args:
             maki_instance: Maki instance to use for LLM interactions
         """
+        logger = logging.getLogger(__name__)
+
         self.maki = maki_instance
         self.agents: Dict[str, Agent] = {}
         self.task_queue: List[Dict] = []
+
+        logger.info("AgentManager initialized")
 
     def add_agent(self, name: str, role: str = "", instructions: str = "", maki_instance: Maki = None) -> Agent:
         """
@@ -289,6 +303,8 @@ class AgentManager:
             ValueError: If name is not a valid string
             TypeError: If maki_instance is not a Maki instance
         """
+        logger = logging.getLogger(__name__)
+
         if not isinstance(name, str) or not name.strip():
             raise ValueError("Agent name must be a non-empty string")
 
@@ -307,6 +323,7 @@ class AgentManager:
 
         agent = Agent(name, maki_to_use, role, instructions)
         self.agents[name] = agent
+        logger.info(f"Added agent '{name}' with role '{role}'")
         return agent
 
     def get_agent(self, name: str) -> Optional[Agent]:
