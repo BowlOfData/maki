@@ -1,6 +1,5 @@
 from .utils import Utils
 from .connector import Connector
-from .llm_objects.ollama_payload import OLLAMA_PAYLOAD
 from .urls import Actions
 import re
 
@@ -78,7 +77,7 @@ class Maki:
         result = Connector.version(url)
         return result
 
-    def _compose_data(self, prompt:str, imgs=None) -> str:
+    def _compose_data(self, prompt:str, imgs=None) -> dict:
         """Compose the data payload for the LLM request
 
         Args:
@@ -86,7 +85,7 @@ class Maki:
             imgs: Optional list of image data
 
         Returns:
-            The composed data payload
+            The composed data payload as a dictionary
 
         Raises:
             ValueError: If prompt is not valid
@@ -94,19 +93,23 @@ class Maki:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be a non-empty string")
 
-        OLLAMA_PAYLOAD["model"] = self._get_model()
-        OLLAMA_PAYLOAD["prompt"] = prompt.strip()
+        # Create a new payload dict for each request (thread-safe)
+        payload = {
+            "model": self._get_model(),
+            "prompt": prompt.strip(),
+            "stream": False
+        }
 
-        if(self._get_temperature() is not None):
-            OLLAMA_PAYLOAD["options"] = {"temperature":self._get_temperature()}
+        if self._get_temperature() is not None:
+            payload["options"] = {"temperature": self._get_temperature()}
 
-        if(imgs):
+        if imgs:
             # Validate that imgs is a list
             if not isinstance(imgs, list):
                 raise ValueError("Images must be provided as a list")
-            OLLAMA_PAYLOAD["images"] = imgs
+            payload["images"] = imgs
 
-        return OLLAMA_PAYLOAD
+        return payload
 
     def request_with_images(self, prompt: str, img:str)-> str:
         """ Send a request with image input to the LLM
