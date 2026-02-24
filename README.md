@@ -1,4 +1,4 @@
-![Maki Logo](img/logo.png)
+![Maki Logo](img/logo.png#center){:style="width:50%"}
 
 # Maki
 
