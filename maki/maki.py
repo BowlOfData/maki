@@ -1,10 +1,10 @@
 from typing import Union
-from .utils import Utils
-from .connector import Connector
-from .urls import Actions
+from utils import Utils
+from connector import Connector
+from urls import Actions
 import re
 import logging
-from .logging_config import configure_logging
+from logging_config import configure_logging
 
 # Configure logging when module is imported
 configure_logging()
@@ -70,9 +70,9 @@ class Maki:
             ValueError: If prompt is not a valid string
             Exception: For HTTP request or JSON parsing errors
         """
+
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be a non-empty string")
-
         self.logger.debug(f"Sending request with prompt: {prompt[:100]}...")
         url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
         data = self._compose_data(prompt)

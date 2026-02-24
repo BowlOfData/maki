@@ -13,12 +13,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maki import Maki
-from maki.agents import AgentManager, Agent
+from agents import AgentManager, Agent
 
 def main():
     # Initialize Maki with your Ollama instance
     # Replace with your actual Ollama URL and port
-    maki = Maki(url="localhost", port="11434", model="llama3", temperature=0.7)
+    maki = Maki(url="http://localhost", port="11434", model="qwen3-coder:30b", temperature=0.7)
 
     # Create an agent manager
     agent_manager = AgentManager(maki)

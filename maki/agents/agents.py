@@ -7,7 +7,7 @@ coordination, delegation, and collaboration.
 """
 
 from typing import Dict, List, Any, Optional
-from maki.maki import Maki
+from maki import Maki
 import json
 import time
 import logging

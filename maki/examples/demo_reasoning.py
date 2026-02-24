@@ -7,10 +7,10 @@ import sys
 import os
 
 # Add the project root to Python path so imports work properly
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maki import Maki
-from maki.agents import AgentManager
+from agents import AgentManager
 
 def main():
     print("=== Maki Framework - Enhanced Reasoning Capabilities Demo ===\n")

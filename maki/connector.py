@@ -1,7 +1,7 @@
 import requests
 import json
 import logging
-from .utils import Utils
+from utils import Utils
 
 class Connector:
 
@@ -24,6 +24,8 @@ class Connector:
         """
         logger = logging.getLogger(__name__)
 
+        logger.debug(f"Preparing to send simple request to URL: {url}")
+
         if not isinstance(url, str) or not url.strip():
             raise ValueError("URL must be a non-empty string")
 
@@ -34,7 +36,7 @@ class Connector:
         logger.debug(f"Request data: {prompt}")
 
         try:
-            response = requests.post(url, json=prompt, timeout=30)
+            response = requests.post(url, json=prompt, timeout=180)
             response.raise_for_status()  # Raise an exception for bad status codes
             logger.debug("HTTP request completed successfully")
             jsonify = Utils.jsonify(response.text)

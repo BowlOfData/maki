@@ -1,12 +1,14 @@
 
+import os
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maki import Maki
 
 #ma = Maki("http://localhost", "11434", "gemma3:27b", temperature=0)
 ma = Maki("http://localhost", "11434", "qwen3-coder:30b", temperature=0)
+
 
 result = ma.request("test")
 
