@@ -1,6 +1,6 @@
-# Maki
-
 ![Maki Logo](img/logo.png)
+
+# Maki
 
 Maki is a Python framework for multi-agent LLM interactions using Ollama.
 
