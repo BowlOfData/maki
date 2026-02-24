@@ -29,7 +29,11 @@ class Utils:
         if not isinstance(action, str) or not action.strip():
             raise ValueError("Action must be a non-empty string")
 
-        return GENERIC_LLAMA_URL.format(domain=url.strip(), port=port, action=action.strip())
+        composed = GENERIC_LLAMA_URL.format(domain=url.strip(), port=port, action=action.strip())
+        # Add http:// protocol if not present
+        if not composed.startswith(('http://', 'https://')):
+            composed = f"http://{composed}"
+        return composed
 
     @staticmethod
     def jsonify(data)-> json:

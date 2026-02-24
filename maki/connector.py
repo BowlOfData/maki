@@ -63,7 +63,7 @@ class Connector:
             raise ValueError("URL must be a non-empty string")
 
         try:
-            response = requests.post(url, timeout=30)
+            response = requests.get(url, timeout=30)
             response.raise_for_status()
             return response.text
         except requests.exceptions.Timeout:

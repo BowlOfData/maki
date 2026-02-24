@@ -4,4 +4,4 @@ class Actions(StrEnum):
     GENERATE = 'generate'
     VERSION = 'version'
 
-GENERIC_LLAMA_URL = "{domain}:{port}/api/{action}"
+GENERIC_LLAMA_URL = "http://{domain}:{port}/api/{action}"

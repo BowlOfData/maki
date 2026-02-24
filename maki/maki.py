@@ -142,5 +142,5 @@ class Maki:
     def _get_model(self)->str:
         return self.model
 
-    def _get_temperature(self)->int:
+    def _get_temperature(self) -> float:
         return self.temperature
