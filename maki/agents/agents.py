@@ -157,17 +157,54 @@ class Agent:
         return result
 
     def decompose_task(self, task: str, max_subtasks: int = 5) -> List[Dict]:
-        """Decompose a complex task into subtasks"""
+        """Decompose a complex task into subtasks using LLM.
+
+        Args:
+            task: The complex task to decompose
+            max_subtasks: Maximum number of subtasks to create
+
+        Returns:
+            A list of dictionaries containing subtask details.
+            Each dictionary has keys: 'description', 'resources', 'expected_outcome'
+
+        Raises:
+            ValueError: If task is not a valid string
+            Exception: For LLM request or parsing errors
+        """
+        if not isinstance(task, str) or not task.strip():
+            raise ValueError("Task must be a non-empty string")
+
         prompt = f"""
-        Decompose the following task into {max_subtasks} or fewer subtasks:
+        Decompose the following task into {max_subtasks} or fewer subtasks.
+        Return your response as a JSON array of objects.
+
         Task: {task}
 
-        For each subtask, provide:
-        - Subtask description
-        - Required resources
-        - Expected outcome
+        For each subtask, provide an object with these exact keys:
+        - "description": A clear description of the subtask
+        - "resources": Required resources (tools, data, skills needed)
+        - "expected_outcome": What successful completion looks like
+
+        Return ONLY the JSON array, no additional text.
+        Example format:
+        [
+            {{
+                "description": "Research existing solutions",
+                "resources": "Internet access, documentation",
+                "expected_outcome": "List of 3-5 comparable solutions with pros/cons"
+            }},
+            {{
+                "description": "Design architecture",
+                "resources": "Whiteboard, architecture patterns knowledge",
+                "expected_outcome": "System diagram and component specifications"
+            }}
+        ]
         """
-        result = self.maki.request(prompt)
+
+        try:
+            result = self.maki.request(prompt)
+        except Exception as e:
+            raise Exception(f"Failed to get task decomposition from LLM: {str(e)}")
 
         # Record the decomposition process
         self.reasoning_history.append({
@@ -176,9 +213,48 @@ class Agent:
             'timestamp': time.time()
         })
 
-        # Parse the result (this is a simplified approach - in practice,
-        # you'd want more robust parsing)
-        return [f"Subtask {i+1}: {task}" for i in range(min(max_subtasks, 3))]  # Simplified for now
+        # Parse the JSON response
+        try:
+            # Try to extract JSON if it's wrapped in markdown code blocks
+            json_str = result.strip()
+            if json_str.startswith('```json'):
+                json_str = json_str[7:]
+            elif json_str.startswith('```'):
+                json_str = json_str[3:]
+            if json_str.endswith('```'):
+                json_str = json_str[:-3]
+            json_str = json_str.strip()
+
+            subtasks = json.loads(json_str)
+
+            # Validate that it's a list
+            if not isinstance(subtasks, list):
+                raise ValueError("LLM response is not a JSON array")
+
+            # Validate and normalize each subtask
+            validated_subtasks = []
+            for i, subtask in enumerate(subtasks[:max_subtasks]):
+                if not isinstance(subtask, dict):
+                    subtask = {"description": str(subtask)}
+
+                validated_subtasks.append({
+                    "description": subtask.get("description", f"Subtask {i+1}"),
+                    "resources": subtask.get("resources", "Not specified"),
+                    "expected_outcome": subtask.get("expected_outcome", "Not specified")
+                })
+
+            return validated_subtasks
+
+        except json.JSONDecodeError as e:
+            # If JSON parsing fails, return a fallback with the raw response
+            return [{
+                "description": f"Task: {task}",
+                "resources": "See LLM response",
+                "expected_outcome": result[:200] + "..." if len(result) > 200 else result,
+                "parsing_error": f"Failed to parse LLM response as JSON: {str(e)}"
+            }]
+        except Exception as e:
+            raise Exception(f"Failed to parse task decomposition: {str(e)}")
 
 
 class AgentManager:
