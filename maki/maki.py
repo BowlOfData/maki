@@ -1,7 +1,8 @@
-from maki.utils import Utils
-from maki.connector import Connector
-from maki.llm_objects.ollama_payload import OLLAMA_PAYLOAD
-from maki.urls import Actions
+from .utils import Utils
+from .connector import Connector
+from .llm_objects.ollama_payload import OLLAMA_PAYLOAD
+from .urls import Actions
+import re
 
 class Maki:
     def __init__(self, url: str, port: str, model: str, temperature=0):
@@ -12,11 +13,36 @@ class Maki:
             port: the Ollama port
             model: the model to use
             temperature: the LLM temperature
+
+        Raises:
+            ValueError: If any parameter is invalid
         """
-        self.url = url
+        # Validate URL
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("URL must be a non-empty string")
+
+        # Validate port
+        if not isinstance(port, str):
+            raise ValueError("Port must be a string")
+
+        if not re.match(r'^[0-9]+$', port):
+            raise ValueError("Port must be a valid port number (numeric string)")
+
+        # Validate model
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("Model must be a non-empty string")
+
+        # Validate temperature
+        if not isinstance(temperature, (int, float)):
+            raise ValueError("Temperature must be a number")
+
+        if temperature < 0 or temperature > 1:
+            raise ValueError("Temperature must be between 0 and 1")
+
+        self.url = url.strip()
         self.port = port
-        self.model = model
-        self.temperature = temperature
+        self.model = model.strip()
+        self.temperature = float(temperature)
 
     def request(self, prompt: str) -> str:
         """ Send the request to the LLM
@@ -24,8 +50,16 @@ class Maki:
         Args:
             prompt: user prompt
 
-        returns a string containing the payload
+        Returns:
+            A string containing the payload
+
+        Raises:
+            ValueError: If prompt is not a valid string
+            Exception: For HTTP request or JSON parsing errors
         """
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be a non-empty string")
+
         url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
         data = self._compose_data(prompt)
         result = Connector.simple(url, data)
@@ -34,20 +68,42 @@ class Maki:
     def version(self) -> str:
         """ Returns the LLM version
 
-        returns a string containing the version
+        Returns:
+            A string containing the version
+
+        Raises:
+            Exception: For HTTP request errors
         """
         url = Utils.compose_url(self.url, self.port, Actions.VERSION)
         result = Connector.version(url)
         return result
 
     def _compose_data(self, prompt:str, imgs=None) -> str:
-        OLLAMA_PAYLOAD["model"] = self._get_model()
-        OLLAMA_PAYLOAD["prompt"] = prompt
+        """Compose the data payload for the LLM request
 
-        if(self._get_temperature()):
+        Args:
+            prompt: The prompt to send
+            imgs: Optional list of image data
+
+        Returns:
+            The composed data payload
+
+        Raises:
+            ValueError: If prompt is not valid
+        """
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be a non-empty string")
+
+        OLLAMA_PAYLOAD["model"] = self._get_model()
+        OLLAMA_PAYLOAD["prompt"] = prompt.strip()
+
+        if(self._get_temperature() is not None):
             OLLAMA_PAYLOAD["options"] = {"temperature":self._get_temperature()}
 
         if(imgs):
+            # Validate that imgs is a list
+            if not isinstance(imgs, list):
+                raise ValueError("Images must be provided as a list")
             OLLAMA_PAYLOAD["images"] = imgs
 
         return OLLAMA_PAYLOAD
@@ -59,8 +115,19 @@ class Maki:
             prompt: user prompt
             img: path to image file
 
-        returns a string containing the response
+        Returns:
+            A string containing the response
+
+        Raises:
+            ValueError: If prompt or img is not valid
+            Exception: For HTTP request or file reading errors
         """
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be a non-empty string")
+
+        if not isinstance(img, str) or not img.strip():
+            raise ValueError("Image path must be a non-empty string")
+
         url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
         converted_imgs = Utils.convert64(img)
         imgs = []

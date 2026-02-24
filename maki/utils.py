@@ -16,8 +16,20 @@ class Utils:
 
         Returns:
             The complete URL string
+
+        Raises:
+            ValueError: If any parameter is invalid
         """
-        return GENERIC_LLAMA_URL.format(domain=url, port=port, action=action)
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("URL must be a non-empty string")
+
+        if not isinstance(port, str) or not port.strip():
+            raise ValueError("Port must be a non-empty string")
+
+        if not isinstance(action, str) or not action.strip():
+            raise ValueError("Action must be a non-empty string")
+
+        return GENERIC_LLAMA_URL.format(domain=url.strip(), port=port, action=action.strip())
 
     @staticmethod
     def jsonify(data)-> json:
@@ -28,8 +40,20 @@ class Utils:
 
         Returns:
             Parsed JSON object
+
+        Raises:
+            ValueError: If data is not a valid JSON string
         """
-        return json.loads(data)
+        if not isinstance(data, str):
+            raise ValueError("Data must be a string")
+
+        if not data.strip():
+            raise ValueError("Data cannot be empty")
+
+        try:
+            return json.loads(data)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON data: {str(e)}")
 
     @staticmethod
     def convert64(img: str)-> str:
@@ -42,14 +66,19 @@ class Utils:
             Base64 encoded string of the image
 
         Raises:
-            FileNotFoundError: If the image file doesn't exist
+            ValueError: If img is not a valid string or file doesn't exist
             Exception: For other file reading errors
         """
+        if not isinstance(img, str) or not img.strip():
+            raise ValueError("Image path must be a non-empty string")
+
         if not os.path.exists(img):
             raise FileNotFoundError(f"Image file not found: {img}")
 
-        result = ''
-        with open(img, "rb") as image_file:
-            result = base64.b64encode(image_file.read())
-
-        return result
+        try:
+            result = ''
+            with open(img, "rb") as image_file:
+                result = base64.b64encode(image_file.read())
+            return result
+        except Exception as e:
+            raise Exception(f"Error reading image file {img}: {str(e)}")
