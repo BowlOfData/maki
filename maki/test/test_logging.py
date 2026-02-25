@@ -8,7 +8,9 @@ import sys
 import os
 
 # Add the project root to Python path so imports work properly
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Note: This approach avoids sys.path manipulation by running from the project root
+# with python -m maki.test.test_logging
+# Or run from project root with: python -m maki.test.test_logging
 
 from maki import Maki
 

@@ -36,6 +36,10 @@ You can also use the Maki framework by copying the `maki` folder directly into y
    from maki.agents import AgentManager, Agent
    ```
 
+## Python Compatibility
+
+This framework is compatible with Python 3.7 and above. The code has been updated to remove all dependencies on Python 3.11+ features like `StrEnum`, ensuring compatibility with older Python versions.
+
 This approach allows you to use Maki without installing it as a package, which is useful for:
 - Embedding Maki directly in your project
 - Development and testing
