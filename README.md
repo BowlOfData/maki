@@ -17,9 +17,29 @@ Maki is a Python framework for multi-agent LLM interactions using Ollama.
 
 ## Installation
 
+### Option 1: Install with pip (recommended)
 ```bash
 pip install .
 ```
+
+### Option 2: Copy folder to your project
+You can also use the Maki framework by copying the `maki` folder directly into your project:
+
+1. Copy the entire `maki` folder from this repository to your project directory
+2. Make sure your project has the required dependencies:
+   ```bash
+   pip install requests
+   ```
+3. Import and use as normal:
+   ```python
+   from maki import Maki
+   from maki.agents import AgentManager, Agent
+   ```
+
+This approach allows you to use Maki without installing it as a package, which is useful for:
+- Embedding Maki directly in your project
+- Development and testing
+- Projects with restricted package installation
 
 ## Quick Start
 
