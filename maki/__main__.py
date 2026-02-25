@@ -27,6 +27,6 @@ setup_logging()
 
 # Import and expose the main classes
 from .maki import Maki
-from .agents.agents import Agent, AgentManager
+from .agents import Agent, AgentManager
 
 __all__ = ['Maki', 'Agent', 'AgentManager']

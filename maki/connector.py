@@ -1,7 +1,7 @@
 import requests
 import json
 import logging
-from utils import Utils
+from .utils import Utils
 
 class Connector:
 

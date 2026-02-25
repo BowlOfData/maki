@@ -1,10 +1,10 @@
 from typing import Union
-from utils import Utils
-from connector import Connector
-from urls import Actions
+from .utils import Utils
+from .connector import Connector
+from .urls import Actions
 import re
 import logging
-from logging_config import configure_logging
+from .logging_config import configure_logging
 
 # Configure logging when module is imported
 configure_logging()

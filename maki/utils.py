@@ -2,7 +2,7 @@ import json
 import base64
 import os
 import logging
-from urls import GENERIC_LLAMA_URL
+from .urls import GENERIC_LLAMA_URL
 
 class Utils:
 
