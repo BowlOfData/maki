@@ -80,19 +80,23 @@ These capabilities allow agents to handle more complex reasoning tasks and impro
 ```
 maki/
 ├── __init__.py
+├── __main__.py
 ├── maki.py
 ├── connector.py
 ├── utils.py
 ├── urls.py
-├── llm_objects/
-│   ├── __init__.py
-│   └── ollama_payload.py
+├── logging_config.py
 ├── agents/
 │   ├── __init__.py
 │   └── agents.py
-└── examples/
+├── plugins/
+│   └── __init__.py
+└── test/
     ├── __init__.py
-    └── agent_example.py
+    ├── test_maki_functionality.py
+    ├── test_agent_functionality.py
+    ├── test_error_handling.py
+    └── test_different_llms.py
 ```
 
 ## Examples

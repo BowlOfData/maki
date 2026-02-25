@@ -189,3 +189,6 @@ examples/demo_reasoning.py
 examples/verify_refactor.py
 examples/ollama_examples.py
 ANALISI_CRITICITA.md
+python_compliance_analysis.md
+python_compliance_fix_summary.md
+test_reorganization_summary.md

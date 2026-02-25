@@ -24,15 +24,12 @@ def configure_logging(log_level=logging.INFO, log_file_path=None):
     if log_file_path:
         # Create logs directory if it doesn't exist
         log_dir = os.path.dirname(log_file_path)
-        os.makedirs(log_dir, exist_ok=True)
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file_path),
-                logging.StreamHandler()
-            ]
-        )
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        file_handler = logging.FileHandler(log_file_path)
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logging.getLogger().addHandler(file_handler)
 
     # Set log level for requests and urllib3
     logging.getLogger('requests').setLevel(log_level)

@@ -6,10 +6,10 @@ from unittest.mock import patch, MagicMock
 import sys
 import os
 
-# Add the project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__) )))
+# Add the project root to Python path so imports work properly
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from maki.maki import Maki
+from maki import Maki
 from maki.connector import Connector
 from maki.utils import Utils
 from maki.agents import Agent, AgentManager
@@ -60,7 +60,7 @@ class TestErrorHandling(unittest.TestCase):
         """Test that Utils.compose_url validates parameters"""
         # Test valid call
         result = Utils.compose_url("localhost", "11434", "generate")
-        self.assertEqual(result, "localhost:11434/api/generate")
+        self.assertEqual(result, "http://localhost:11434/api/generate")
 
         # Test invalid parameters
         with self.assertRaises(ValueError):

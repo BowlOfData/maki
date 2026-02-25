@@ -4,7 +4,6 @@ from .connector import Connector
 from .urls import Actions
 import re
 import logging
-from .logging_config import configure_logging
 
 class Maki:
     def __init__(self, url: str, port: Union[str, int], model: str, temperature=0):
@@ -157,7 +156,7 @@ class Maki:
             raise ValueError("Image path must be a non-empty string")
 
         self.logger.debug(f"Sending request with image: {img}")
-        url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
+        url = Utils.compose_url(self.url, self.port, Actions.GENERATE.value)
         try:
             converted_imgs = Utils.convert64(img)
             imgs = [converted_imgs.decode("utf-8")]

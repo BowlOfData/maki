@@ -111,8 +111,8 @@ class TestMakiFunctionality(unittest.TestCase):
         # Import the Actions to get the correct format
         from maki.urls import Actions
 
-        result = Utils.compose_url(self.test_url, self.test_port, Actions.GENERATE)
-        expected = f"{self.test_url}:{self.test_port}/api/generate"
+        result = Utils.compose_url(self.test_url, self.test_port, Actions.GENERATE.value)
+        expected = f"http://{self.test_url}:{self.test_port}/api/generate"
         self.assertEqual(result, expected)
 
     def test_utils_jsonify(self):
