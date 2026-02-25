@@ -188,3 +188,4 @@ examples/demo_reasoning.py
 .gitignore
 examples/verify_refactor.py
 examples/ollama_examples.py
+ANALISI_CRITICITA.md

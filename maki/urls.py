@@ -1,6 +1,6 @@
-from enum import StrEnum
+from enum import Enum
 
-class Actions(StrEnum):
+class Actions(Enum):
     GENERATE = 'generate'
     VERSION = 'version'
 
