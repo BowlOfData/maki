@@ -71,7 +71,7 @@ class Maki:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be a non-empty string")
         self.logger.debug(f"Sending request with prompt: {prompt[:100]}...")
-        url = Utils.compose_url(self.url, self.port, Actions.GENERATE)
+        url = Utils.compose_url(self.url, self.port, Actions.GENERATE.value)
         data = self._compose_data(prompt)
         try:
             result = Connector.simple(url, data)
@@ -91,7 +91,7 @@ class Maki:
             Exception: For HTTP request errors
         """
         self.logger.debug("Fetching version information")
-        url = Utils.compose_url(self.url, self.port, Actions.VERSION)
+        url = Utils.compose_url(self.url, self.port, Actions.VERSION.value)
         try:
             result = Connector.version(url)
             self.logger.debug("Version information retrieved successfully")
