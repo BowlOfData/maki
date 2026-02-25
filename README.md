@@ -102,6 +102,35 @@ Run the example:
 python -m maki.examples.agent_example
 ```
 
+## Logging Configuration
+
+Starting from version 0.1.0, Maki no longer automatically configures logging when imported. This prevents unwanted side effects and conflicts with host application logging.
+
+To configure logging in your application, you need to explicitly call the `setup_logging()` function from `maki.logging_config`:
+
+```python
+from maki.logging_config import setup_logging
+import logging
+
+# Setup logging with default settings (StreamHandler only)
+setup_logging()
+
+# Or setup with custom settings
+setup_logging(log_level=logging.DEBUG, log_file_path="my_app.log")
+```
+
+If you want to use only console output (recommended for most cases):
+```python
+from maki.logging_config import setup_logging
+setup_logging()
+```
+
+If you want to log to both console and file:
+```python
+from maki.logging_config import setup_logging
+setup_logging(log_file_path="app.log")
+```
+
 ## License
 
 MIT

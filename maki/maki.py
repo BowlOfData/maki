@@ -6,9 +6,6 @@ import re
 import logging
 from .logging_config import configure_logging
 
-# Configure logging when module is imported
-configure_logging()
-
 class Maki:
     def __init__(self, url: str, port: Union[str, int], model: str, temperature=0):
         """ Initialize the Maki object
