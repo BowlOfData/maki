@@ -146,9 +146,11 @@ class Agent:
 
     def _cleanup_history(self):
         """Clean up history lists to prevent memory exhaustion"""
+        # Clean up reasoning history if needed
         if len(self.reasoning_history) > self._max_history_entries:
             self.reasoning_history = self.reasoning_history[-self._max_history_entries:]
 
+        # Clean up task history if needed
         if len(self.task_history) > self._max_history_entries:
             self.task_history = self.task_history[-self._max_history_entries:]
 
