@@ -107,7 +107,7 @@ maki/
 
 Run the example:
 ```bash
-python -m maki.examples.agent_example
+python -m maki
 ```
 
 ## Logging Configuration

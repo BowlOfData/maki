@@ -28,7 +28,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "maki-example=maki.examples.agent_example:main",
+            "maki=maki.__main__:main",
         ],
     },
 )

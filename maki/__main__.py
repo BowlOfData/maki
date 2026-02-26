@@ -26,3 +26,20 @@ from .maki import Maki
 from .agents import Agent, AgentManager
 
 __all__ = ['Maki', 'Agent', 'AgentManager']
+
+def main():
+    """Main entry point for the Maki package"""
+    print("Maki framework - Multi-agent LLM interactions")
+    print("Usage: python -m maki")
+    print("")
+    print("Available classes:")
+    print("  Maki - Main class for interacting with LLMs")
+    print("  Agent - Individual agent class")
+    print("  AgentManager - Manager for coordinating agents")
+    print("")
+    print("Example usage:")
+    print("  from maki import Maki")
+    print("  maki = Maki(url='http://localhost', port='11434', model='qwen3-coder:30b')")
+
+if __name__ == "__main__":
+    main()
