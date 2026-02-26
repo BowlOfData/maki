@@ -2,6 +2,7 @@ from typing import Union
 from .utils import Utils
 from .connector import Connector
 from .urls import Actions
+from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 import re
 import logging
 

@@ -1,6 +1,7 @@
 import requests
 import json
 import logging
+import socket
 from .utils import Utils
 from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 
@@ -32,6 +33,20 @@ class Connector:
 
         if not isinstance(prompt, dict):
             raise MakiValidationError("Prompt must be a dictionary")
+
+        # Validate that URL is properly formatted and doesn't contain SSRF vulnerabilities
+        try:
+            # Extract domain from URL for validation
+            import urllib.parse
+            parsed_url = urllib.parse.urlparse(url)
+            if parsed_url.scheme and parsed_url.scheme not in ['http', 'https']:
+                raise MakiValidationError("URL must use http or https protocol")
+
+            # Validate domain is not vulnerable to SSRF
+            if parsed_url.hostname:
+                Utils._validate_domain(parsed_url.hostname)
+        except Exception as e:
+            raise MakiValidationError(f"Invalid URL format: {str(e)}")
 
         logger.debug(f"Sending simple request to URL: {url}")
         logger.debug(f"Request data: {prompt}")
