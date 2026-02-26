@@ -114,7 +114,7 @@ python -m maki
 
 Starting from version 0.1.0, Maki no longer automatically configures logging when imported. This prevents unwanted side effects and conflicts with host application logging.
 
-To configure logging in your application, you need to explicitly call the `setup_logging()` function from `maki.logging_config`:
+To configure logging in your application, you need to explicitly call the `configure_logging()` function from `maki.logging_config`:
 
 ```python
 from maki.logging_config import setup_logging
