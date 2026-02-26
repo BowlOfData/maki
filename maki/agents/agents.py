@@ -52,6 +52,8 @@ class Agent:
         self.memory = {}
         self.reasoning_history = []
         self.task_history = []
+        # Maximum number of entries to keep in history to prevent memory exhaustion
+        self._max_history_entries = 1000
 
         logger.info(f"Agent '{self.name}' initialized with role '{self.role}'")
 
@@ -113,6 +115,9 @@ class Agent:
             'timestamp': time.time()
         })
 
+        # Clean up history to prevent memory exhaustion
+        self._cleanup_history()
+
         return result
 
     def remember(self, key: str, value: Any):
@@ -126,6 +131,26 @@ class Agent:
     def clear_memory(self):
         """Clear the agent's memory"""
         self.memory.clear()
+
+    def set_max_history_entries(self, max_entries: int):
+        """Set the maximum number of entries to keep in history
+
+        Args:
+            max_entries: Maximum number of entries to keep in history
+        """
+        if max_entries <= 0:
+            raise ValueError("max_entries must be positive")
+        self._max_history_entries = max_entries
+        # Clean up existing history if needed
+        self._cleanup_history()
+
+    def _cleanup_history(self):
+        """Clean up history lists to prevent memory exhaustion"""
+        if len(self.reasoning_history) > self._max_history_entries:
+            self.reasoning_history = self.reasoning_history[-self._max_history_entries:]
+
+        if len(self.task_history) > self._max_history_entries:
+            self.task_history = self.task_history[-self._max_history_entries:]
 
     def think_step_by_step(self, problem: str, steps: int = 3) -> str:
         """Execute reasoning through multiple steps"""
@@ -149,6 +174,9 @@ class Agent:
             'timestamp': time.time()
         })
 
+        # Clean up history to prevent memory exhaustion
+        self._cleanup_history()
+
         return result
 
     def self_correct(self, initial_response: str, feedback: str) -> str:
@@ -170,6 +198,9 @@ class Agent:
             'corrected_response': result,
             'timestamp': time.time()
         })
+
+        # Clean up history to prevent memory exhaustion
+        self._cleanup_history()
 
         return result
 
@@ -233,6 +264,9 @@ class Agent:
             'decomposition': result,
             'timestamp': time.time()
         })
+
+        # Clean up history to prevent memory exhaustion
+        self._cleanup_history()
 
         # Parse the JSON response
         try:
