@@ -423,7 +423,30 @@ class AgentManager:
                 continue
 
             result = self.assign_task(agent_name, task, context)
-            results[task] = result
+            # Use a unique key to prevent overwriting results from duplicate tasks
+            # Using a combination of task and agent name to ensure uniqueness
+            key = f"{task}_{agent_name}"
+            results[key] = result
+
+        # If coordination_prompt is provided, create a final synthesis
+        if coordination_prompt:
+            # Create a synthesis prompt that includes all results
+            synthesis_prompt = f"""
+            {coordination_prompt}
+
+            Here are the individual results from the agents:
+            {json.dumps(results, indent=2)}
+
+            Please synthesize these results into a comprehensive response.
+            """
+            try:
+                synthesis_result = self.maki.request(synthesis_prompt)
+                results['final_synthesis'] = synthesis_result
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create synthesis: {str(e)}")
+                # Return original results if synthesis fails
+                pass
 
         return results
 
@@ -439,20 +462,50 @@ class AgentManager:
         Returns:
             A coordinated response from the agents
         """
-        # Create a coordination prompt
-        prompt = f"""
-        You are coordinating a group of agents to solve a task.
+        # Execute the task individually for each agent first
+        agent_results = {}
+        for agent_name in agents:
+            # Create a specific prompt for each agent
+            agent_prompt = f"""
+            You are working on the following task:
 
-        Task: {task}
+            Task: {task}
 
-        Agents involved: {', '.join(agents)}
+            Your role: {agent_name}
 
-        Context: {json.dumps(context) if context else 'None'}
+            Context: {json.dumps(context) if context else 'None'}
 
-        Please provide a coordinated response that synthesizes input from all agents.
+            Please provide your specific response to this task.
+            """
+            try:
+                result = self.maki.request(agent_prompt)
+                agent_results[agent_name] = result
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to get result from agent {agent_name}: {str(e)}")
+                agent_results[agent_name] = f"Error: {str(e)}"
+
+        # Create a synthesis prompt that combines all individual results
+        synthesis_prompt = f"""
+        You are synthesizing results from multiple agents working on the same task.
+
+        Original task: {task}
+
+        Individual agent responses:
+        {json.dumps(agent_results, indent=2)}
+
+        Please provide a comprehensive, coordinated response that synthesizes
+        the insights from all agents into a final answer.
         """
 
-        return self.maki.request(prompt)
+        try:
+            final_result = self.maki.request(synthesis_prompt)
+            return final_result
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create final synthesis: {str(e)}")
+            # Return combined results if synthesis fails
+            return json.dumps(agent_results, indent=2)
 
     def run_workflow(self, workflow: List[Dict]) -> Dict[str, Any]:
         """
