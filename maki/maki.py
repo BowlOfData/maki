@@ -64,7 +64,9 @@ class Maki:
 
         Raises:
             ValueError: If prompt is not a valid string
-            Exception: For HTTP request or JSON parsing errors
+            MakiNetworkError: For network-related errors
+            MakiTimeoutError: For timeout errors
+            MakiAPIError: For API response errors
         """
 
         if not isinstance(prompt, str) or not prompt.strip():
@@ -78,7 +80,11 @@ class Maki:
             return result
         except Exception as e:
             self.logger.error(f"Request failed: {str(e)}")
-            raise
+            # Re-raise with more specific type if needed
+            if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
+                raise
+            else:
+                raise MakiNetworkError(f"HTTP request failed: {str(e)}")
 
     def version(self) -> str:
         """ Returns the LLM version
@@ -87,7 +93,9 @@ class Maki:
             A string containing the version
 
         Raises:
-            Exception: For HTTP request errors
+            MakiNetworkError: For network-related errors
+            MakiTimeoutError: For timeout errors
+            MakiAPIError: For API response errors
         """
         self.logger.debug("Fetching version information")
         url = Utils.compose_url(self.url, self.port, Actions.VERSION.value)
@@ -97,7 +105,11 @@ class Maki:
             return result
         except Exception as e:
             self.logger.error(f"Failed to retrieve version: {str(e)}")
-            raise
+            # Re-raise with more specific type if needed
+            if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
+                raise
+            else:
+                raise MakiNetworkError(f"Failed to retrieve version: {str(e)}")
 
     def _compose_data(self, prompt:str, imgs=None) -> dict:
         """Compose the data payload for the LLM request
@@ -147,7 +159,9 @@ class Maki:
 
         Raises:
             ValueError: If prompt or img is not valid
-            Exception: For HTTP request or file reading errors
+            MakiNetworkError: For network-related errors
+            MakiTimeoutError: For timeout errors
+            MakiAPIError: For API response errors
         """
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be a non-empty string")
@@ -166,7 +180,11 @@ class Maki:
             return result
         except Exception as e:
             self.logger.error(f"Request with image failed: {str(e)}")
-            raise
+            # Re-raise with more specific type if needed
+            if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
+                raise
+            else:
+                raise MakiNetworkError(f"HTTP request with image failed: {str(e)}")
 
     def _get_model(self)->str:
         return self.model

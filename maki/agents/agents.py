@@ -8,6 +8,7 @@ coordination, delegation, and collaboration.
 
 from typing import Dict, List, Any, Optional
 from ..maki import Maki
+from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 import json
 import time
 import logging
@@ -70,7 +71,9 @@ class Agent:
 
         Raises:
             ValueError: If task is not a valid string
-            Exception: For HTTP request or other errors
+            MakiNetworkError: For network-related errors
+            MakiTimeoutError: For timeout errors
+            MakiAPIError: For API response errors
         """
         logger = logging.getLogger(__name__)
 
@@ -96,7 +99,11 @@ class Agent:
         except Exception as e:
             # Re-raise with more context
             logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}")
-            raise Exception(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}")
+            # Re-raise with more specific type if needed, otherwise raise a generic MakiError
+            if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
+                raise
+            else:
+                raise MakiNetworkError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}")
 
         # Record the task execution in history
         self.task_history.append({
@@ -214,7 +221,11 @@ class Agent:
         try:
             result = self.maki.request(prompt)
         except Exception as e:
-            raise Exception(f"Failed to get task decomposition from LLM: {str(e)}")
+            # Re-raise with more specific type if needed, otherwise raise a generic MakiError
+            if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
+                raise
+            else:
+                raise MakiNetworkError(f"Failed to get task decomposition from LLM: {str(e)}")
 
         # Record the decomposition process
         self.reasoning_history.append({

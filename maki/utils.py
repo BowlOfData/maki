@@ -2,9 +2,92 @@ import json
 import base64
 import os
 import logging
+import re
+import ipaddress
 from .urls import GENERIC_LLAMA_URL
 
 class Utils:
+
+    # List of private IP ranges that should be blocked to prevent SSRF
+    PRIVATE_IP_RANGES = [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "::1/128",
+        "fe80::/10"
+    ]
+
+    # Blacklisted domains that should be blocked
+    BLACKLISTED_DOMAINS = [
+        "localhost",
+        "127.0.0.1",
+        "::1"
+    ]
+
+    @staticmethod
+    def _validate_domain(domain: str) -> None:
+        """Validate domain name to prevent SSRF attacks
+
+        Args:
+            domain: The domain name to validate
+
+        Raises:
+            ValueError: If domain is invalid or potentially malicious
+        """
+        if not isinstance(domain, str) or not domain.strip():
+            raise ValueError("Domain must be a non-empty string")
+
+        domain = domain.strip()
+
+        # Check for blacklisted domains
+        if domain.lower() in Utils.BLACKLISTED_DOMAINS:
+            raise ValueError(f"Access to domain '{domain}' is not allowed")
+
+        # Check for private IP addresses
+        try:
+            # Try to parse as IP address
+            ip = ipaddress.ip_address(domain)
+            # Check if it's a private IP
+            for ip_range in Utils.PRIVATE_IP_RANGES:
+                if ip in ipaddress.ip_network(ip_range):
+                    raise ValueError(f"Access to private IP address '{domain}' is not allowed")
+        except ValueError:
+            # Not an IP address, check as domain name
+            # Basic domain validation
+            if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$', domain):
+                raise ValueError(f"Invalid domain format: {domain}")
+
+            # Check for potentially malicious patterns
+            if '..' in domain:
+                raise ValueError("Domain contains invalid pattern")
+
+            # Check for special characters that could be used in SSRF attacks
+            if re.search(r'[^\w\.\-]', domain):
+                raise ValueError("Domain contains invalid characters")
+
+    @staticmethod
+    def _validate_port(port: str) -> None:
+        """Validate port number to prevent invalid values
+
+        Args:
+            port: The port number to validate
+
+        Raises:
+            ValueError: If port is invalid
+        """
+        if not isinstance(port, str) or not port.strip():
+            raise ValueError("Port must be a non-empty string")
+
+        port = port.strip()
+
+        # Check if it's a valid numeric port
+        if not re.match(r'^[0-9]+$', port):
+            raise ValueError("Port must be a valid numeric string")
+
+        port_num = int(port)
+        if port_num < 1 or port_num > 65535:
+            raise ValueError("Port must be between 1 and 65535")
 
     @staticmethod
     def compose_url(url: str, port: str, action: str) -> str:
@@ -23,16 +106,24 @@ class Utils:
         """
         logger = logging.getLogger(__name__)
 
-        if not isinstance(url, str) or not url.strip():
-            raise ValueError("URL must be a non-empty string")
-
-        if not isinstance(port, str) or not port.strip():
-            raise ValueError("Port must be a non-empty string")
+        # Validate inputs
+        Utils._validate_domain(url)
+        Utils._validate_port(port)
 
         if not isinstance(action, str) or not action.strip():
             raise ValueError("Action must be a non-empty string")
 
-        composed = GENERIC_LLAMA_URL.format(domain=url.strip(), port=port, action=action.strip())
+        # Sanitize inputs
+        url = url.strip()
+        port = port.strip()
+        action = action.strip()
+
+        # Additional URL sanitization
+        # Remove any dangerous characters that could be used in URL manipulation
+        url = re.sub(r'[^a-zA-Z0-9.\-:]', '', url)
+        action = re.sub(r'[^a-zA-Z0-9\-_/.]', '', action)
+
+        composed = GENERIC_LLAMA_URL.format(domain=url, port=port, action=action)
         # Add http:// protocol if not present
         if not composed.startswith(('http://', 'https://')):
             composed = f"http://{composed}"

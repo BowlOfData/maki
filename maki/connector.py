@@ -2,6 +2,7 @@ import requests
 import json
 import logging
 from .utils import Utils
+from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 
 class Connector:
 
@@ -17,20 +18,20 @@ class Connector:
             The LLM response text as a string
 
         Raises:
-            ValueError: If url or prompt is invalid
-            requests.RequestException: For HTTP request errors
-            json.JSONDecodeError: For JSON parsing errors
-            Exception: For other errors
+            MakiValidationError: If url or prompt is invalid
+            MakiTimeoutError: For HTTP timeout errors
+            MakiNetworkError: For other HTTP request errors
+            MakiAPIError: For API response errors
         """
         logger = logging.getLogger(__name__)
 
         logger.debug(f"Preparing to send simple request to URL: {url}")
 
         if not isinstance(url, str) or not url.strip():
-            raise ValueError("URL must be a non-empty string")
+            raise MakiValidationError("URL must be a non-empty string")
 
         if not isinstance(prompt, dict):
-            raise ValueError("Prompt must be a dictionary")
+            raise MakiValidationError("Prompt must be a dictionary")
 
         logger.debug(f"Sending simple request to URL: {url}")
         logger.debug(f"Request data: {prompt}")
@@ -42,21 +43,27 @@ class Connector:
             jsonify = Utils.jsonify(response.text)
             # Check if response contains the expected structure
             if "response" not in jsonify:
-                raise Exception("Invalid API response format: missing 'response' field")
+                raise MakiAPIError("Invalid API response format: missing 'response' field")
             logger.debug("Request completed successfully")
             return jsonify["response"]
         except requests.exceptions.Timeout:
             logger.error("HTTP request timed out")
-            raise Exception("HTTP request timed out")
-        except requests.RequestException as e:
-            logger.error(f"HTTP request failed: {str(e)}")
-            raise Exception(f"HTTP request failed: {str(e)}")
+            raise MakiTimeoutError("HTTP request timed out")
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"HTTP connection failed: {str(e)}")
+            raise MakiNetworkError(f"HTTP connection failed: {str(e)}")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP request failed with status {response.status_code}: {str(e)}")
+            if response.status_code >= 500:
+                raise MakiNetworkError(f"HTTP server error {response.status_code}: {str(e)}")
+            else:
+                raise MakiAPIError(f"HTTP client error {response.status_code}: {str(e)}")
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing failed: {str(e)}")
-            raise Exception(f"JSON parsing failed: {str(e)}")
+            raise MakiAPIError(f"JSON parsing failed: {str(e)}")
         except KeyError as e:
             logger.error(f"API response structure error: {str(e)}")
-            raise Exception(f"API response structure error: {str(e)}")
+            raise MakiAPIError(f"API response structure error: {str(e)}")
 
     @staticmethod
     def version(url: str) -> str:
@@ -69,14 +76,14 @@ class Connector:
             The version information as text
 
         Raises:
-            ValueError: If url is invalid
-            requests.RequestException: For HTTP request errors
-            Exception: For other errors
+            MakiValidationError: If url is invalid
+            MakiTimeoutError: For HTTP timeout errors
+            MakiNetworkError: For other HTTP request errors
         """
         logger = logging.getLogger(__name__)
 
         if not isinstance(url, str) or not url.strip():
-            raise ValueError("URL must be a non-empty string")
+            raise MakiValidationError("URL must be a non-empty string")
 
         logger.debug(f"Fetching version from URL: {url}")
         try:
@@ -86,8 +93,14 @@ class Connector:
             return response.text
         except requests.exceptions.Timeout:
             logger.error("HTTP request timed out")
-            raise Exception("HTTP request timed out")
-        except requests.RequestException as e:
-            logger.error(f"HTTP request failed: {str(e)}")
-            raise Exception(f"HTTP request failed: {str(e)}")
+            raise MakiTimeoutError("HTTP request timed out")
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"HTTP connection failed: {str(e)}")
+            raise MakiNetworkError(f"HTTP connection failed: {str(e)}")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP request failed with status {response.status_code}: {str(e)}")
+            if response.status_code >= 500:
+                raise MakiNetworkError(f"HTTP server error {response.status_code}: {str(e)}")
+            else:
+                raise MakiAPIError(f"HTTP client error {response.status_code}: {str(e)}")
     
