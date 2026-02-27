@@ -12,6 +12,8 @@ from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 import json
 import time
 import logging
+import importlib
+import os
 
 
 class Agent:
@@ -54,19 +56,22 @@ class Agent:
         self.task_history = []
         # Maximum number of entries to keep in history to prevent memory exhaustion
         self._max_history_entries = 1000
+        # Plugin support
+        self.plugins = {}
 
         logger.info(f"Agent '{self.name}' initialized with role '{self.role}'")
 
     def __repr__(self):
         return f"Agent(name='{self.name}', role='{self.role}')"
 
-    def execute_task(self, task: str, context: Optional[Dict] = None) -> str:
+    def execute_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False) -> str:
         """
         Execute a task using this agent
 
         Args:
             task: The task to perform
             context: Additional context for the task
+            use_plugins: Whether to allow plugin usage in the task
 
         Returns:
             The result of the task execution
@@ -143,6 +148,75 @@ class Agent:
         self._max_history_entries = max_entries
         # Clean up existing history if needed
         self._cleanup_history()
+
+    def load_plugin(self, plugin_name: str, plugin_path: str = None):
+        """
+        Load a plugin for this agent
+
+        Args:
+            plugin_name: Name of the plugin to load
+            plugin_path: Optional path to the plugin (if not in standard location)
+
+        Returns:
+            The loaded plugin instance
+
+        Raises:
+            ImportError: If plugin cannot be loaded
+            Exception: If plugin initialization fails
+        """
+        logger = logging.getLogger(__name__)
+
+        try:
+            if plugin_path:
+                # Load plugin from custom path
+                import sys
+                sys.path.insert(0, plugin_path)
+                module = importlib.import_module(plugin_name)
+                # Remove from path after import
+                sys.path.remove(plugin_path)
+            else:
+                # Load plugin from standard location
+                module = importlib.import_module(f"maki.plugins.{plugin_name}")
+
+            # Try to get the plugin instance using register_plugin function or class directly
+            if hasattr(module, 'register_plugin'):
+                plugin_instance = module.register_plugin(self.maki)
+            elif hasattr(module, plugin_name):
+                plugin_class = getattr(module, plugin_name)
+                plugin_instance = plugin_class(self.maki)
+            else:
+                # Try to instantiate the module directly if it's a class
+                plugin_instance = module(self.maki)
+
+            self.plugins[plugin_name] = plugin_instance
+            logger.info(f"Plugin '{plugin_name}' loaded successfully for agent '{self.name}'")
+            return plugin_instance
+
+        except Exception as e:
+            logger.error(f"Failed to load plugin '{plugin_name}' for agent '{self.name}': {str(e)}")
+            raise
+
+    def get_plugin(self, plugin_name: str):
+        """
+        Get a loaded plugin instance
+
+        Args:
+            plugin_name: Name of the plugin to retrieve
+
+        Returns:
+            The plugin instance or None if not loaded
+        """
+        return self.plugins.get(plugin_name)
+
+    def unload_plugin(self, plugin_name: str):
+        """
+        Unload a plugin from this agent
+
+        Args:
+            plugin_name: Name of the plugin to unload
+        """
+        if plugin_name in self.plugins:
+            del self.plugins[plugin_name]
 
     def _cleanup_history(self):
         """Clean up history lists to prevent memory exhaustion"""

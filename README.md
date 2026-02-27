@@ -79,6 +79,26 @@ The enhanced Agent class now supports:
 
 These capabilities allow agents to handle more complex reasoning tasks and improve their performance through iterative refinement.
 
+## Plugin Support
+
+Agents now support plugins for extending functionality. Plugins can be loaded and used within agent tasks:
+
+```python
+# Load a plugin
+file_reader = agent.load_plugin("file_reader")
+
+# Use the plugin
+result = file_reader.read_file("example.txt")
+
+# Get a loaded plugin
+plugin = agent.get_plugin("file_reader")
+
+# Unload a plugin
+agent.unload_plugin("file_reader")
+```
+
+Plugins are automatically available to agents and can be used to extend agent capabilities with additional functionality like file reading, data processing, or other specialized tools.
+
 ## Project Structure
 
 ```
