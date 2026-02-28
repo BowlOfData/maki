@@ -68,11 +68,13 @@ class Connector:
             logger.error(f"HTTP connection failed: {str(e)}")
             raise MakiNetworkError(f"HTTP connection failed: {str(e)}")
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP request failed with status {response.status_code}: {str(e)}")
-            if response.status_code >= 500:
-                raise MakiNetworkError(f"HTTP server error {response.status_code}: {str(e)}")
+            # Extract status code from the exception object
+            status_code = e.response.status_code if e.response else "unknown"
+            logger.error(f"HTTP request failed with status {status_code}: {str(e)}")
+            if status_code >= 500:
+                raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
             else:
-                raise MakiAPIError(f"HTTP client error {response.status_code}: {str(e)}")
+                raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}")
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing failed: {str(e)}")
             raise MakiAPIError(f"JSON parsing failed: {str(e)}")
@@ -113,9 +115,11 @@ class Connector:
             logger.error(f"HTTP connection failed: {str(e)}")
             raise MakiNetworkError(f"HTTP connection failed: {str(e)}")
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP request failed with status {response.status_code}: {str(e)}")
-            if response.status_code >= 500:
-                raise MakiNetworkError(f"HTTP server error {response.status_code}: {str(e)}")
+            # Extract status code from the exception object
+            status_code = e.response.status_code if e.response else "unknown"
+            logger.error(f"HTTP request failed with status {status_code}: {str(e)}")
+            if status_code >= 500:
+                raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
             else:
-                raise MakiAPIError(f"HTTP client error {response.status_code}: {str(e)}")
+                raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}")
     
