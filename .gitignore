@@ -194,3 +194,6 @@ python_compliance_fix_summary.md
 test_reorganization_summary.md
 maki/plugins/file_reader/USAGE.md
 review.md
+race_condition_analysis.md
+exception_handling_analysis.md
+local_llm.py

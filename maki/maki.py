@@ -136,8 +136,9 @@ class Maki:
             "stream": False
         }
 
-        if self._get_temperature() is not None:
-            payload["options"] = {"temperature": self._get_temperature()}
+        temperature = self._get_temperature()
+        if temperature is not None:
+            payload["options"] = {"temperature": temperature}
 
         if imgs:
             # Validate that imgs is a list
