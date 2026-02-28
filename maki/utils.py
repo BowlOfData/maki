@@ -27,13 +27,9 @@ class Utils:
         "240.0.0.0/4",     # Reserved for future use
         "0.0.0.0/8",       # This network
         "128.0.0.0/16",    # Reserved for future use
-        "192.168.0.0/16",  # Private network
-        "172.16.0.0/12",   # Private network
-        "10.0.0.0/8",      # Private network
         "::/128",          # Unspecified address
         "2001:db8::/32",   # Documentation examples
         "fc00::/7",        # Unique local addresses
-        "fe80::/10"        # Link-local addresses
     ]
 
     # Blacklisted domains that should be blocked
