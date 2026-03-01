@@ -199,3 +199,7 @@ exception_handling_analysis.md
 local_llm.py
 test.md
 ftp_client_plugin_summary.md
+local_llm_v2.py
+maki/plugins/web_to_md/requirements.txt
+install.sh
+test_timeout.py

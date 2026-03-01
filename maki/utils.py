@@ -182,59 +182,49 @@ class Utils:
         port = port.strip()
         action = action.strip()
 
-        # Additional URL sanitization - more comprehensive filtering
-        # Remove any dangerous characters that could be used in URL manipulation
-        url = re.sub(r'[^a-zA-Z0-9.\-:]', '', url)
+        # Extract and preserve any explicit protocol BEFORE sanitization.
+        # The sanitization regex removes '/' characters, which would destroy
+        # 'http://' or 'https://' if left in the url string.
+        import urllib.parse
+        protocol = "http"  # default protocol
+        domain_part = url
+        if url.lower().startswith(('http://', 'https://')):
+            parsed = urllib.parse.urlparse(url)
+            protocol = parsed.scheme  # 'http' or 'https'
+            domain_part = parsed.hostname or parsed.netloc
+            # Strip surrounding brackets from IPv6 addresses (e.g. '[::1]' -> '::1')
+            if domain_part.startswith('[') and domain_part.endswith(']'):
+                domain_part = domain_part[1:-1]
+
+        # Sanitize only the domain portion — keep alphanumerics, dots, hyphens, colons.
+        # Forward slashes are intentionally excluded here; the protocol is handled separately.
+        domain_part = re.sub(r'[^a-zA-Z0-9.\-:]', '', domain_part)
         action = re.sub(r'[^a-zA-Z0-9\-_/.]', '', action)
 
-        # Additional check for path traversal in action
-        if '/../' in action or '..\\' in action:
+        # Guard: path traversal in action
+        if '/../' in action or '..\\' in action or '..' in action:
             raise ValueError("Action contains invalid path traversal characters")
 
-        # Additional check for URL encoding attacks
-        if '%' in url and not re.match(r'^[a-zA-Z0-9.\-:%/]+$', url):
+        # Guard: URL-encoding abuse (% not expected in a bare domain)
+        if '%' in domain_part:
             raise ValueError("Invalid characters in URL")
 
-        # Additional check for port sanitization
+        # Guard: port must still be purely numeric after earlier validation
         if not re.match(r'^[0-9]+$', port):
             raise ValueError("Port must be a valid numeric string")
 
-        # Validate that we don't have any protocol in the URL (to prevent SSRF)
-        # But allow localhost and valid local domains
-        if url.startswith(('http://', 'https://')):
-            # Extract domain for validation to allow localhost and valid local domains
-            import urllib.parse
-            parsed = urllib.parse.urlparse(url)
-            domain = parsed.hostname or parsed.netloc
-            if domain and domain not in ['localhost', '127.0.0.1', '::1']:
-                # For non-local domains, validate against SSRF rules
-                try:
-                    ip = ipaddress.ip_address(domain)
-                    # Allow localhost and loopback addresses, but validate other IPs
-                    if not (ip.is_loopback or ip.is_link_local):
-                        # Check if it's a private IP that should be blocked
-                        for ip_range in Utils.PRIVATE_IP_RANGES:
-                            if ip in ipaddress.ip_network(ip_range):
-                                raise ValueError(f"Access to private IP address '{domain}' is not allowed")
-                except ValueError:
-                    # If it's not an IP address, validate as domain
-                    pass
-        else:
-            # No protocol - validate as domain or IP
-            pass
-
-        # Ensure we have a valid domain format after sanitization
-        if not re.match(r'^[a-zA-Z0-9.\-:]+$', url):
+        # Guard: ensure the sanitized domain contains only safe characters
+        if not re.match(r'^[a-zA-Z0-9.\-:]+$', domain_part):
             raise ValueError("Invalid domain format after sanitization")
 
-        # Additional security check to prevent directory traversal in the action
-        if '..' in action:
-            raise ValueError("Action contains invalid characters")
-
-        composed = GENERIC_LLAMA_URL.format(domain=url, port=port, action=action)
-        # Add http:// protocol if not present
-        if not composed.startswith(('http://', 'https://')):
-            composed = f"http://{composed}"
+        composed = GENERIC_LLAMA_URL.format(domain=domain_part, port=port, action=action)
+        # Always enforce the correct protocol by replacing whatever the template
+        # may already contain (e.g. a hardcoded 'http://') with the protocol that
+        # was explicitly supplied by the caller, or 'http' as the safe default.
+        # Using re.sub + unconditional prepend avoids the bug where a template
+        # already starting with 'http://' silently discards a caller-supplied 'https'.
+        composed = re.sub(r'^https?://', '', composed)  # strip any baked-in protocol
+        composed = f"{protocol}://{composed}"          # prepend the correct one
 
         logger.debug(f"Composed URL: {composed}")
         return composed
