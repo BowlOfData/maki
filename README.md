@@ -110,17 +110,33 @@ maki/
 ├── utils.py
 ├── urls.py
 ├── logging_config.py
+├── exceptions.py
 ├── agents/
 │   ├── __init__.py
 │   └── agents.py
 ├── plugins/
-│   └── __init__.py
+│   ├── __init__.py
+│   ├── file_reader/
+│   │   ├── __init__.py
+│   │   ├── file_reader.py
+│   │   ├── README.md
+│   │   ├── USAGE.md
+│   │   ├── example_usage.py
+│   │   └── test_file_reader.py
+│   └── file_writer/
+│       ├── __init__.py
+│       ├── file_writer.py
+│       ├── README.md
+│       ├── example_usage.py
+│       └── test_file_writer.py
 └── test/
     ├── __init__.py
     ├── test_maki_functionality.py
     ├── test_agent_functionality.py
     ├── test_error_handling.py
-    └── test_different_llms.py
+    ├── test_different_llms.py
+    ├── test_logging.py
+    └── test_history_cleanup.py
 ```
 
 ## Examples
