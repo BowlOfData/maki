@@ -14,8 +14,6 @@ class Utils:
         "10.0.0.0/8",
         "172.16.0.0/12",
         "192.168.0.0/16",
-        "127.0.0.0/8",
-        "::1/128",
         "fe80::/10",
         "169.254.0.0/16",  # Link-local addresses
         "100.64.0.0/10",   # Shared address space
@@ -28,7 +26,6 @@ class Utils:
         "0.0.0.0/8",       # This network
         "128.0.0.0/16",    # Reserved for future use
         "::/128",          # Unspecified address
-        "2001:db8::/32",   # Documentation examples
         "fc00::/7",        # Unique local addresses
     ]
 
@@ -66,14 +63,23 @@ class Utils:
         # Check if it's an IP address
         try:
             # Try to parse as IP address
-            ip = ipaddress.ip_address(domain)
-            # Check if it's a private IP
-            for ip_range in Utils.PRIVATE_IP_RANGES:
-                if ip in ipaddress.ip_network(ip_range):
-                    raise ValueError(f"Access to private IP address '{domain}' is not allowed")
-            # Additional check for specific IP ranges that are dangerous
-            if ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                raise ValueError(f"Access to special IP address '{domain}' is not allowed")
+            # Handle IPv6 addresses that might be in brackets
+            clean_domain = domain
+            if domain.startswith('[') and domain.endswith(']'):
+                clean_domain = domain[1:-1]
+            ip = ipaddress.ip_address(clean_domain)
+            # Allow localhost addresses (127.0.0.1, ::1) to be used for local testing
+            if ip.is_loopback:
+                # Loopback addresses are allowed
+                pass
+            else:
+                # Check if it's a private IP
+                for ip_range in Utils.PRIVATE_IP_RANGES:
+                    if ip in ipaddress.ip_network(ip_range):
+                        raise ValueError(f"Access to private IP address '{domain}' is not allowed")
+                # Additional check for specific IP ranges that are dangerous
+                if ip.is_link_local or ip.is_reserved:
+                    raise ValueError(f"Access to special IP address '{domain}' is not allowed")
         except ValueError:
             # Not an IP address, check as domain name
             # Basic domain validation
@@ -158,6 +164,10 @@ class Utils:
             parsed = urllib.parse.urlparse(original_url)
             domain_part = parsed.hostname or parsed.netloc
             if domain_part:
+                # Handle IPv6 addresses with brackets properly
+                if domain_part.startswith('[') and domain_part.endswith(']'):
+                    # Remove brackets for validation but keep them for later use
+                    domain_part = domain_part[1:-1]
                 Utils._validate_domain(domain_part)
         else:
             Utils._validate_domain(original_url)
