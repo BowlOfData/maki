@@ -1,2 +1,2 @@
 requests >= 2.25.0
-paramiko >= 2.10.0
+paramiko >= 2.11.0

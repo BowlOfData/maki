@@ -7,14 +7,12 @@ It allows agents to upload and download files, list directories, remove folders,
 
 import os
 import logging
-from typing import Dict, Any, Optional
-from pathlib import Path
+from typing import Dict, Any
 
 # Try to import FTP libraries - these might not be available in all environments
 try:
     import ftplib
-    from paramiko import SSHClient, SFTPClient
-    from paramiko.ssh_exception import SSHException
+    from paramiko import SSHClient
     HAS_FTP_LIBS = True
 except ImportError as e:
     HAS_FTP_LIBS = False
