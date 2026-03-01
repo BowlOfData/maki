@@ -147,6 +147,7 @@ class FTPClient:
 
             else:
                 result['error'] = f"Unsupported protocol: {protocol}. Supported protocols are 'ftp' and 'sftp'."
+                return result
 
         except Exception as e:
             result['error'] = str(e)
