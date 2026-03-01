@@ -9,10 +9,13 @@ import os
 import logging
 from typing import Dict, Any
 
-# Try to import FTP libraries - these might not be available in all environments
+# Import FTP libraries - these might not be available in all environments
+# Import at module level for test mocking compatibility
 try:
     import ftplib
+    import paramiko
     from paramiko import SSHClient
+    from paramiko.ssh_exception import SSHException
     HAS_FTP_LIBS = True
 except ImportError as e:
     HAS_FTP_LIBS = False
