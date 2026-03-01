@@ -57,7 +57,7 @@ class TestSSRFProtection(unittest.TestCase):
 
         # This should work - public domain with protocol
         url = Utils.compose_url("https://api.example.com", "443", "generate")
-        self.assertTrue(url.startswith("http://"))  # Note: protocol gets added by compose_url
+        self.assertTrue(url.startswith("https://"))  # Note: protocol gets preserved by compose_url
 
     def test_compose_url_with_ipv6(self):
         """Test that compose_url handles IPv6 addresses"""
