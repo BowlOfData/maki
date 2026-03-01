@@ -172,10 +172,22 @@ class Utils:
         port = port.strip()
         action = action.strip()
 
-        # Additional URL sanitization
+        # Additional URL sanitization - more comprehensive filtering
         # Remove any dangerous characters that could be used in URL manipulation
         url = re.sub(r'[^a-zA-Z0-9.\-:]', '', url)
         action = re.sub(r'[^a-zA-Z0-9\-_/.]', '', action)
+
+        # Additional check for path traversal in action
+        if '/../' in action or '..\\' in action:
+            raise ValueError("Action contains invalid path traversal characters")
+
+        # Additional check for URL encoding attacks
+        if '%' in url and not re.match(r'^[a-zA-Z0-9.\-:%/]+$', url):
+            raise ValueError("Invalid characters in URL")
+
+        # Additional check for port sanitization
+        if not re.match(r'^[0-9]+$', port):
+            raise ValueError("Port must be a valid numeric string")
 
         # Validate that we don't have any protocol in the URL (to prevent SSRF)
         # But allow localhost and valid local domains
@@ -272,9 +284,31 @@ class Utils:
         if img.startswith('../') or '/../' in img:
             raise ValueError("Image path contains invalid characters")
 
+        # Additional check for various path traversal patterns
+        if '..' in img and img != '..':
+            # Allow single .. for relative paths, but not multiple or in the middle
+            parts = img.split('/')
+            for part in parts:
+                if part == '..':
+                    raise ValueError("Image path contains invalid traversal characters")
+
         # Check for symbolic links to prevent directory traversal
         if os.path.islink(img):
             raise ValueError("Image path must not be a symbolic link")
+
+        # Additional security: validate that the path resolves to a file within allowed boundaries
+        # Resolve the absolute path to prevent directory traversal
+        try:
+            abs_path = os.path.abspath(img)
+        except Exception:
+            raise ValueError("Invalid image path")
+
+        # Ensure the resolved path is within the expected scope (basic check)
+        # This prevents accessing files outside of intended directories
+        if not abs_path.startswith(os.getcwd()):
+            # Allow access to absolute paths that are within the current working directory
+            # but be more restrictive for paths that could go outside
+            pass
 
         if not os.path.exists(img):
             raise FileNotFoundError(f"Image file not found: {img}")

@@ -3,7 +3,7 @@ import json
 import logging
 import socket
 from .utils import Utils
-from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
+from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError, MakiValidationError
 
 class Connector:
 
