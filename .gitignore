@@ -203,3 +203,6 @@ local_llm_v2.py
 maki/plugins/web_to_md/requirements.txt
 install.sh
 test_timeout.py
+launch.sh
+examples/agent_directory_preview.py
+examples/directory_reader_demo.py

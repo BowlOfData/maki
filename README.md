@@ -99,6 +99,8 @@ agent.unload_plugin("file_reader")
 
 Plugins are automatically available to agents and can be used to extend agent capabilities with additional functionality like file reading, data processing, or other specialized tools.
 
+Available built-in plugins include `file_reader`, `directory_reader`, `file_writer`, `web_to_md`, and `ftp_client`.
+
 ## Project Structure
 
 ```
