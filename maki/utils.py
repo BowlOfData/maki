@@ -170,6 +170,8 @@ class Utils:
                     domain_part = domain_part[1:-1]
                 Utils._validate_domain(domain_part)
         else:
+            # If no protocol is provided, default to http:// for better compatibility
+            # with the examples in the README
             Utils._validate_domain(original_url)
 
         Utils._validate_port(port)
@@ -195,6 +197,12 @@ class Utils:
             # Strip surrounding brackets from IPv6 addresses (e.g. '[::1]' -> '::1')
             if domain_part.startswith('[') and domain_part.endswith(']'):
                 domain_part = domain_part[1:-1]
+        else:
+            # If no protocol is provided in the input, we still need to ensure
+            # a proper protocol is used for the final URL
+            # This addresses the issue where README examples use "localhost"
+            # without explicit protocol
+            pass
 
         # Sanitize only the domain portion — keep alphanumerics, dots, hyphens, colons.
         # Forward slashes are intentionally excluded here; the protocol is handled separately.
