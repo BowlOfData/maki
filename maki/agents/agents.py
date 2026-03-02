@@ -522,9 +522,10 @@ class AgentManager:
             A dictionary mapping task names to results
         """
         results = {}
+        task_metadata = {}  # Store metadata for each task to prevent overwrites
 
         # Process tasks in sequence
-        for task_dict in tasks:
+        for i, task_dict in enumerate(tasks):
             agent_name = task_dict.get('agent')
             task = task_dict.get('task')
             context = task_dict.get('context')
@@ -533,21 +534,31 @@ class AgentManager:
                 continue
 
             result = self.assign_task(agent_name, task, context)
+
             # Use a unique key to prevent overwriting results from duplicate tasks
-            # Using a combination of task and agent name to ensure uniqueness
-            key = f"{task}_{agent_name}"
+            # Using a combination of task index and agent name to ensure uniqueness
+            key = f"task_{i}_{agent_name}"
             results[key] = result
+            task_metadata[key] = {
+                'agent': agent_name,
+                'original_task': task,
+                'context': context
+            }
 
         # If coordination_prompt is provided, create a final synthesis
         if coordination_prompt:
-            # Create a synthesis prompt that includes all results
+            # Create a synthesis prompt that includes all results with proper context
             synthesis_prompt = f"""
             {coordination_prompt}
 
             Here are the individual results from the agents:
             {json.dumps(results, indent=2)}
 
-            Please synthesize these results into a comprehensive response.
+            Task metadata:
+            {json.dumps(task_metadata, indent=2)}
+
+            Please synthesize these results into a comprehensive response that
+            properly attributes each result to its original task and agent.
             """
             try:
                 synthesis_result = self.maki.request(synthesis_prompt)
