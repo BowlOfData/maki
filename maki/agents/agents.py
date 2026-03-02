@@ -201,7 +201,9 @@ class Agent:
 
         try:
             logger.debug(f"Executing task '{task}' for agent '{self.name}'")
+            start_time = time.time()
             result = self.maki.request(prompt)
+            execution_time = time.time() - start_time
             logger.debug(f"Task '{task}' completed successfully for agent '{self.name}'")
         except Exception as e:
             # Re-raise with more context
@@ -224,6 +226,39 @@ class Agent:
         self._cleanup_history()
 
         return result
+
+    def execute_task_with_retry(self, task: str, context: Optional[Dict] = None,
+                               max_retries: int = 3, retry_delay: float = 1.0) -> str:
+        """
+        Execute a task with retry logic
+
+        Args:
+            task: The task to perform
+            context: Additional context for the task
+            max_retries: Maximum number of retry attempts
+            retry_delay: Delay between retries in seconds
+
+        Returns:
+            The result of the task execution
+
+        Raises:
+            Exception: If task fails after all retries
+        """
+        logger = logging.getLogger(__name__)
+
+        for attempt in range(max_retries):
+            try:
+                result = self.execute_task(task, context)
+                return result
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    # Last attempt, re-raise the exception
+                    raise e
+                logger.warning(f"Task '{task}' failed on attempt {attempt + 1}: {str(e)}. Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+
+        # This should never be reached, but just in case
+        raise Exception(f"Task '{task}' failed after {max_retries} attempts")
 
     def remember(self, key: str, value: Any):
         """Store information in the agent's memory"""
@@ -503,6 +538,7 @@ class AgentManager:
         self.maki = maki_instance
         self.agents: Dict[str, Agent] = {}
         self.task_queue: List[Dict] = []
+        self.workflows: Dict[str, WorkflowState] = {}
 
         logger.info("AgentManager initialized")
 
@@ -756,8 +792,228 @@ class AgentManager:
 
         return results
 
+    def execute_enhanced_workflow(self, workflow_id: str, tasks: List[WorkflowTask],
+                                 execution_strategy: str = "sequential") -> Dict[str, Any]:
+        """
+        Execute an enhanced workflow with advanced features
+
+        Args:
+            workflow_id: Unique identifier for the workflow
+            tasks: List of WorkflowTask objects
+            execution_strategy: Execution strategy ("sequential", "parallel", "dependency")
+
+        Returns:
+            Dictionary containing workflow results and metrics
+        """
+        logger = logging.getLogger(__name__)
+        workflow_state = WorkflowState(workflow_id)
+        self.workflows[workflow_id] = workflow_state
+
+        results = {}
+        task_map = {task.name: task for task in tasks}
+
+        try:
+            if execution_strategy == "sequential":
+                results = self._execute_sequential(tasks, workflow_state)
+            elif execution_strategy == "parallel":
+                results = self._execute_parallel(tasks, workflow_state)
+            elif execution_strategy == "dependency":
+                results = self._execute_dependency_based(tasks, workflow_state)
+            else:
+                raise ValueError(f"Unknown execution strategy: {execution_strategy}")
+
+            workflow_state.status = "completed"
+            workflow_state.end_time = time.time()
+
+        except Exception as e:
+            workflow_state.status = "failed"
+            workflow_state.end_time = time.time()
+            workflow_state.add_error("workflow", str(e))
+            logger.error(f"Workflow {workflow_id} failed: {str(e)}")
+            raise
+
+        return {
+            'workflow_id': workflow_id,
+            'results': results,
+            'metrics': workflow_state.get_workflow_progress(),
+            'state': workflow_state
+        }
+
+    def _execute_sequential(self, tasks: List[WorkflowTask], workflow_state: WorkflowState) -> Dict[str, Any]:
+        """Execute tasks sequentially"""
+        results = {}
+
+        for task in tasks:
+            try:
+                workflow_state.update_task_status(task.name, TaskStatus.IN_PROGRESS)
+                start_time = time.time()
+
+                # Check if task should execute based on conditions
+                if not task.should_execute():
+                    logger.debug(f"Task {task.name} skipped due to conditions")
+                    workflow_state.update_task_status(task.name, TaskStatus.COMPLETED, "Skipped due to conditions")
+                    continue
+
+                result = self.assign_task(task.agent, task.task)
+                execution_time = time.time() - start_time
+
+                workflow_state.update_task_status(task.name, TaskStatus.COMPLETED, result, execution_time)
+                results[task.name] = result
+
+            except Exception as e:
+                execution_time = time.time() - start_time
+                workflow_state.update_task_status(task.name, TaskStatus.FAILED, str(e), execution_time)
+                workflow_state.add_error(task.name, str(e))
+                raise
+
+        return results
+
+    def _execute_parallel(self, tasks: List[WorkflowTask], workflow_state: WorkflowState) -> Dict[str, Any]:
+        """Execute tasks in parallel where possible"""
+        results = {}
+        # Filter tasks that can be executed in parallel
+        parallel_tasks = [task for task in tasks if task.parallelizable]
+        sequential_tasks = [task for task in tasks if not task.parallelizable]
+
+        # Execute parallel tasks first
+        if parallel_tasks:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_task = {
+                    executor.submit(self._execute_task_with_retry, task, workflow_state): task
+                    for task in parallel_tasks
+                }
+
+                for future in concurrent.futures.as_completed(future_to_task):
+                    task = future_to_task[future]
+                    try:
+                        result = future.result()
+                        results[task.name] = result
+                    except Exception as e:
+                        workflow_state.update_task_status(task.name, TaskStatus.FAILED, str(e))
+                        workflow_state.add_error(task.name, str(e))
+                        raise
+
+        # Execute sequential tasks
+        for task in sequential_tasks:
+            try:
+                result = self._execute_task_with_retry(task, workflow_state)
+                results[task.name] = result
+            except Exception as e:
+                workflow_state.add_error(task.name, str(e))
+                raise
+
+        return results
+
+    def _execute_dependency_based(self, tasks: List[WorkflowTask], workflow_state: WorkflowState) -> Dict[str, Any]:
+        """Execute tasks based on dependencies"""
+        results = {}
+        task_queue = tasks.copy()
+        executed_tasks = set()
+
+        # Topological sort to determine execution order
+        while task_queue:
+            # Find tasks with no unexecuted dependencies
+            ready_tasks = []
+            for task in task_queue:
+                if all(dep in executed_tasks for dep in task.dependencies):
+                    ready_tasks.append(task)
+
+            if not ready_tasks:
+                # Circular dependency or unmet dependency
+                raise ValueError("Circular dependency or unmet dependency found")
+
+            # Execute ready tasks
+            for task in ready_tasks:
+                try:
+                    workflow_state.update_task_status(task.name, TaskStatus.IN_PROGRESS)
+                    start_time = time.time()
+
+                    # Check if task should execute based on conditions
+                    if not task.should_execute():
+                        logger.debug(f"Task {task.name} skipped due to conditions")
+                        workflow_state.update_task_status(task.name, TaskStatus.COMPLETED, "Skipped due to conditions")
+                        executed_tasks.add(task.name)
+                        task_queue.remove(task)
+                        continue
+
+                    result = self.assign_task(task.agent, task.task)
+                    execution_time = time.time() - start_time
+
+                    workflow_state.update_task_status(task.name, TaskStatus.COMPLETED, result, execution_time)
+                    results[task.name] = result
+                    executed_tasks.add(task.name)
+                    task_queue.remove(task)
+
+                except Exception as e:
+                    execution_time = time.time() - start_time
+                    workflow_state.update_task_status(task.name, TaskStatus.FAILED, str(e), execution_time)
+                    workflow_state.add_error(task.name, str(e))
+                    raise
+
+        return results
+
+    def _execute_task_with_retry(self, task: WorkflowTask, workflow_state: WorkflowState) -> str:
+        """Execute a single task with retry logic"""
+        logger = logging.getLogger(__name__)
+
+        for attempt in range(task.max_retries):
+            try:
+                start_time = time.time()
+                result = self.assign_task(task.agent, task.task)
+                execution_time = time.time() - start_time
+                workflow_state.update_task_status(task.name, TaskStatus.COMPLETED, result, execution_time)
+                return result
+            except Exception as e:
+                if attempt == task.max_retries - 1:
+                    # Last attempt, re-raise the exception
+                    raise e
+                logger.warning(f"Task '{task.name}' failed on attempt {attempt + 1}: {str(e)}. Retrying in {task.retry_delay}s...")
+                time.sleep(task.retry_delay)
+
+        raise Exception(f"Task '{task.name}' failed after {task.max_retries} attempts")
+
 
 # Example usage
 if __name__ == "__main__":
     # This would typically be instantiated with a Maki instance
     print("Multi-agent system for Maki framework initialized")
+
+    # Example of how to use the enhanced workflow system
+    """
+    # Example of creating and using enhanced workflows:
+
+    # Initialize Maki and AgentManager
+    maki = Maki("localhost", "11434", "llama3", 0.7)
+    manager = AgentManager(maki)
+
+    # Add agents
+    researcher = manager.add_agent("Researcher", "research analyst", "You are an expert researcher")
+    writer = manager.add_agent("Writer", "content writer", "You are an expert writer")
+
+    # Create workflow tasks with dependencies
+    tasks = [
+        WorkflowTask(
+            name="research_task",
+            agent="Researcher",
+            task="Research the latest developments in AI",
+            dependencies=[],
+            max_retries=2
+        ),
+        WorkflowTask(
+            name="write_task",
+            agent="Writer",
+            task="Write a summary of the research findings",
+            dependencies=["research_task"],
+            max_retries=1
+        )
+    ]
+
+    # Execute workflow
+    result = manager.execute_enhanced_workflow(
+        workflow_id="research_workflow",
+        tasks=tasks,
+        execution_strategy="dependency"
+    )
+
+    print("Workflow results:", result)
+    """
