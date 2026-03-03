@@ -19,6 +19,25 @@ import concurrent.futures
 from enum import Enum
 
 
+# Configure logging for the module
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create console handler and set level
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+
+# Create formatter
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Add formatter to handler
+console_handler.setFormatter(formatter)
+
+# Add handler to logger if not already added
+if not logger.handlers:
+    logger.addHandler(console_handler)
+
+
 class TaskStatus(Enum):
     """Enumeration for task execution status"""
     PENDING = "pending"
@@ -133,8 +152,6 @@ class Agent:
             ValueError: If name is not a valid string
             TypeError: If maki_instance is not a Maki instance
         """
-        logger = logging.getLogger(__name__)
-
         if not isinstance(name, str) or not name.strip():
             raise ValueError("Agent name must be a non-empty string")
 
@@ -182,8 +199,6 @@ class Agent:
             MakiTimeoutError: For timeout errors
             MakiAPIError: For API response errors
         """
-        logger = logging.getLogger(__name__)
-
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
@@ -244,8 +259,6 @@ class Agent:
         Raises:
             Exception: If task fails after all retries
         """
-        logger = logging.getLogger(__name__)
-
         for attempt in range(max_retries):
             try:
                 result = self.execute_task(task, context)
@@ -299,8 +312,6 @@ class Agent:
             ImportError: If plugin cannot be loaded
             Exception: If plugin initialization fails
         """
-        logger = logging.getLogger(__name__)
-
         try:
             if plugin_path:
                 # Load plugin from custom path
@@ -525,7 +536,7 @@ class Agent:
 
 class AgentManager:
     """Manages a collection of agents and facilitates their coordination"""
-
+    
     def __init__(self, maki_instance: Maki):
         """
         Initialize the agent manager
@@ -533,8 +544,6 @@ class AgentManager:
         Args:
             maki_instance: Maki instance to use for LLM interactions
         """
-        logger = logging.getLogger(__name__)
-
         self.maki = maki_instance
         self.agents: Dict[str, Agent] = {}
         self.task_queue: List[Dict] = []
@@ -560,7 +569,6 @@ class AgentManager:
             ValueError: If name is not a valid string
             TypeError: If maki_instance is not a Maki instance
         """
-        logger = logging.getLogger(__name__)
 
         if not isinstance(name, str) or not name.strip():
             raise ValueError("Agent name must be a non-empty string")
@@ -700,7 +708,6 @@ class AgentManager:
                 synthesis_result = self.maki.request(synthesis_prompt)
                 results['final_synthesis'] = synthesis_result
             except Exception as e:
-                logger = logging.getLogger(__name__)
                 logger.error(f"Failed to create synthesis: {str(e)}")
                 # Return original results if synthesis fails
                 pass
@@ -738,7 +745,6 @@ class AgentManager:
                 result = self.maki.request(agent_prompt)
                 agent_results[agent_name] = result
             except Exception as e:
-                logger = logging.getLogger(__name__)
                 logger.error(f"Failed to get result from agent {agent_name}: {str(e)}")
                 agent_results[agent_name] = f"Error: {str(e)}"
 
@@ -759,7 +765,6 @@ class AgentManager:
             final_result = self.maki.request(synthesis_prompt)
             return final_result
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to create final synthesis: {str(e)}")
             # Return combined results if synthesis fails
             return json.dumps(agent_results, indent=2)
@@ -805,7 +810,6 @@ class AgentManager:
         Returns:
             Dictionary containing workflow results and metrics
         """
-        logger = logging.getLogger(__name__)
         workflow_state = WorkflowState(workflow_id)
         self.workflows[workflow_id] = workflow_state
 
@@ -954,7 +958,6 @@ class AgentManager:
 
     def _execute_task_with_retry(self, task: WorkflowTask, workflow_state: WorkflowState) -> str:
         """Execute a single task with retry logic"""
-        logger = logging.getLogger(__name__)
 
         for attempt in range(task.max_retries):
             try:
