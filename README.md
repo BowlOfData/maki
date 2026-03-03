@@ -14,6 +14,12 @@ Maki is a Python framework for multi-agent LLM interactions using Ollama.
   - Step-by-step thinking
   - Self-correction mechanisms
   - Task decomposition
+- Workflow management system:
+  - Task dependencies and conditions
+  - Retry logic with configurable delays
+  - Parallelizable task execution
+  - Comprehensive workflow state tracking
+  - Execution strategies (sequential, parallel, dependency-based)
 
 ## Installation
 
@@ -79,6 +85,16 @@ The enhanced Agent class now supports:
 
 These capabilities allow agents to handle more complex reasoning tasks and improve their performance through iterative refinement.
 
+## Multi-Agent Coordination
+
+The AgentManager now supports advanced coordination patterns:
+
+1. **Coordinate multiple agents**: `agent_manager.coordinate_agents(tasks, coordination_prompt)`
+2. **Collaborative task execution**: `agent_manager.collaborative_task(task, agents, context)`
+3. **Workflow execution**: `agent_manager.run_workflow(workflow)`
+
+These methods enable sophisticated multi-agent workflows that can coordinate complex tasks across multiple agents.
+
 ## Plugin Support
 
 Agents now support plugins for extending functionality. Plugins can be loaded and used within agent tasks:
@@ -101,6 +117,46 @@ Plugins are automatically available to agents and can be used to extend agent ca
 
 Available built-in plugins include `file_reader`, `directory_reader`, `file_writer`, `web_to_md`, and `ftp_client`.
 
+## Workflow Management
+
+The enhanced workflow system allows for complex multi-agent coordination:
+
+```python
+from maki.agents import WorkflowTask, TaskStatus, WorkflowState
+
+# Create workflow tasks with dependencies
+tasks = [
+    WorkflowTask(
+        name="research_task",
+        agent="Researcher",
+        task="Research the latest developments in AI",
+        dependencies=[],
+        max_retries=2
+    ),
+    WorkflowTask(
+        name="write_task",
+        agent="Writer",
+        task="Write a summary of the research findings",
+        dependencies=["research_task"],
+        max_retries=1
+    )
+]
+
+# Execute workflow with different strategies
+result = agent_manager.execute_enhanced_workflow(
+    workflow_id="research_workflow",
+    tasks=tasks,
+    execution_strategy="dependency"
+)
+```
+
+The workflow system supports:
+- Task dependencies and conditions
+- Retry logic with configurable delays
+- Parallelizable task execution
+- Comprehensive workflow state tracking
+- Execution strategies (sequential, parallel, dependency-based)
+
 ## Project Structure
 
 ```
@@ -115,7 +171,8 @@ maki/
 ├── exceptions.py
 ├── agents/
 │   ├── __init__.py
-│   └── agents.py
+│   ├── agents.py
+│   └── workflow.py
 ├── plugins/
 │   ├── __init__.py
 │   ├── file_reader/
@@ -138,7 +195,8 @@ maki/
     ├── test_error_handling.py
     ├── test_different_llms.py
     ├── test_logging.py
-    └── test_history_cleanup.py
+    ├── test_history_cleanup.py
+    └── test_enhanced_workflow.py
 ```
 
 ## Examples
