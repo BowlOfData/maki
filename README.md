@@ -155,26 +155,63 @@ Starting from version 0.1.0, Maki no longer automatically configures logging whe
 To configure logging in your application, you need to explicitly call the `configure_logging()` function from `maki.logging_config`:
 
 ```python
-from maki.logging_config import setup_logging
+from maki.logging_config import configure_logging
 import logging
 
 # Setup logging with default settings (StreamHandler only)
-setup_logging()
+configure_logging()
 
 # Or setup with custom settings
-setup_logging(log_level=logging.DEBUG, log_file_path="my_app.log")
+configure_logging(log_level=logging.DEBUG, log_file_path="my_app.log")
 ```
 
 If you want to use only console output (recommended for most cases):
 ```python
-from maki.logging_config import setup_logging
-setup_logging()
+from maki.logging_config import configure_logging
+configure_logging()
 ```
 
 If you want to log to both console and file:
 ```python
-from maki.logging_config import setup_logging
-setup_logging(log_file_path="app.log")
+from maki.logging_config import configure_logging
+configure_logging(log_file_path="app.log")
+```
+
+### Logging Levels
+
+The framework uses standard Python logging levels:
+- `DEBUG`: Detailed information, typically only of interest when diagnosing problems
+- `INFO`: Confirmation that things are working as expected
+- `WARNING`: An indication that something unexpected happened
+- `ERROR`: Due to a more serious problem, the software has not been able to perform some function
+
+### Log Format
+
+All logs follow this format:
+```
+2026-03-03 14:30:45,123 - module_name - LEVEL - Message
+```
+
+### Example Usage with Logging
+
+```python
+import logging
+from maki import Maki
+from maki.logging_config import configure_logging
+
+# Configure logging
+configure_logging(log_level=logging.INFO)
+
+# Create a logger for your application
+logger = logging.getLogger(__name__)
+
+# Initialize Maki
+maki = Maki(url="localhost", port="11434", model="llama3", temperature=0.7)
+logger.info("Maki initialized successfully")
+
+# Use Maki
+result = maki.request("Hello, world!")
+logger.debug(f"Request result: {result}")
 ```
 
 ## License

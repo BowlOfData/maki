@@ -6,8 +6,8 @@ import sys
 import os
 
 # Configure logging
-def setup_logging():
-    """Setup logging configuration"""
+def configure_logging():
+    """Configure logging configuration"""
     # Setup logging configuration with only StreamHandler (no file handler by default)
     logging.basicConfig(
         level=logging.INFO,
@@ -17,9 +17,9 @@ def setup_logging():
         ]
     )
 
-# Setup logging when module is imported
+# Configure logging when module is imported
 # Note: This is now commented out to prevent automatic side effects
-# setup_logging()
+# configure_logging()
 
 # Import and expose the main classes
 from .maki import Maki
