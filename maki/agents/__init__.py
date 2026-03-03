@@ -6,6 +6,7 @@ using the Maki framework. Agents can work together to solve complex tasks throug
 coordination, delegation, and collaboration.
 """
 
-from .agents import Agent, AgentManager, WorkflowTask, TaskStatus, WorkflowState
+from .agents import Agent, AgentManager
+from .workflow import WorkflowTask, WorkflowState, TaskStatus
 
 __all__ = ['Agent', 'AgentManager', 'WorkflowTask', 'TaskStatus', 'WorkflowState']
