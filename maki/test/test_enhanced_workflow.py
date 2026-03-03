@@ -7,7 +7,7 @@ import time
 
 # Import the classes we want to test
 from maki.maki import Maki
-from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus
+from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus, WorkflowState
 
 
 class TestEnhancedWorkflowManagement(unittest.TestCase):
