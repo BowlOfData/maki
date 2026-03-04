@@ -151,7 +151,7 @@ class FTPClient:
 
         except Exception as e:
             result['error'] = str(e)
-            self.logger.error(f"Error connecting to server {host}: {str(e)}")
+            self.logger.error(f"Error connecting to server {host}: {str(e)}", exc_info=True)
 
         return result
 

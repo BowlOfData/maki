@@ -95,7 +95,7 @@ class FileReader:
 
         except Exception as e:
             result['error'] = str(e)
-            self.logger.error(f"Error reading file {file_path}: {str(e)}")
+            self.logger.error(f"Error reading file {file_path}: {str(e)}", exc_info=True)
 
         return result
 
@@ -154,7 +154,7 @@ class FileReader:
 
         except Exception as e:
             result['error'] = str(e)
-            self.logger.error(f"Error reading file {file_path} as lines: {str(e)}")
+            self.logger.error(f"Error reading file {file_path} as lines: {str(e)}", exc_info=True)
 
         return result
 
@@ -201,7 +201,7 @@ class FileReader:
 
         except Exception as e:
             result['error'] = str(e)
-            self.logger.error(f"Error getting file info for {file_path}: {str(e)}")
+            self.logger.error(f"Error getting file info for {file_path}: {str(e)}", exc_info=True)
 
         return result
 

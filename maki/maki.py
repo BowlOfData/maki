@@ -80,7 +80,7 @@ class Maki:
             self.logger.debug("Request completed successfully")
             return result
         except Exception as e:
-            self.logger.error(f"Request failed: {str(e)}")
+            self.logger.error(f"Request failed: {str(e)}", exc_info=True)
             # Re-raise with more specific type if needed
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
@@ -105,7 +105,7 @@ class Maki:
             self.logger.debug("Version information retrieved successfully")
             return result
         except Exception as e:
-            self.logger.error(f"Failed to retrieve version: {str(e)}")
+            self.logger.error(f"Failed to retrieve version: {str(e)}", exc_info=True)
             # Re-raise with more specific type if needed
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise

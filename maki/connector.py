@@ -62,24 +62,24 @@ class Connector:
             logger.debug("Request completed successfully")
             return jsonify["response"]
         except requests.exceptions.Timeout:
-            logger.error("HTTP request timed out")
+            logger.error("HTTP request timed out", exc_info=True)
             raise MakiTimeoutError("HTTP request timed out")
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"HTTP connection failed: {str(e)}")
+            logger.error(f"HTTP connection failed: {str(e)}", exc_info=True)
             raise MakiNetworkError(f"HTTP connection failed: {str(e)}")
         except requests.exceptions.HTTPError as e:
             # Extract status code from the exception object
             status_code = e.response.status_code if e.response else "unknown"
-            logger.error(f"HTTP request failed with status {status_code}: {str(e)}")
+            logger.error(f"HTTP request failed with status {status_code}: {str(e)}", exc_info=True)
             if status_code >= 500:
                 raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
             else:
                 raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}")
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed: {str(e)}")
+            logger.error(f"JSON parsing failed: {str(e)}", exc_info=True)
             raise MakiAPIError(f"JSON parsing failed: {str(e)}")
         except KeyError as e:
-            logger.error(f"API response structure error: {str(e)}")
+            logger.error(f"API response structure error: {str(e)}", exc_info=True)
             raise MakiAPIError(f"API response structure error: {str(e)}")
 
     @staticmethod
@@ -109,15 +109,15 @@ class Connector:
             logger.debug("Version request completed successfully")
             return response.text
         except requests.exceptions.Timeout:
-            logger.error("HTTP request timed out")
+            logger.error("HTTP request timed out", exc_info=True)
             raise MakiTimeoutError("HTTP request timed out")
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"HTTP connection failed: {str(e)}")
+            logger.error(f"HTTP connection failed: {str(e)}", exc_info=True)
             raise MakiNetworkError(f"HTTP connection failed: {str(e)}")
         except requests.exceptions.HTTPError as e:
             # Extract status code from the exception object
             status_code = e.response.status_code if e.response else "unknown"
-            logger.error(f"HTTP request failed with status {status_code}: {str(e)}")
+            logger.error(f"HTTP request failed with status {status_code}: {str(e)}", exc_info=True)
             if status_code >= 500:
                 raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
             else:

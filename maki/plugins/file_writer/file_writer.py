@@ -136,7 +136,7 @@ class FileWriter:
 
         except Exception as e:
             result['error'] = str(e)
-            self.logger.error(f"Error appending to file {file_path}: {str(e)}")
+            self.logger.error(f"Error appending to file {file_path}: {str(e)}", exc_info=True)
 
         return result
 

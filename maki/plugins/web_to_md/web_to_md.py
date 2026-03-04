@@ -143,10 +143,10 @@ class WebToMd:
 
         except requests.exceptions.RequestException as e:
             result['error'] = f"Request failed: {str(e)}"
-            self.logger.error(f"Request failed for URL {url}: {str(e)}")
+            self.logger.error(f"Request failed for URL {url}: {str(e)}", exc_info=True)
         except Exception as e:
             result['error'] = f"Unexpected error: {str(e)}"
-            self.logger.error(f"Unexpected error for URL {url}: {str(e)}")
+            self.logger.error(f"Unexpected error for URL {url}: {str(e)}", exc_info=True)
 
         return result
     

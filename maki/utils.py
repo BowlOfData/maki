@@ -329,5 +329,5 @@ class Utils:
             logger.debug("Image conversion completed successfully")
             return result
         except Exception as e:
-            logger.error(f"Image conversion failed: {str(e)}")
+            logger.error(f"Image conversion failed: {str(e)}", exc_info=True)
             raise Exception(f"Error reading image file {img}: {str(e)}")

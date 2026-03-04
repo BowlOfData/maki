@@ -122,7 +122,7 @@ class Agent:
             logger.debug(f"Task '{task}' completed successfully for agent '{self.name}'")
         except Exception as e:
             # Re-raise with more context
-            logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}")
+            logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
             # Re-raise with more specific type if needed, otherwise raise a generic MakiError
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise

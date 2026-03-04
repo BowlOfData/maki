@@ -160,7 +160,7 @@ class DirectoryReader(FileReader):
 
         except Exception as e:
             result['error'] = str(e)
-            self.logger.error(f"Error reading directory {dir_path}: {str(e)}")
+            self.logger.error(f"Error reading directory {dir_path}: {str(e)}", exc_info=True)
 
         return result
 
