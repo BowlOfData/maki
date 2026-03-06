@@ -48,7 +48,7 @@ class FTPClient:
         self.connection_type = None
 
     def connect(self, host: str, username: str, password: str = None, port: int = None,
-                protocol: str = 'ftp', cert_path: str = None) -> Dict[str, Any]:
+                protocol: str = 'ftp', cert_path: str = None, known_hosts_path: str = None) -> Dict[str, Any]:
         """
         Connect to an FTP or SFTP server.
 
@@ -110,7 +110,8 @@ class FTPClient:
                 self.connection_type = 'ftp'
 
                 result['success'] = True
-                self.logger.info(f"Successfully connected to FTP server: {host}")
+                # Log connection info without password for security
+                self.logger.info("Successfully connected to FTP server")
 
             elif protocol.lower() == 'sftp':
                 if port is None:
@@ -118,7 +119,21 @@ class FTPClient:
 
                 # For SFTP, we need SSH client
                 self.sftp_connection = SSHClient()
-                self.sftp_connection.set_missing_host_key_policy('auto_add')
+
+                # Use known_hosts file for host key verification instead of auto_add
+                if known_hosts_path and os.path.exists(known_hosts_path):
+                    # Load host keys from a specific file
+                    self.sftp_connection.load_host_keys(known_hosts_path)
+                else:
+                    # Load system host keys (default behavior) - only if path is valid
+                    try:
+                        self.sftp_connection.load_system_host_keys()
+                    except Exception:
+                        # If we can't load system host keys, continue with rejection policy
+                        pass
+
+                # Set policy to reject unknown hosts, requiring verification
+                self.sftp_connection.set_missing_host_key_policy(paramiko.RejectPolicy())
 
                 # If certificate path is provided, use key-based authentication
                 if cert_path and os.path.exists(cert_path):
@@ -143,14 +158,15 @@ class FTPClient:
                 self.connection_type = 'sftp'
 
                 result['success'] = True
-                self.logger.info(f"Successfully connected to SFTP server: {host}")
+                # Log connection info without password for security
+                self.logger.info("Successfully connected to SFTP server")
 
             else:
                 result['error'] = f"Unsupported protocol: {protocol}. Supported protocols are 'ftp' and 'sftp'."
                 return result
 
         except Exception as e:
-            result['error'] = str(e)
+            result['error'] = 'Connection failed'
             self.logger.error(f"Error connecting to server {host}: {str(e)}", exc_info=True)
 
         return result
@@ -185,7 +201,7 @@ class FTPClient:
             self.logger.info("Successfully disconnected from server")
 
         except Exception as e:
-            result['error'] = str(e)
+            result['error'] = 'Disconnection failed'
             self.logger.error(f"Error disconnecting from server: {str(e)}")
 
         return result
@@ -269,7 +285,7 @@ class FTPClient:
             self.logger.info(f"Successfully uploaded file: {local_path} -> {remote_path}")
 
         except Exception as e:
-            result['error'] = str(e)
+            result['error'] = 'Upload failed'
             self.logger.error(f"Error uploading file {local_path}: {str(e)}")
 
         return result
@@ -349,7 +365,7 @@ class FTPClient:
             self.logger.info(f"Successfully downloaded file: {remote_path} -> {local_path}")
 
         except Exception as e:
-            result['error'] = str(e)
+            result['error'] = 'Download failed'
             self.logger.error(f"Error downloading file {remote_path}: {str(e)}")
 
         return result
@@ -410,7 +426,7 @@ class FTPClient:
             self.logger.info(f"Successfully listed directory: {remote_path}")
 
         except Exception as e:
-            result['error'] = str(e)
+            result['error'] = 'Directory listing failed'
             self.logger.error(f"Error listing directory {remote_path}: {str(e)}")
 
         return result
@@ -463,7 +479,7 @@ class FTPClient:
             self.logger.info(f"Successfully created directory: {remote_path}")
 
         except Exception as e:
-            result['error'] = str(e)
+            result['error'] = 'Directory creation failed'
             self.logger.error(f"Error creating directory {remote_path}: {str(e)}")
 
         return result
@@ -528,7 +544,7 @@ class FTPClient:
             self.logger.info(f"Successfully removed directory: {remote_path}")
 
         except Exception as e:
-            result['error'] = str(e)
+            result['error'] = 'Directory removal failed'
             self.logger.error(f"Error removing directory {remote_path}: {str(e)}")
 
         return result
@@ -646,7 +662,7 @@ class FTPClient:
             self.logger.info(f"Retrieved file info for: {remote_path}")
 
         except Exception as e:
-            result['error'] = str(e)
+            result['error'] = 'File info retrieval failed'
             self.logger.error(f"Error getting file info for {remote_path}: {str(e)}")
 
         return result
