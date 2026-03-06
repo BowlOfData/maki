@@ -42,15 +42,6 @@ You can also use the Maki framework by copying the `maki` folder directly into y
    from maki.agents import AgentManager, Agent
    ```
 
-## Python Compatibility
-
-This framework is compatible with Python 3.7 and above. The code has been updated to remove all dependencies on Python 3.11+ features like `StrEnum`, ensuring compatibility with older Python versions.
-
-This approach allows you to use Maki without installing it as a package, which is useful for:
-- Embedding Maki directly in your project
-- Development and testing
-- Projects with restricted package installation
-
 ## Quick Start
 
 ```python
@@ -91,7 +82,7 @@ The AgentManager now supports advanced coordination patterns:
 
 1. **Coordinate multiple agents**: `agent_manager.coordinate_agents(tasks, coordination_prompt)`
 2. **Collaborative task execution**: `agent_manager.collaborative_task(task, agents, context)`
-3. **Workflow execution**: `agent_manager.run_workflow(workflow)`
+3. **Workflow execution**: `agent_manager.run_workflow(tasks)`
 
 These methods enable sophisticated multi-agent workflows that can coordinate complex tasks across multiple agents.
 
@@ -142,12 +133,8 @@ tasks = [
     )
 ]
 
-# Execute workflow with different strategies
-result = agent_manager.execute_enhanced_workflow(
-    workflow_id="research_workflow",
-    tasks=tasks,
-    execution_strategy="dependency"
-)
+# Execute workflow
+result = agent_manager.run_workflow(tasks)
 ```
 
 The workflow system supports:
