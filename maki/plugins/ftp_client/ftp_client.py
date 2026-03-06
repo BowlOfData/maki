@@ -47,6 +47,62 @@ class FTPClient:
         self.connected = False
         self.connection_type = None
 
+    def _validate_path(self, path: str, is_local: bool = True) -> Dict[str, Any]:
+        """
+        Validate a file or directory path to prevent path traversal attacks.
+
+        Args:
+            path (str): The path to validate
+            is_local (bool): Whether this is a local path (True) or remote path (False)
+
+        Returns:
+            Dict[str, Any]: A dictionary containing validation results
+                - 'valid': Boolean indicating if path is valid
+                - 'normalized_path': Normalized path if valid
+                - 'error': Error message if invalid
+        """
+        if not isinstance(path, str) or not path.strip():
+            return {
+                'valid': False,
+                'normalized_path': None,
+                'error': 'Path must be a non-empty string'
+            }
+
+        # Normalize the path
+        normalized_path = os.path.normpath(path)
+
+        # Check for path traversal attempts (e.g., ../, ..\\)
+        if '..' in normalized_path.split(os.sep):
+            return {
+                'valid': False,
+                'normalized_path': None,
+                'error': 'Path traversal attempt detected'
+            }
+
+        # For local paths, check that they don't go outside of allowed directories
+        if is_local:
+            # Check for absolute paths (not allowed)
+            if os.path.isabs(normalized_path):
+                return {
+                    'valid': False,
+                    'normalized_path': None,
+                    'error': 'Absolute paths are not allowed'
+                }
+
+            # Additional check: prevent going above current working directory
+            if normalized_path.startswith(os.pardir):
+                return {
+                    'valid': False,
+                    'normalized_path': None,
+                    'error': 'Path traversal attempt detected'
+                }
+
+        return {
+            'valid': True,
+            'normalized_path': normalized_path,
+            'error': None
+        }
+
     def connect(self, host: str, username: str, password: str = None, port: int = None,
                 protocol: str = 'ftp', cert_path: str = None, known_hosts_path: str = None) -> Dict[str, Any]:
         """
