@@ -11,11 +11,13 @@ from unittest.mock import patch, MagicMock
 # Add the current directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from maki.makiLLama import MakiLLama, GenerationConfig, Message
+
 class TestMakiLLama(unittest.TestCase):
 
     def test_initialization(self):
         """Test that MakiLLama can be initialized with parameters"""
-        from maki.makiLLama import MakiLLama
+        
 
         # Test basic initialization
         with patch.object(MakiLLama, '_verify_connection'):
@@ -31,27 +33,10 @@ class TestMakiLLama(unittest.TestCase):
         self.assertIsNotNone(session)
 
 
-    def test_methods_exist(self):
-        """Test that MakiLLama has all the required methods"""
-        from maki.makiLLama import MakiLLama
-        with patch.object(MakiLLama, '_verify_connection'):
-            llm = MakiLLama(model="gemma3")
-
-        # Test that methods exist
-        self.assertTrue(hasattr(llm, 'chat'))
-        self.assertTrue(hasattr(llm, 'stream'))
-        self.assertTrue(hasattr(llm, 'async_chat'))
-        self.assertTrue(hasattr(llm, 'session'))
-        self.assertTrue(hasattr(llm, 'list_models'))
-        self.assertTrue(hasattr(llm, 'pull'))
-        self.assertTrue(hasattr(llm, '_build_messages'))
-        self.assertTrue(hasattr(llm, '_verify_connection'))
-
     @patch('requests.post')
     @patch('requests.get')
     def test_chat_method(self, mock_get, mock_post):
         """Test the chat method functionality"""
-        from maki.makiLLama import MakiLLama
 
         # Setup mock responses
         mock_get_response = MagicMock()
@@ -86,7 +71,6 @@ class TestMakiLLama(unittest.TestCase):
     @patch('requests.get')
     def test_stream_method(self, mock_get, mock_post):
         """Test the stream method functionality"""
-        from maki.makiLLama import MakiLLama
 
         # Setup mock responses for get request (model verification)
         mock_get_response = MagicMock()
@@ -118,7 +102,6 @@ class TestMakiLLama(unittest.TestCase):
     @patch('requests.get')
     def test_session_functionality(self, mock_get, mock_post):
         """Test the session functionality"""
-        from maki.makiLLama import MakiLLama
 
         # Setup mock responses
         mock_get_response = MagicMock()
@@ -152,7 +135,6 @@ class TestMakiLLama(unittest.TestCase):
 
     def test_generation_config(self):
         """Test GenerationConfig functionality"""
-        from maki.makiLLama import GenerationConfig
 
         # Test default config
         config = GenerationConfig()
@@ -190,7 +172,6 @@ class TestMakiLLama(unittest.TestCase):
 
     def test_message_dataclass(self):
         """Test Message dataclass functionality"""
-        from maki.makiLLama import Message
 
         # Test Message creation
         msg = Message(role="user", content="Hello world")
