@@ -71,10 +71,16 @@ class Connector:
             # Extract status code from the exception object
             status_code = e.response.status_code if e.response else "unknown"
             logger.error(f"HTTP request failed with status {status_code}: {str(e)}", exc_info=True)
-            if status_code >= 500:
-                raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
-            else:
-                raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}")
+            # Convert to integer if possible for comparison
+            try:
+                status_code_int = int(status_code)
+                if status_code_int >= 500:
+                    raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
+                else:
+                    raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}")
+            except (ValueError, TypeError):
+                # If we can't convert status code to int, treat as generic network error
+                raise MakiNetworkError(f"HTTP request failed with status {status_code}: {str(e)}")
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing failed: {str(e)}", exc_info=True)
             raise MakiAPIError(f"JSON parsing failed: {str(e)}")
@@ -122,10 +128,16 @@ class Connector:
             # Extract status code from the exception object
             status_code = e.response.status_code if e.response else "unknown"
             logger.error(f"HTTP request failed with status {status_code}: {str(e)}", exc_info=True)
-            if status_code >= 500:
-                raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
-            else:
-                raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}")
+            # Convert to integer if possible for comparison
+            try:
+                status_code_int = int(status_code)
+                if status_code_int >= 500:
+                    raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
+                else:
+                    raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}")
+            except (ValueError, TypeError):
+                # If we can't convert status code to int, treat as generic network error
+                raise MakiNetworkError(f"HTTP request failed with status {status_code}: {str(e)}")
         except Exception as e:
             # Catch-all for any other unexpected exceptions
             logger.error(f"Unexpected error in version request: {str(e)}", exc_info=True)

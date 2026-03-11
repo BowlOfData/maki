@@ -25,15 +25,11 @@ from .utils import Utils
 
 import requests
 import httpx
-from rich.console import Console
-from rich.markdown import Markdown
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 log = logging.getLogger(__name__)
-
-console = Console()
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -86,12 +82,6 @@ class LLMResponse:
 
     def __str__(self) -> str:
         return self.content
-
-    def print(self, markdown: bool = True) -> None:
-        if markdown:
-            console.print(Markdown(self.content))
-        else:
-            console.print(self.content)
 
     @property
     def tokens_per_second(self) -> float:
@@ -190,9 +180,9 @@ class MakiLLama(Maki):
                     status = data.get("status", "")
                     if "total" in data and data["total"]:
                         pct = int(data.get("completed", 0) / data["total"] * 100)
-                        console.print(f"  {status} [{pct}%]", end="\r")
+                        log.info(f"  {status} [{pct}%]", end="\r")
                     else:
-                        console.print(f"  {status}")
+                        log.info(f"  {status}")
         except Exception as e:
             log.error("Failed to pull model '%s': %s", target, str(e))
             # Ensure we clean up the response if there's an error
@@ -459,9 +449,9 @@ class ChatSession:
         """Pretty-print the full conversation."""
         for msg in self._history:
             color = "cyan" if msg.role == "user" else "green"
-            console.print(f"[bold {color}]{msg.role.upper()}[/bold {color}]")
-            console.print(Markdown(msg.content))
-            console.rule()
+            log.info(f"[bold {color}]{msg.role.upper()}[/bold {color}]")
+            log.info(Markdown(msg.content))
+            log.info("")
 
     @property
     def history(self) -> list[Message]:
@@ -495,47 +485,3 @@ def mistral(system: Optional[str] = None, **kwargs) -> MakiLLama:
     return MakiLLama(model="mistral", system_prompt=system, **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# Demo / smoke-test
-# ---------------------------------------------------------------------------
-
-def _demo() -> None:
-    console.rule("[bold blue]local_llm.py — Demo[/bold blue]")
-
-    # ── 1. Basic chat ──────────────────────────────────────────────────────
-    llm = gemma3(system="You are a concise assistant. Keep answers under 3 sentences.")
-    console.print("\n[bold]1. Single-turn chat[/bold]")
-    resp = llm("What is recursion in programming?")
-    resp.print()
-    console.print(
-        f"\n[dim]Tokens: {resp.total_tokens} | "
-        f"Speed: {resp.tokens_per_second:.1f} tok/s | "
-        f"Time: {resp.elapsed_seconds:.2f}s[/dim]"
-    )
-
-    # ── 2. Streaming ───────────────────────────────────────────────────────
-    console.print("\n[bold]2. Streaming output[/bold]")
-    for chunk in llm.stream("Name 3 Python web frameworks in one sentence each."):
-        console.print(chunk, end="")
-    console.print()
-
-    # ── 3. Multi-turn session ──────────────────────────────────────────────
-    console.print("\n[bold]3. Multi-turn session[/bold]")
-    session = llm.session(system="You are an expert chef specializing in Italian cuisine.")
-    r1 = session.say("What's the secret to perfect pasta carbonara?")
-    console.print(r1)
-    r2 = session.say("Can I substitute bacon for guanciale?")
-    console.print(r2)
-    console.print(f"\n[dim]Session turns: {len(session)}[/dim]")
-
-    # ── 4. List local models ────────────────────────────────────────────────
-    console.print("\n[bold]4. Available local models[/bold]")
-    models = llm.list_models()
-    for m in models:
-        console.print(f"  • {m}")
-
-    console.rule("[bold green]Done[/bold green]")
-
-
-if __name__ == "__main__":
-    _demo()

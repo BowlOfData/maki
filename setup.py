@@ -18,6 +18,8 @@ setup(
     python_requires=">=3.7",
     install_requires=[
         "requests>=2.25.0",
+        "paramiko>=2.11.0",
+        "httpx>=0.23.0",
     ],
     extras_require={
         "dev": [

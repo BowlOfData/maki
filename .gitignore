@@ -209,3 +209,4 @@ examples/collaborative_task_example.py
 examples/agent_example.py
 examples/agent_coordination_example.py
 examples/__init__.py
+examples/example_usage.py
