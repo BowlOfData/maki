@@ -21,8 +21,6 @@ class TestMakiLLama(unittest.TestCase):
         with patch.object(MakiLLama, '_verify_connection'):
             llm = MakiLLama(model="gemma3")
 
-
-        llm = MakiLLama(model="gemma3")
         self.assertEqual(llm.model, "gemma3")
         self.assertEqual(llm.base_url, "http://localhost:11434")
         self.assertIsNone(llm.system_prompt)
