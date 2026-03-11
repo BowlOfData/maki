@@ -81,6 +81,10 @@ class Connector:
         except KeyError as e:
             logger.error(f"API response structure error: {str(e)}", exc_info=True)
             raise MakiAPIError(f"API response structure error: {str(e)}")
+        except Exception as e:
+            # Catch-all for any other unexpected exceptions
+            logger.error(f"Unexpected error in HTTP request: {str(e)}", exc_info=True)
+            raise MakiNetworkError(f"Unexpected error in HTTP request: {str(e)}")
 
     @staticmethod
     def version(url: str) -> str:
@@ -122,4 +126,8 @@ class Connector:
                 raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}")
             else:
                 raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}")
+        except Exception as e:
+            # Catch-all for any other unexpected exceptions
+            logger.error(f"Unexpected error in version request: {str(e)}", exc_info=True)
+            raise MakiNetworkError(f"Unexpected error in version request: {str(e)}")
     

@@ -5,7 +5,8 @@ Public package interface for Maki.
 from importlib import import_module
 
 
-__all__ = ["Maki", "Connector", "Utils", "Agent", "AgentManager"]
+
+__all__ = ["Maki", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama"]
 
 _LAZY_EXPORTS = {
     "Maki": (".maki", "Maki"),
@@ -13,6 +14,7 @@ _LAZY_EXPORTS = {
     "Utils": (".utils", "Utils"),
     "Agent": (".agents", "Agent"),
     "AgentManager": (".agents", "AgentManager"),
+    "MakiLLama": (".makiLLama", "MakiLLama"),
 }
 
 

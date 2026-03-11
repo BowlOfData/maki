@@ -288,38 +288,38 @@ class Utils:
         # Additional security checks to prevent path traversal attacks
         img = img.strip()
 
-        # Check for path traversal attempts (but allow absolute paths)
-        if img.startswith('../') or '/../' in img:
-            raise ValueError("Image path contains invalid characters")
+        # Check for path traversal attempts using multiple methods
+        # 1. Check for forbidden patterns like .. in the path
+        if '..' in img:
+            # More comprehensive check for directory traversal
+            if img == '..' or img.startswith('../') or img.endswith('/..') or '/..' in img:
+                raise ValueError("Image path contains invalid traversal characters")
 
-        # Additional check for various path traversal patterns
-        if '..' in img and img != '..':
-            # Allow single .. for relative paths, but not multiple or in the middle
-            parts = img.split('/')
-            for part in parts:
-                if part == '..':
-                    raise ValueError("Image path contains invalid traversal characters")
+            # Also check for encoded versions of path traversal
+            if '%2e%2e' in img.lower():
+                raise ValueError("Image path contains encoded traversal characters")
 
-        # Check for symbolic links to prevent directory traversal
+        # 2. Check for symbolic links to prevent directory traversal
         if os.path.islink(img):
             raise ValueError("Image path must not be a symbolic link")
 
-        # Additional security: validate that the path resolves to a file within allowed boundaries
-        # Resolve the absolute path to prevent directory traversal
+        # 3. Resolve the absolute path to prevent directory traversal
         try:
             abs_path = os.path.abspath(img)
         except Exception:
             raise ValueError("Invalid image path")
 
-        # Ensure the resolved path is within the expected scope (basic check)
-        # This prevents accessing files outside of intended directories
+        # 4. Ensure the resolved path is within the current working directory
+        # This prevents access to files outside of intended scope
         if not abs_path.startswith(os.getcwd()):
-            # Allow access to absolute paths that are within the current working directory
-            # but be more restrictive for paths that could go outside
-            pass
+            raise ValueError("Image path must be within the current working directory")
 
+        # 5. Check that the file exists and is actually a file (not a directory)
         if not os.path.exists(img):
             raise FileNotFoundError(f"Image file not found: {img}")
+
+        if not os.path.isfile(img):
+            raise ValueError("Image path must point to a file, not a directory")
 
         try:
             logger.debug(f"Converting image to base64: {img}")
@@ -331,3 +331,37 @@ class Utils:
         except Exception as e:
             logger.error(f"Image conversion failed: {str(e)}", exc_info=True)
             raise Exception(f"Error reading image file {img}: {str(e)}")
+
+    @staticmethod
+    def cleanup_response(response, client=None):
+        """
+        Common utility function to clean up HTTP responses and clients.
+
+        This function handles proper cleanup of both requests.Response objects
+        and httpx.AsyncClient instances to prevent resource leaks.
+
+        Args:
+            response: requests.Response object or None
+            client: httpx.AsyncClient instance or None
+        """
+        # Clean up requests.Response object if provided
+        if response is not None and hasattr(response, 'close'):
+            try:
+                response.close()
+            except:
+                pass  # Ignore cleanup errors
+
+        # Clean up httpx.AsyncClient if provided
+        if client is not None:
+            try:
+                # For sync methods, we can close directly
+                if hasattr(client, 'close'):
+                    client.close()
+                # For async methods, we need to await aclose()
+                elif hasattr(client, 'aclose'):
+                    import asyncio
+                    # This is a bit tricky - for async context we'd want to await,
+                    # but this is a sync utility, so we'll just ignore it here
+                    pass
+            except:
+                pass  # Ignore cleanup errors

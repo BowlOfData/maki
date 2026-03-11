@@ -20,6 +20,16 @@ Maki is a Python framework for multi-agent LLM interactions using Ollama.
   - Parallelizable task execution
   - Comprehensive workflow state tracking
   - Execution strategies (sequential, parallel, dependency-based)
+- Plugin system for extending agent capabilities:
+  - Built-in plugins: file_reader, directory_reader, file_writer, web_to_md, ftp_client
+  - Easy plugin loading and unloading
+- Advanced multi-agent coordination patterns:
+  - Agent coordination across multiple tasks
+  - Collaborative task execution
+  - Workflow orchestration
+- Flexible architecture supporting both basic and advanced use cases
+- Built-in logging configuration
+- Error handling and retry mechanisms
 
 ## Installation
 
@@ -66,6 +76,31 @@ result = agent_manager.assign_task("Researcher", "Research the benefits of renew
 print(result)
 ```
 
+## Advanced Usage
+
+```python
+from maki import MakiLLama
+from maki.agents import AgentManager, Agent
+
+# Using MakiLLama for more advanced features
+llm = MakiLLama(model="gemma3")
+result = llm("What is the capital of France?")
+
+# Create an agent with plugin support
+agent_manager = AgentManager(maki)
+researcher = agent_manager.add_agent(
+    name="Researcher",
+    role="research analyst",
+    instructions="You are an expert researcher who can find and analyze information on various topics."
+)
+
+# Load a plugin for the agent
+file_reader = researcher.load_plugin("file_reader")
+
+# Use the plugin to read a file
+result = file_reader.read_file("example.txt")
+```
+
 ## Enhanced Reasoning Capabilities
 
 The enhanced Agent class now supports:
@@ -76,6 +111,26 @@ The enhanced Agent class now supports:
 
 These capabilities allow agents to handle more complex reasoning tasks and improve their performance through iterative refinement.
 
+## Plugin System
+
+Agents now support plugins for extending functionality. Plugins can be loaded and used within agent tasks:
+
+```python
+# Load a plugin
+file_reader = agent.load_plugin("file_reader")
+
+# Use the plugin
+result = file_reader.read_file("example.txt")
+
+# Get a loaded plugin
+plugin = agent.get_plugin("file_reader")
+
+# Unload a plugin
+agent.unload_plugin("file_reader")
+```
+
+Available built-in plugins include `file_reader`, `directory_reader`, `file_writer`, `web_to_md`, and `ftp_client`.
+
 ## Multi-Agent Coordination
 
 The AgentManager now supports advanced coordination patterns:
@@ -85,6 +140,42 @@ The AgentManager now supports advanced coordination patterns:
 3. **Workflow execution**: `agent_manager.run_workflow(tasks)`
 
 These methods enable sophisticated multi-agent workflows that can coordinate complex tasks across multiple agents.
+
+## Workflow Management
+
+The enhanced workflow system allows for complex multi-agent coordination:
+
+```python
+from maki.agents import WorkflowTask, TaskStatus, WorkflowState
+
+# Create workflow tasks with dependencies
+tasks = [
+    WorkflowTask(
+        name="research_task",
+        agent="Researcher",
+        task="Research the latest developments in AI",
+        dependencies=[],
+        max_retries=2
+    ),
+    WorkflowTask(
+        name="write_task",
+        agent="Writer",
+        task="Write a summary of the research findings",
+        dependencies=["research_task"],
+        max_retries=1
+    )
+]
+
+# Execute workflow
+result = agent_manager.run_workflow(tasks)
+```
+
+The workflow system supports:
+- Task dependencies and conditions
+- Retry logic with configurable delays
+- Parallelizable task execution
+- Comprehensive workflow state tracking
+- Execution strategies (sequential, parallel, dependency-based)
 
 ## Plugin Support
 
@@ -169,12 +260,27 @@ maki/
 │   │   ├── USAGE.md
 │   │   ├── example_usage.py
 │   │   └── test_file_reader.py
-│   └── file_writer/
+│   ├── file_writer/
+│   │   ├── __init__.py
+│   │   ├── file_writer.py
+│   │   ├── README.md
+│   │   ├── example_usage.py
+│   │   └── test_file_writer.py
+│   ├── directory_reader/
+│   │   ├── __init__.py
+│   │   ├── directory_reader.py
+│   │   ├── example_usage.py
+│   │   └── test_directory_reader.py
+│   ├── web_to_md/
+│   │   ├── __init__.py
+│   │   ├── web_to_md.py
+│   │   ├── example_usage.py
+│   │   └── test_web_to_md.py
+│   └── ftp_client/
 │       ├── __init__.py
-│       ├── file_writer.py
-│       ├── README.md
+│       ├── ftp_client.py
 │       ├── example_usage.py
-│       └── test_file_writer.py
+│       └── test_ftp_client.py
 └── test/
     ├── __init__.py
     ├── test_maki_functionality.py
@@ -191,6 +297,11 @@ maki/
 Run the example:
 ```bash
 python -m maki
+```
+
+For a more comprehensive example with MakiLLama:
+```bash
+python -m maki.makiLLama
 ```
 
 ## Logging Configuration
@@ -262,3 +373,17 @@ logger.debug(f"Request result: {result}")
 ## License
 
 MIT
+
+## Contributing
+
+Contributions are welcome! Please follow these steps:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -am 'Add some feature'`)
+4. Push to the branch (`git push origin feature/your-feature`)
+5. Create a new Pull Request
+
+## Support
+
+For support, please open an issue on the GitHub repository or contact the maintainers.
