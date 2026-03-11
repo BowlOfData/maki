@@ -74,7 +74,9 @@ class TestMakiLLama(unittest.TestCase):
         mock_post_response.status_code = 200
         mock_post.return_value = mock_post_response
 
-        llm = MakiLLama(model="gemma3")
+        # Mock the _verify_connection method to avoid localhost connection issues
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
 
         # Test chat method
         response = llm.chat("Test prompt")
@@ -107,7 +109,9 @@ class TestMakiLLama(unittest.TestCase):
         mock_post_response.status_code = 200
         mock_post.return_value = mock_post_response
 
-        llm = MakiLLama(model="gemma3")
+        # Mock the _verify_connection method to avoid localhost connection issues
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
 
         # Test stream method - should return a generator that yields chunks
         chunks = list(llm.stream("Test prompt"))
@@ -137,7 +141,9 @@ class TestMakiLLama(unittest.TestCase):
         mock_post_response.status_code = 200
         mock_post.return_value = mock_post_response
 
-        llm = MakiLLama(model="gemma3")
+        # Mock the _verify_connection method to avoid localhost connection issues
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
 
         # Test session creation and usage
         session = llm.session(system="You are a helpful assistant.")
