@@ -450,7 +450,7 @@ class ChatSession:
         for msg in self._history:
             color = "cyan" if msg.role == "user" else "green"
             log.info(f"[bold {color}]{msg.role.upper()}[/bold {color}]")
-            log.info(Markdown(msg.content))
+            log.info(msg.content)
             log.info("")
 
     @property

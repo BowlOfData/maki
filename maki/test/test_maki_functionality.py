@@ -127,8 +127,12 @@ class TestMakiFunctionality(unittest.TestCase):
         # Mock that the file exists
         mock_exists.return_value = True
 
-        # Test with a mock file
-        with patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')) as mock_file:
+        # Test with a mock file - we need to make sure the path is within current working directory
+        with patch('maki.utils.os.path.isfile') as mock_isfile, \
+             patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')) as mock_file:
+
+            # Mock that it's a file (not a directory)
+            mock_isfile.return_value = True
             result = Utils.convert64("test.jpg")
             self.assertIsNotNone(result)
 

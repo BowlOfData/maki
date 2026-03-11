@@ -90,9 +90,12 @@ class TestErrorHandling(unittest.TestCase):
 
     def test_utils_convert64_validation(self):
         """Test that Utils.convert64 validates input"""
-        # Test with non-existent file
-        with self.assertRaises(FileNotFoundError):
-            Utils.convert64("/non/existent/file.jpg")
+        # Test with non-existent file - we need to make the path within working directory
+        # but simulate that the file doesn't exist by patching os.path.exists
+        with patch('maki.utils.os.path.exists') as mock_exists:
+            mock_exists.return_value = False
+            with self.assertRaises(FileNotFoundError):
+                Utils.convert64("non_existent_file.jpg")
 
         # Test invalid file path
         with self.assertRaises(ValueError):

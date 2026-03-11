@@ -84,9 +84,15 @@ class TestSSRFProtection(unittest.TestCase):
         # This should work without raising an exception
         # We'll mock the file system operations to avoid actual file access
         with patch('maki.utils.os.path.exists') as mock_exists, \
-             patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')) as mock_file:
+             patch('maki.utils.os.path.isfile') as mock_isfile, \
+             patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')) as mock_file, \
+             patch('maki.utils.os.getcwd') as mock_getcwd:
 
+            # Mock that the current working directory is the parent of our test path
+            # This allows the absolute path to be considered valid (within working directory)
+            mock_getcwd.return_value = "/absolute/path/to"
             mock_exists.return_value = True
+            mock_isfile.return_value = True
             result = Utils.convert64("/absolute/path/to/image.jpg")
             self.assertIsNotNone(result)
 
@@ -94,9 +100,12 @@ class TestSSRFProtection(unittest.TestCase):
         """Test that convert64 accepts relative paths"""
         # This should work without raising an exception
         with patch('maki.utils.os.path.exists') as mock_exists, \
+             patch('maki.utils.os.path.isfile') as mock_isfile, \
              patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')) as mock_file:
 
+            # Mock that the file exists and is a file (not a directory)
             mock_exists.return_value = True
+            mock_isfile.return_value = True
             result = Utils.convert64("relative/path/to/image.jpg")
             self.assertIsNotNone(result)
 
