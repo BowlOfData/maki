@@ -475,22 +475,22 @@ class ChatSession:
 # Convenience factory functions
 # ---------------------------------------------------------------------------
 
-def gemma3(system: Optional[str] = None, **kwargs) -> LocalLLM:
+def gemma3(system: Optional[str] = None, **kwargs) -> MakiLLama:
     """Pre-configured wrapper for Google Gemma 3."""
     return MakiLLama(model="gemma3", system_prompt=system, **kwargs)
 
 
-def qwen(variant: str = "qwen2.5:7b", system: Optional[str] = None, **kwargs) -> LocalLLM:
+def qwen(variant: str = "qwen2.5:7b", system: Optional[str] = None, **kwargs) -> MakiLLama:
     """Pre-configured wrapper for Alibaba Qwen."""
     return MakiLLama(model=variant, system_prompt=system, **kwargs)
 
 
-def llama(variant: str = "llama3.2", system: Optional[str] = None, **kwargs) -> LocalLLM:
+def llama(variant: str = "llama3.2", system: Optional[str] = None, **kwargs) -> MakiLLama:
     """Pre-configured wrapper for Meta Llama 3."""
     return MakiLLama(model=variant, system_prompt=system, **kwargs)
 
 
-def mistral(system: Optional[str] = None, **kwargs) -> LocalLLM:
+def mistral(system: Optional[str] = None, **kwargs) -> MakiLLama:
     """Pre-configured wrapper for Mistral."""
     return MakiLLama(model="mistral", system_prompt=system, **kwargs)
 
