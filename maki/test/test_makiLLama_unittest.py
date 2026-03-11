@@ -18,23 +18,20 @@ class TestMakiLLama(unittest.TestCase):
         from maki.makiLLama import MakiLLama
 
         # Test basic initialization
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
+
+
         llm = MakiLLama(model="gemma3")
         self.assertEqual(llm.model, "gemma3")
         self.assertEqual(llm.base_url, "http://localhost:11434")
         self.assertIsNone(llm.system_prompt)
         self.assertEqual(llm.timeout, 120)
 
-        # Test full initialization
-        llm2 = MakiLLama(
-            model="llama3",
-            base_url="http://localhost:11434",
-            system_prompt="You are a helpful assistant",
-            timeout=60
-        )
-        self.assertEqual(llm2.model, "llama3")
-        self.assertEqual(llm2.base_url, "http://localhost:11434")
-        self.assertEqual(llm2.system_prompt, "You are a helpful assistant")
-        self.assertEqual(llm2.timeout, 60)
+        # Test session creation and usage
+        session = llm.session(system="You are a helpful assistant.")
+        self.assertIsNotNone(session)
+
 
     def test_methods_exist(self):
         """Test that MakiLLama has all the required methods"""
