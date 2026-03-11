@@ -34,8 +34,8 @@ class TestMakiLLama(unittest.TestCase):
     def test_methods_exist(self):
         """Test that MakiLLama has all the required methods"""
         from maki.makiLLama import MakiLLama
-
-        llm = MakiLLama(model="gemma3")
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
 
         # Test that methods exist
         self.assertTrue(hasattr(llm, 'chat'))
