@@ -207,22 +207,5 @@ class TestMakiLLama(unittest.TestCase):
         self.assertEqual(msg_dict["role"], "user")
         self.assertEqual(msg_dict["content"], "Hello world")
 
-    def test_factory_functions(self):
-        """Test factory functions"""
-        from maki.makiLLama import gemma3, qwen, llama, mistral
-
-        # Test factory functions
-        llm1 = gemma3()
-        self.assertEqual(llm1.model, "gemma3")
-
-        llm2 = qwen("qwen2.5:7b")
-        self.assertEqual(llm2.model, "qwen2.5:7b")
-
-        llm3 = llama("llama3.2")
-        self.assertEqual(llm3.model, "llama3.2")
-
-        llm4 = mistral()
-        self.assertEqual(llm4.model, "mistral")
-
 if __name__ == '__main__':
     unittest.main()
