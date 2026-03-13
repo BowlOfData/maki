@@ -1,4 +1,6 @@
-from typing import Union
+from __future__ import annotations
+
+from typing import Union, TYPE_CHECKING
 from .utils import Utils
 from .connector import Connector
 from .urls import Actions

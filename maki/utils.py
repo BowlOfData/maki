@@ -267,14 +267,14 @@ class Utils:
             raise ValueError(f"Invalid JSON data: {str(e)}")
 
     @staticmethod
-    def convert64(img: str)-> str:
+    def convert64(img: str) -> bytes:
         """Convert an image file to base64 string
 
         Args:
             img: path to image file
 
         Returns:
-            Base64 encoded string of the image
+            Base64 encoded bytes of the image
 
         Raises:
             ValueError: If img is not a valid string or file doesn't exist
@@ -303,18 +303,7 @@ class Utils:
         if os.path.islink(img):
             raise ValueError("Image path must not be a symbolic link")
 
-        # 3. Resolve the absolute path to prevent directory traversal
-        try:
-            abs_path = os.path.abspath(img)
-        except Exception:
-            raise ValueError("Invalid image path")
-
-        # 4. Ensure the resolved path is within the current working directory
-        # This prevents access to files outside of intended scope
-        if not abs_path.startswith(os.getcwd()):
-            raise ValueError("Image path must be within the current working directory")
-
-        # 5. Check that the file exists and is actually a file (not a directory)
+        # 3. Check that the file exists and is actually a file (not a directory)
         if not os.path.exists(img):
             raise FileNotFoundError(f"Image file not found: {img}")
 

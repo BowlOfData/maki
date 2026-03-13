@@ -3,7 +3,6 @@ Main module for Maki framework with logging configuration
 """
 import logging
 import sys
-import os
 
 # Configure logging
 def configure_logging():

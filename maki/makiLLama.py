@@ -17,11 +17,13 @@ from __future__ import annotations
 import json
 import time
 import logging
-from dataclasses import dataclass, field
 from typing import Generator, Iterator, Optional
+
+from urllib.parse import urlparse
 
 from .maki import Maki
 from .utils import Utils
+from .objects import LLMResponse, Message, GenerationConfig
 
 import requests
 import httpx
@@ -30,63 +32,6 @@ import httpx
 # Logging
 # ---------------------------------------------------------------------------
 log = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Data models
-# ---------------------------------------------------------------------------
-
-@dataclass
-class Message:
-    role: str          # "system" | "user" | "assistant"
-    content: str
-
-    def to_dict(self) -> dict:
-        return {"role": self.role, "content": self.content}
-
-
-@dataclass
-class GenerationConfig:
-    """Sampling / generation hyper-parameters forwarded to Ollama."""
-    temperature: float = 0.7
-    top_p: float = 0.9
-    top_k: int = 40
-    repeat_penalty: float = 1.1
-    max_tokens: int = 2048        # maps to num_predict in Ollama
-    seed: int = -1                # -1 = random
-    stop: list[str] = field(default_factory=list)
-
-    def to_ollama_options(self) -> dict:
-        opts: dict = {
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "top_k": self.top_k,
-            "repeat_penalty": self.repeat_penalty,
-            "num_predict": self.max_tokens,
-        }
-        if self.seed != -1:
-            opts["seed"] = self.seed
-        if self.stop:
-            opts["stop"] = self.stop
-        return opts
-
-
-@dataclass
-class LLMResponse:
-    content: str
-    model: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    elapsed_seconds: float
-    done: bool = True
-
-    def __str__(self) -> str:
-        return self.content
-
-    @property
-    def tokens_per_second(self) -> float:
-        return self.completion_tokens / self.elapsed_seconds if self.elapsed_seconds else 0.0
-
 
 # ---------------------------------------------------------------------------
 # Core wrapper
@@ -122,6 +67,9 @@ class MakiLLama(Maki):
         system_prompt: Optional[str] = None,
         timeout: int = 120,
     ) -> None:
+        parsed = urlparse(base_url)
+        port = str(parsed.port) if parsed.port else "11434"
+        super().__init__(url=base_url, port=port, model=model, temperature=config.temperature if config else 0.7)
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.config = config or GenerationConfig()
@@ -185,11 +133,8 @@ class MakiLLama(Maki):
                         log.info(f"  {status}")
         except Exception as e:
             log.error("Failed to pull model '%s': %s", target, str(e))
-            # Ensure we clean up the response if there's an error
-            Utils.cleanup_response(response)
-            raise e
+            raise
         finally:
-            # Clean up response if needed
             Utils.cleanup_response(response)
         log.info("Model '%s' ready.", target)
 
@@ -210,6 +155,35 @@ class MakiLLama(Maki):
         msgs.append(Message("user", prompt).to_dict())
         return msgs
 
+    def _build_payload(
+        self,
+        prompt: str,
+        history: Optional[list[Message]],
+        config: Optional[GenerationConfig],
+        *,
+        stream: bool,
+    ) -> dict:
+        cfg = config or self.config
+        return {
+            "model": self.model,
+            "messages": self._build_messages(prompt, history),
+            "stream": stream,
+            "options": cfg.to_ollama_options(),
+        }
+
+    def _parse_response(self, data: dict, elapsed: float) -> LLMResponse:
+        prompt_tokens = data.get("prompt_eval_count", 0)
+        completion_tokens = data.get("eval_count", 0)
+        return LLMResponse(
+            content=data["message"]["content"],
+            model=data.get("model", self.model),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            elapsed_seconds=elapsed,
+            done=data.get("done", True),
+        )
+
     def chat(
         self,
         prompt: str,
@@ -220,34 +194,14 @@ class MakiLLama(Maki):
         Single-turn (or multi-turn with explicit history) generation.
         Returns a fully resolved LLMResponse.
         """
-        cfg = config or self.config
-        payload = {
-            "model": self.model,
-            "messages": self._build_messages(prompt, history),
-            "stream": False,
-            "options": cfg.to_ollama_options(),
-        }
-        log.debug("Sending chat request with prompt: %s", prompt[:100] + "..." if len(prompt) > 100 else prompt)
+        log.debug("chat: %s", prompt[:100])
+        payload = self._build_payload(prompt, history, config, stream=False)
         t0 = time.perf_counter()
-        r = requests.post(
-            f"{self.base_url}/api/chat",
-            json=payload,
-            timeout=self.timeout,
-        )
+        r = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
         elapsed = time.perf_counter() - t0
         r.raise_for_status()
-        data = r.json()
-
-        response = LLMResponse(
-            content=data["message"]["content"],
-            model=data.get("model", self.model),
-            prompt_tokens=data.get("prompt_eval_count", 0),
-            completion_tokens=data.get("eval_count", 0),
-            total_tokens=data.get("prompt_eval_count", 0) + data.get("eval_count", 0),
-            elapsed_seconds=elapsed,
-            done=data.get("done", True),
-        )
-        log.info("Chat response generated for prompt (length: %d) in %.2f seconds", len(prompt), elapsed)
+        response = self._parse_response(r.json(), elapsed)
+        log.info("chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
 
     def stream(
@@ -263,14 +217,8 @@ class MakiLLama(Maki):
             for chunk in llm.stream("Write a haiku about Python"):
                 print(chunk, end="", flush=True)
         """
-        cfg = config or self.config
-        payload = {
-            "model": self.model,
-            "messages": self._build_messages(prompt, history),
-            "stream": True,
-            "options": cfg.to_ollama_options(),
-        }
-        log.debug("Sending streaming request with prompt: %s", prompt[:100] + "..." if len(prompt) > 100 else prompt)
+        log.debug("stream: %s", prompt[:100])
+        payload = self._build_payload(prompt, history, config, stream=True)
         response = None
         try:
             response = requests.post(
@@ -289,12 +237,9 @@ class MakiLLama(Maki):
                     if data.get("done"):
                         break
         except Exception as e:
-            log.error("Streaming request failed: %s", str(e))
-            # Ensure we clean up the response if there's an error
-            Utils.cleanup_response(response)
-            raise e
+            log.error("stream failed: %s", e)
+            raise
         finally:
-            # Clean up response if needed
             Utils.cleanup_response(response)
 
     async def async_chat(
@@ -304,61 +249,22 @@ class MakiLLama(Maki):
         config: Optional[GenerationConfig] = None,
     ) -> LLMResponse:
         """Async variant of chat() for use inside asyncio event loops."""
-        cfg = config or self.config
-        payload = {
-            "model": self.model,
-            "messages": self._build_messages(prompt, history),
-            "stream": False,
-            "options": cfg.to_ollama_options(),
-        }
+        log.debug("async_chat: %s", prompt[:100])
+        payload = self._build_payload(prompt, history, config, stream=False)
         t0 = time.perf_counter()
-        client = None
-        try:
-            client = httpx.AsyncClient(timeout=self.timeout)
-            r = await client.post(f"{self.base_url}/api/chat", json=payload)
-            elapsed = time.perf_counter() - t0
-
-            # Check for HTTP errors
-            if r.status_code >= 400:
-                error_text = await r.aread()
-                raise RuntimeError(
-                    f"HTTP {r.status_code} when calling Ollama API: {error_text.decode('utf-8', errors='ignore')}"
-                )
-
-            # Parse JSON response
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
-                data = r.json()
-            except json.JSONDecodeError as e:
-                raise RuntimeError(f"Failed to parse JSON response from Ollama: {e}")
-
-        except httpx.TimeoutException:
-            log.error("Async chat request timed out after %d seconds", self.timeout)
-            raise RuntimeError(f"Timeout after {self.timeout} seconds when calling Ollama API")
-        except httpx.RequestError as e:
-            log.error("Network error in async chat request: %s", str(e))
-            raise RuntimeError(f"Network error when calling Ollama API: {e}")
-        except Exception as e:
-            log.error("Error in async chat request: %s", str(e))
-            # Re-raise any other exceptions
-            raise RuntimeError(f"Error calling Ollama API: {e}")
-        finally:
-            # Ensure client is closed properly - for async methods we need to handle this differently
-            if client is not None:
-                try:
-                    await client.aclose()
-                except:
-                    pass
-
-        response = LLMResponse(
-            content=data["message"]["content"],
-            model=data.get("model", self.model),
-            prompt_tokens=data.get("prompt_eval_count", 0),
-            completion_tokens=data.get("eval_count", 0),
-            total_tokens=data.get("prompt_eval_count", 0) + data.get("eval_count", 0),
-            elapsed_seconds=elapsed,
-            done=data.get("done", True),
-        )
-        log.info("Async chat response generated for prompt (length: %d) in %.2f seconds", len(prompt), elapsed)
+                r = await client.post(f"{self.base_url}/api/chat", json=payload)
+            except httpx.TimeoutException:
+                log.error("async_chat timed out after %ds", self.timeout)
+                raise
+            except httpx.RequestError as e:
+                log.error("async_chat network error: %s", e)
+                raise
+        elapsed = time.perf_counter() - t0
+        r.raise_for_status()
+        response = self._parse_response(r.json(), elapsed)
+        log.info("async_chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
 
     def session(self, system: Optional[str] = None) -> "ChatSession":
