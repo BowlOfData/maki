@@ -24,10 +24,9 @@ class Maki:
         # Setup logging
         self.logger = logging.getLogger(__name__)
 
-        # Validate URL (only when provided)
-        if url is not None:
-            if not isinstance(url, str) or not url.strip():
-                raise ValueError("URL must be a non-empty string")
+        # Validate URL
+        if url is None or not isinstance(url, str) or not url.strip():
+            raise ValueError("URL must be a non-empty string")
 
         # Validate port (only when provided)
         if port is not None:
@@ -41,8 +40,8 @@ class Maki:
                 port = str(port)
 
         # Validate model
-        if not isinstance(model, str):
-            raise ValueError("Model must be a string")
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("Model must be a non-empty string")
 
         # Validate temperature
         if not isinstance(temperature, (int, float)):
