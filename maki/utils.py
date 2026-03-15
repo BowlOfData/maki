@@ -35,12 +35,6 @@ class Utils:
         "255.255.255.255"
     ]
 
-    # Additional blacklisted patterns
-    BLACKLISTED_PATTERNS = [
-        r"^\d+\.\d+\.\d+\.\d+$",  # Plain IP addresses
-        r"^[0-9a-fA-F:]+$",       # IPv6 addresses
-    ]
-
     @staticmethod
     def _validate_domain(domain: str) -> None:
         """Validate domain name to prevent SSRF attacks
@@ -60,54 +54,49 @@ class Utils:
         if domain.lower() in Utils.BLACKLISTED_DOMAINS:
             raise ValueError(f"Access to domain '{domain}' is not allowed")
 
-        # Check if it's an IP address
+        # Try to parse as an IP address first. Separate the parse attempt from
+        # the security checks so that security-raised ValueErrors are never
+        # swallowed by the except clause (the original bug: inner
+        # `raise ValueError(...)` was caught by the outer `except ValueError`,
+        # bypassing the intended block and falling through to domain validation).
+        clean_domain = domain
+        if domain.startswith('[') and domain.endswith(']'):
+            clean_domain = domain[1:-1]
+
         try:
-            # Try to parse as IP address
-            # Handle IPv6 addresses that might be in brackets
-            clean_domain = domain
-            if domain.startswith('[') and domain.endswith(']'):
-                clean_domain = domain[1:-1]
             ip = ipaddress.ip_address(clean_domain)
-            # Allow localhost addresses (127.0.0.1, ::1) to be used for local testing
-            if ip.is_loopback:
-                # Loopback addresses are allowed
-                pass
-            else:
-                # Check if it's a private IP
-                for ip_range in Utils.PRIVATE_IP_RANGES:
-                    if ip in ipaddress.ip_network(ip_range):
-                        raise ValueError(f"Access to private IP address '{domain}' is not allowed")
-                # Additional check for specific IP ranges that are dangerous
-                if ip.is_link_local or ip.is_reserved:
-                    raise ValueError(f"Access to special IP address '{domain}' is not allowed")
+            is_ip = True
         except ValueError:
-            # Not an IP address, check as domain name
-            # Basic domain validation
-            if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$', domain):
-                raise ValueError(f"Invalid domain format: {domain}")
+            is_ip = False
 
-            # Check for potentially malicious patterns
-            if '..' in domain:
-                raise ValueError("Domain contains invalid pattern")
+        if is_ip:
+            # Loopback addresses are allowed for local development
+            if ip.is_loopback:
+                return
+            for ip_range in Utils.PRIVATE_IP_RANGES:
+                if ip in ipaddress.ip_network(ip_range):
+                    raise ValueError(f"Access to private IP address '{domain}' is not allowed")
+            if ip.is_link_local or ip.is_reserved:
+                raise ValueError(f"Access to special IP address '{domain}' is not allowed")
+            return  # valid public IP
 
-            # Check for special characters that could be used in SSRF attacks
-            if re.search(r'[^\w\.\-\:]', domain):
-                raise ValueError("Domain contains invalid characters")
+        # Not an IP address — validate as a domain name
+        if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$', domain):
+            raise ValueError(f"Invalid domain format: {domain}")
 
-            # Check for blacklisted patterns
-            for pattern in Utils.BLACKLISTED_PATTERNS:
-                if re.match(pattern, domain):
-                    raise ValueError(f"Domain '{domain}' matches blacklisted pattern")
+        if '..' in domain:
+            raise ValueError("Domain contains invalid pattern")
 
-            # Additional domain validation
-            if len(domain) > 253:
-                raise ValueError("Domain name too long")
+        if re.search(r'[^\w\.\-\:]', domain):
+            raise ValueError("Domain contains invalid characters")
 
-            # Check for valid label lengths (each part between dots)
-            labels = domain.split('.')
-            for label in labels:
-                if len(label) > 63:
-                    raise ValueError("Domain label too long")
+        if len(domain) > 253:
+            raise ValueError("Domain name too long")
+
+        labels = domain.split('.')
+        for label in labels:
+            if len(label) > 63:
+                raise ValueError("Domain label too long")
 
     @staticmethod
     def _validate_port(port: str) -> None:
@@ -337,7 +326,7 @@ class Utils:
         if response is not None and hasattr(response, 'close'):
             try:
                 response.close()
-            except:
+            except Exception:
                 pass  # Ignore cleanup errors
 
         # Clean up httpx.AsyncClient if provided
@@ -352,5 +341,5 @@ class Utils:
                     # This is a bit tricky - for async context we'd want to await,
                     # but this is a sync utility, so we'll just ignore it here
                     pass
-            except:
+            except Exception:
                 pass  # Ignore cleanup errors

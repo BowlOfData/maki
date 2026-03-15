@@ -12,14 +12,15 @@ class Message:
 
 @dataclass
 class GenerationConfig:
-    """Sampling / generation hyper-parameters forwarded to Ollama."""
+    """Sampling / generation hyper-parameters forwarded to Ollama or HuggingFace."""
     temperature: float = 0.7
     top_p: float = 0.9
     top_k: int = 40
     repeat_penalty: float = 1.1
-    max_tokens: int = 2048        # maps to num_predict in Ollama
+    max_tokens: int = 2048        # maps to num_predict in Ollama, max_new_tokens in HF
     seed: int = -1                # -1 = random
     stop: list[str] = field(default_factory=list)
+    do_sample: bool = True        # HuggingFace: enable sampling (set False for greedy)
 
     def to_ollama_options(self) -> dict:
         opts: dict = {
@@ -35,6 +36,16 @@ class GenerationConfig:
             opts["stop"] = self.stop
         return opts
 
+    def to_hf_kwargs(self) -> dict:
+        return {
+            "max_new_tokens": self.max_tokens,
+            "temperature": self.temperature if self.do_sample else 1.0,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "repetition_penalty": self.repeat_penalty,
+            "do_sample": self.do_sample,
+        }
+
 
 @dataclass
 class LLMResponse:
@@ -45,6 +56,7 @@ class LLMResponse:
     total_tokens: int
     elapsed_seconds: float
     done: bool = True
+    backend: str = "ollama"
 
     def __str__(self) -> str:
         return self.content

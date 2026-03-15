@@ -690,7 +690,7 @@ class FTPClient:
                     result['is_file'] = True
                     result['is_directory'] = False
                     result['exists'] = True
-                except:
+                except ftplib.error_perm:
                     # If size fails, it might be a directory
                     try:
                         # Try to list directory
@@ -699,7 +699,7 @@ class FTPClient:
                         result['is_directory'] = True
                         result['exists'] = True
                         result['size'] = 0
-                    except:
+                    except ftplib.error_perm:
                         result['exists'] = False
 
             elif self.connection_type == 'sftp':

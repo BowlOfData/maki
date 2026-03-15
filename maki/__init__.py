@@ -6,7 +6,7 @@ from importlib import import_module
 
 
 
-__all__ = ["Maki", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama"]
+__all__ = ["Maki", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama", "HFBackend"]
 
 _LAZY_EXPORTS = {
     "Maki": (".maki", "Maki"),
@@ -15,6 +15,7 @@ _LAZY_EXPORTS = {
     "Agent": (".agents", "Agent"),
     "AgentManager": (".agents", "AgentManager"),
     "MakiLLama": (".makiLLama", "MakiLLama"),
+    "HFBackend": (".makiHG", "HFBackend"),
 }
 
 

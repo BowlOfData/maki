@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Union, TYPE_CHECKING
+from typing import Optional, Union, TYPE_CHECKING
 from .utils import Utils
 from .connector import Connector
 from .urls import Actions
@@ -9,12 +9,12 @@ import re
 import logging
 
 class Maki:
-    def __init__(self, url: str, port: Union[str, int], model: str, temperature=0):
+    def __init__(self, url: Optional[str] = None, port: Union[str, int, None] = None, model: str = "", temperature=0):
         """ Initialize the Maki object
 
         Args:
-            url: the Ollama url
-            port: the Ollama port
+            url: the Ollama url (None for local/offline backends)
+            port: the Ollama port (None for local/offline backends)
             model: the model to use
             temperature: the LLM temperature
 
@@ -24,23 +24,25 @@ class Maki:
         # Setup logging
         self.logger = logging.getLogger(__name__)
 
-        # Validate URL
-        if not isinstance(url, str) or not url.strip():
-            raise ValueError("URL must be a non-empty string")
+        # Validate URL (only when provided)
+        if url is not None:
+            if not isinstance(url, str) or not url.strip():
+                raise ValueError("URL must be a non-empty string")
 
-        # Validate port
-        if not isinstance(port, (str, int)):
-            raise ValueError("Port must be a string or integer")
+        # Validate port (only when provided)
+        if port is not None:
+            if not isinstance(port, (str, int)):
+                raise ValueError("Port must be a string or integer")
 
-        if isinstance(port, str) and not re.match(r'^[0-9]+$', port):
-            raise ValueError("Port must be a valid port number (numeric string)")
+            if isinstance(port, str) and not re.match(r'^[0-9]+$', port):
+                raise ValueError("Port must be a valid port number (numeric string)")
 
-        if isinstance(port, int):
-            port = str(port)
+            if isinstance(port, int):
+                port = str(port)
 
         # Validate model
-        if not isinstance(model, str) or not model.strip():
-            raise ValueError("Model must be a non-empty string")
+        if not isinstance(model, str):
+            raise ValueError("Model must be a string")
 
         # Validate temperature
         if not isinstance(temperature, (int, float)):
@@ -49,7 +51,7 @@ class Maki:
         if temperature < 0 or temperature > 1:
             raise ValueError("Temperature must be between 0 and 1")
 
-        self.url = url.strip()
+        self.url = url.strip() if url else None
         self.port = port
         self.model = model.strip()
         self.temperature = float(temperature)
