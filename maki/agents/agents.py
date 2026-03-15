@@ -14,6 +14,7 @@ import json
 import time
 import logging
 import importlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 logger = logging.getLogger(__name__)
@@ -198,12 +199,20 @@ class Agent:
         """
         try:
             if plugin_path:
-                # Load plugin from custom path
-                import sys
-                sys.path.insert(0, plugin_path)
-                module = importlib.import_module(plugin_name)
-                # Remove from path after import
-                sys.path.remove(plugin_path)
+                # Load plugin from a custom path without mutating sys.path.
+                # The sys.path.insert/remove pattern has a race condition in
+                # multi-threaded use: between insert and remove another thread
+                # can import an unintended module from that path.
+                import importlib.util
+                import os
+                plugin_file = os.path.join(plugin_path, plugin_name, "__init__.py")
+                if not os.path.exists(plugin_file):
+                    plugin_file = os.path.join(plugin_path, f"{plugin_name}.py")
+                spec = importlib.util.spec_from_file_location(plugin_name, plugin_file)
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"Cannot locate plugin '{plugin_name}' at '{plugin_path}'")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
             else:
                 # Load plugin from standard location
                 module = importlib.import_module(f"maki.plugins.{plugin_name}")
@@ -609,10 +618,12 @@ class AgentManager:
         Returns:
             A coordinated response from the agents
         """
-        # Execute the task individually for each agent first
+        # Execute the task individually for each agent first.
+        # Errors are tracked separately so they never contaminate the synthesis
+        # prompt with raw exception strings that the LLM would treat as content.
         agent_results = {}
+        agent_errors = {}
         for agent_name in agents:
-            # Create a specific prompt for each agent
             agent_prompt = f"""
             You are working on the following task:
 
@@ -629,9 +640,21 @@ class AgentManager:
                 agent_results[agent_name] = result
             except Exception as e:
                 logger.error(f"Failed to get result from agent {agent_name}: {str(e)}")
-                agent_results[agent_name] = f"Error: {str(e)}"
+                agent_errors[agent_name] = str(e)
 
-        # Create a synthesis prompt that combines all individual results
+        if agent_errors:
+            logger.warning(
+                f"collaborative_task: {len(agent_errors)} agent(s) failed: "
+                + ", ".join(f"{n}: {e}" for n, e in agent_errors.items())
+            )
+
+        if not agent_results:
+            raise RuntimeError(
+                f"All agents failed for collaborative task '{task}': "
+                + "; ".join(f"{n}: {e}" for n, e in agent_errors.items())
+            )
+
+        # Create a synthesis prompt using only successful results
         synthesis_prompt = f"""
         You are synthesizing results from multiple agents working on the same task.
 
@@ -654,29 +677,73 @@ class AgentManager:
 
     def run_workflow(self, workflow: List[Dict]) -> Dict[str, Any]:
         """
-        Execute a complete workflow with multiple steps
+        Execute a complete workflow with multiple steps.
+
+        Steps with ``parallelizable: True`` that appear consecutively are
+        batched and submitted to a thread pool so they run concurrently.
+        All other steps run sequentially in order.
 
         Args:
-            workflow: List of workflow steps with agent assignments
+            workflow: List of workflow step dicts.  Each dict may contain:
+                - ``name`` (str): unique step identifier
+                - ``agent`` (str): agent name
+                - ``task`` (str): task description
+                - ``context`` (dict, optional): extra context
+                - ``parallelizable`` (bool, optional): run concurrently with
+                  adjacent parallelizable steps (default False)
 
         Returns:
-            Results from all workflow steps
+            Results from all workflow steps, keyed by step name.
         """
-        results = {}
+        results: Dict[str, Any] = {}
 
+        # Split the workflow into sequential batches.  Each batch is either a
+        # single sequential step or a group of consecutive parallelizable steps.
+        batches: List[List[Dict]] = []
         for step in workflow:
-            step_name = step.get('name', f'step_{len(results)}')
-            agent_name = step.get('agent')
-            task = step.get('task')
-            context = step.get('context')
+            if step.get('parallelizable') and batches and batches[-1][0].get('parallelizable'):
+                batches[-1].append(step)
+            else:
+                batches.append([step])
 
-            if agent_name and task:
-                result = self.assign_task(agent_name, task, context)
-                results[step_name] = {
-                    'agent': agent_name,
-                    'task': task,
-                    'result': result
-                }
+        for batch in batches:
+            if batch[0].get('parallelizable') and len(batch) > 1:
+                # Run the whole batch concurrently
+                def _run_step(step: Dict, idx: int):
+                    step_name = step.get('name', f'step_{idx}')
+                    agent_name = step.get('agent')
+                    task = step.get('task')
+                    context = step.get('context')
+                    if not agent_name or not task:
+                        return step_name, None
+                    result = self.assign_task(agent_name, task, context)
+                    return step_name, {'agent': agent_name, 'task': task, 'result': result}
+
+                # Capture current result count for default step naming
+                base_idx = len(results)
+                with ThreadPoolExecutor() as pool:
+                    futures = {
+                        pool.submit(_run_step, step, base_idx + i): step
+                        for i, step in enumerate(batch)
+                    }
+                    for future in as_completed(futures):
+                        step_name, value = future.result()
+                        if value is not None:
+                            results[step_name] = value
+            else:
+                # Single (sequential) step
+                step = batch[0]
+                step_name = step.get('name', f'step_{len(results)}')
+                agent_name = step.get('agent')
+                task = step.get('task')
+                context = step.get('context')
+                if agent_name and task:
+                    result = self.assign_task(agent_name, task, context)
+                    results[step_name] = {
+                        'agent': agent_name,
+                        'task': task,
+                        'result': result
+                    }
 
         return results
 
