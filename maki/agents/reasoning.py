@@ -107,6 +107,11 @@ class ReasoningEngine:
 
     def think_step_by_step(self, problem: str, steps: int = 3) -> str:
         """Execute reasoning through multiple steps."""
+        if not isinstance(problem, str) or not problem.strip():
+            raise ValueError("problem must be a non-empty string")
+        if not isinstance(steps, int) or steps < 1:
+            raise ValueError("steps must be a positive integer")
+
         prompt = f"""
         Break down the following problem into {steps} clear reasoning steps:
         Problem: {problem}
@@ -116,7 +121,12 @@ class ReasoningEngine:
         2. Key considerations
         3. Solution approach
         """
-        result = self.maki.request(prompt).content
+        try:
+            result = self.maki.request(prompt).content
+        except Exception as e:
+            if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
+                raise
+            raise MakiNetworkError(f"Failed to get reasoning from LLM: {str(e)}") from e
 
         self.reasoning_history.append({
             'problem': problem,
@@ -139,6 +149,13 @@ class ReasoningEngine:
         Returns:
             The improved response after all iterations
         """
+        if not isinstance(initial_response, str) or not initial_response.strip():
+            raise ValueError("initial_response must be a non-empty string")
+        if not isinstance(feedback, str) or not feedback.strip():
+            raise ValueError("feedback must be a non-empty string")
+        if not isinstance(max_iterations, int) or max_iterations < 1:
+            raise ValueError("max_iterations must be a positive integer")
+
         current = initial_response
         for i in range(max_iterations):
             prompt = f"""
@@ -149,7 +166,12 @@ class ReasoningEngine:
 
             Please revise your response to be more accurate and complete.
             """
-            current = self.maki.request(prompt).content
+            try:
+                current = self.maki.request(prompt).content
+            except Exception as e:
+                if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
+                    raise
+                raise MakiNetworkError(f"Failed to get correction from LLM: {str(e)}") from e
 
             self.reasoning_history.append({
                 'iteration': i + 1,
@@ -177,6 +199,8 @@ class ReasoningEngine:
         """
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
+        if not isinstance(max_subtasks, int) or max_subtasks < 1:
+            raise ValueError("max_subtasks must be a positive integer")
 
         prompt = f"""
         Decompose the following task into {max_subtasks} or fewer subtasks.
