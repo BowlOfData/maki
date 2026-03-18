@@ -323,6 +323,17 @@ class FTPClient:
                 'error': 'Remote path must be a non-empty string'
             }
 
+        remote_validation = self._validate_path(remote_path, is_local=False)
+        if not remote_validation['valid']:
+            return {
+                'success': False,
+                'local_path': local_path,
+                'remote_path': remote_path,
+                'bytes_uploaded': 0,
+                'error': f"Invalid remote path: {remote_validation['error']}"
+            }
+        remote_path = remote_validation['normalized_path']
+
         result = {
             'success': False,
             'local_path': local_path,
@@ -407,6 +418,17 @@ class FTPClient:
                 'error': 'Local path must be a non-empty string'
             }
 
+        remote_validation = self._validate_path(remote_path, is_local=False)
+        if not remote_validation['valid']:
+            return {
+                'success': False,
+                'remote_path': remote_path,
+                'local_path': local_path,
+                'bytes_downloaded': 0,
+                'error': f"Invalid remote path: {remote_validation['error']}"
+            }
+        remote_path = remote_validation['normalized_path']
+
         result = {
             'success': False,
             'remote_path': remote_path,
@@ -474,6 +496,16 @@ class FTPClient:
                 'error': 'Remote path must be a non-empty string'
             }
 
+        remote_validation = self._validate_path(remote_path, is_local=False)
+        if not remote_validation['valid']:
+            return {
+                'success': False,
+                'remote_path': remote_path,
+                'contents': [],
+                'error': f"Invalid remote path: {remote_validation['error']}"
+            }
+        remote_path = remote_validation['normalized_path']
+
         result = {
             'success': False,
             'remote_path': remote_path,
@@ -532,6 +564,15 @@ class FTPClient:
                 'error': 'Remote path must be a non-empty string'
             }
 
+        remote_validation = self._validate_path(remote_path, is_local=False)
+        if not remote_validation['valid']:
+            return {
+                'success': False,
+                'remote_path': remote_path,
+                'error': f"Invalid remote path: {remote_validation['error']}"
+            }
+        remote_path = remote_validation['normalized_path']
+
         result = {
             'success': False,
             'remote_path': remote_path,
@@ -588,6 +629,16 @@ class FTPClient:
                 'recursive': recursive,
                 'error': 'Remote path must be a non-empty string'
             }
+
+        remote_validation = self._validate_path(remote_path, is_local=False)
+        if not remote_validation['valid']:
+            return {
+                'success': False,
+                'remote_path': remote_path,
+                'recursive': recursive,
+                'error': f"Invalid remote path: {remote_validation['error']}"
+            }
+        remote_path = remote_validation['normalized_path']
 
         result = {
             'success': False,
@@ -686,6 +737,19 @@ class FTPClient:
                 'exists': False,
                 'error': 'Remote path must be a non-empty string'
             }
+
+        remote_validation = self._validate_path(remote_path, is_local=False)
+        if not remote_validation['valid']:
+            return {
+                'success': False,
+                'remote_path': remote_path,
+                'size': 0,
+                'is_file': False,
+                'is_directory': False,
+                'exists': False,
+                'error': f"Invalid remote path: {remote_validation['error']}"
+            }
+        remote_path = remote_validation['normalized_path']
 
         result = {
             'success': False,

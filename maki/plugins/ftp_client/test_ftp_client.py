@@ -99,5 +99,148 @@ class TestFTPClient(unittest.TestCase):
         self.assertIn("Not connected", result['error'])
 
 
+class TestRemotePathTraversalValidation(unittest.TestCase):
+    """Tests verifying that remote path traversal is blocked in all operations (CVE-2.1 / CVE-2.2)."""
+
+    TRAVERSAL_PATHS = [
+        "../etc/passwd",
+        "../../etc/shadow",
+        "uploads/../../etc/cron.d",
+        "foo/../../../root/.ssh/id_rsa",
+        "..",
+    ]
+
+    def setUp(self):
+        self.client = FTPClient()
+        # Simulate a connected FTP client
+        self.client.connected = True
+        self.client.ftp_connection = Mock()
+        self.client.connection_type = 'ftp'
+
+        # Simulate a connected SFTP client
+        self.sftp_client = FTPClient()
+        self.sftp_client.connected = True
+        self.sftp_client.sftp_connection = Mock()
+        self.sftp_client.connection_type = 'sftp'
+        mock_sftp = Mock()
+        self.sftp_client.sftp_connection.open_sftp = Mock(return_value=mock_sftp)
+
+    def _assert_traversal_blocked(self, result):
+        self.assertFalse(result['success'], f"Expected traversal to be blocked, got: {result}")
+        self.assertIn("Invalid remote path", result.get('error', ''))
+
+    # --- upload_file ---
+
+    def test_upload_ftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.client.upload_file("local.txt", path)
+                self._assert_traversal_blocked(result)
+                self.client.ftp_connection.storbinary.assert_not_called()
+
+    def test_upload_sftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.sftp_client.upload_file("local.txt", path)
+                self._assert_traversal_blocked(result)
+                self.sftp_client.sftp_connection.open_sftp.assert_not_called()
+
+    # --- download_file ---
+
+    def test_download_ftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.client.download_file(path, "local.txt")
+                self._assert_traversal_blocked(result)
+                self.client.ftp_connection.retrbinary.assert_not_called()
+
+    def test_download_sftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.sftp_client.download_file(path, "local.txt")
+                self._assert_traversal_blocked(result)
+                self.sftp_client.sftp_connection.open_sftp.assert_not_called()
+
+    # --- list_directory ---
+
+    def test_list_directory_ftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.client.list_directory(path)
+                self._assert_traversal_blocked(result)
+                self.client.ftp_connection.cwd.assert_not_called()
+
+    def test_list_directory_sftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.sftp_client.list_directory(path)
+                self._assert_traversal_blocked(result)
+                self.sftp_client.sftp_connection.open_sftp.assert_not_called()
+
+    # --- create_directory ---
+
+    def test_create_directory_ftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.client.create_directory(path)
+                self._assert_traversal_blocked(result)
+                self.client.ftp_connection.mkd.assert_not_called()
+
+    def test_create_directory_sftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.sftp_client.create_directory(path)
+                self._assert_traversal_blocked(result)
+                self.sftp_client.sftp_connection.open_sftp.assert_not_called()
+
+    # --- remove_directory ---
+
+    def test_remove_directory_ftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.client.remove_directory(path)
+                self._assert_traversal_blocked(result)
+                self.client.ftp_connection.rmd.assert_not_called()
+
+    def test_remove_directory_sftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.sftp_client.remove_directory(path)
+                self._assert_traversal_blocked(result)
+                self.sftp_client.sftp_connection.open_sftp.assert_not_called()
+
+    # --- get_file_info ---
+
+    def test_get_file_info_ftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.client.get_file_info(path)
+                self._assert_traversal_blocked(result)
+                self.client.ftp_connection.size.assert_not_called()
+
+    def test_get_file_info_sftp_remote_path_traversal(self):
+        for path in self.TRAVERSAL_PATHS:
+            with self.subTest(path=path):
+                result = self.sftp_client.get_file_info(path)
+                self._assert_traversal_blocked(result)
+                self.sftp_client.sftp_connection.open_sftp.assert_not_called()
+
+    # --- null byte injection ---
+
+    def test_null_byte_in_remote_path_is_blocked(self):
+        for method, kwargs in [
+            (self.client.upload_file, {"local_path": "f.txt", "remote_path": "up\x00load.txt"}),
+            (self.client.download_file, {"remote_path": "down\x00load.txt", "local_path": "f.txt"}),
+            (self.client.list_directory, {"remote_path": "di\x00r"}),
+            (self.client.create_directory, {"remote_path": "di\x00r"}),
+            (self.client.remove_directory, {"remote_path": "di\x00r"}),
+            (self.client.get_file_info, {"remote_path": "fi\x00le.txt"}),
+        ]:
+            with self.subTest(method=method.__name__):
+                result = method(**kwargs)
+                self.assertFalse(result['success'])
+                self.assertIn("Invalid remote path", result.get('error', ''))
+
+
 if __name__ == '__main__':
     unittest.main()
