@@ -32,9 +32,11 @@ class HFBackend(LLMBackend):
         torch_dtype: Optional[str] = "auto",
         trust_remote_code: bool = False,
         cache_dir: Optional[str] = None,
+        config: Optional[GenerationConfig] = None,
     ) -> None:
         self.model = model_id
-        self.temperature = 0.0
+        self._config = config or GenerationConfig()
+        self.temperature = self._config.temperature
         self.logger = logging.getLogger(__name__)
         self._rate_limiter = None
 
@@ -152,7 +154,7 @@ class HFBackend(LLMBackend):
         if self._rate_limiter:
             self._rate_limiter.acquire()
         messages = [{"role": "user", "content": prompt.strip()}]
-        return self.generate(messages, GenerationConfig())
+        return self.generate(messages, self._config)
 
     def generate(self, messages: list[dict], config: GenerationConfig) -> LLMResponse:
         """Run full generation and return an LLMResponse."""

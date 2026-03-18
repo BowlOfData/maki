@@ -24,6 +24,12 @@ class GenerationConfig:
     stop: list[str] = field(default_factory=list)
     do_sample: bool = True        # HuggingFace: enable sampling (set False for greedy)
 
+    def __post_init__(self):
+        if not isinstance(self.temperature, (int, float)):
+            raise ValueError("temperature must be a number")
+        if not (0.0 <= self.temperature <= 2.0):
+            raise ValueError("temperature must be between 0.0 and 2.0")
+
     def to_ollama_options(self) -> dict:
         opts: dict = {
             "temperature": self.temperature,
