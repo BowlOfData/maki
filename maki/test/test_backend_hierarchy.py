@@ -30,7 +30,10 @@ _skip_hf = unittest.skipUnless(_torch_available, "torch not installed")
 def _concrete_backend() -> LLMBackend:
     """Return a minimal concrete LLMBackend for use in Agent/AgentManager tests."""
     backend = MagicMock(spec=LLMBackend)
-    backend.request.return_value = "mock response"
+    from maki.objects import LLMResponse
+    backend.request.return_value = LLMResponse(content="mock response", model="test",
+                                                prompt_tokens=0, completion_tokens=0,
+                                                total_tokens=0, elapsed_seconds=0.0)
     return backend
 
 

@@ -155,7 +155,7 @@ class AgentManager:
             properly attributes each result to its original task and agent.
             """
             try:
-                results['final_synthesis'] = self.maki.request(synthesis_prompt)
+                results['final_synthesis'] = self.maki.request(synthesis_prompt).content
             except Exception as e:
                 logger.error(f"Failed to create synthesis: {str(e)}")
 
@@ -225,7 +225,7 @@ class AgentManager:
         """
 
         try:
-            return self.maki.request(synthesis_prompt)
+            return self.maki.request(synthesis_prompt).content
         except Exception as e:
             logger.error(f"Failed to create final synthesis: {str(e)}")
             return json.dumps(agent_results, indent=2)

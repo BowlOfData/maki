@@ -7,6 +7,13 @@ from unittest.mock import patch, MagicMock
 # Import the classes we want to test
 from maki.maki import Maki
 from maki.agents import Agent, AgentManager
+from maki.objects import LLMResponse
+
+
+def _r(content: str) -> LLMResponse:
+    return LLMResponse(content=content, model="test", prompt_tokens=0,
+                       completion_tokens=0, total_tokens=0, elapsed_seconds=0.0)
+
 
 class TestAgentFunctionality(unittest.TestCase):
 
@@ -29,7 +36,7 @@ class TestAgentFunctionality(unittest.TestCase):
         """Test that Agent can execute tasks"""
         # Mock the Maki request to avoid actual HTTP requests
         with patch.object(self.default_maki, 'request') as mock_request:
-            mock_request.return_value = "Test response"
+            mock_request.return_value = _r("Test response")
 
             agent = Agent("TestAgent", self.default_maki, "researcher", "You are a researcher")
             result = agent.execute_task("Test task")
@@ -138,7 +145,7 @@ class TestAgentFunctionality(unittest.TestCase):
 
         # Mock the Maki request to avoid actual HTTP requests
         with patch.object(self.default_maki, 'request') as mock_request:
-            mock_request.return_value = "Task completed successfully"
+            mock_request.return_value = _r("Task completed successfully")
 
             result = self.agent_manager.assign_task("TestAgent", "Test task")
             self.assertEqual(result, "Task completed successfully")
@@ -161,7 +168,7 @@ class TestAgentFunctionality(unittest.TestCase):
 
         # Should be able to assign tasks
         with patch.object(self.default_maki, 'request') as mock_request:
-            mock_request.return_value = "Research completed"
+            mock_request.return_value = _r("Research completed")
             result = manager.assign_task("Researcher", "Research topic")
             self.assertEqual(result, "Research completed")
 

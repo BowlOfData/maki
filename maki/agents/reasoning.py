@@ -90,7 +90,7 @@ class ReasoningEngine:
         2. Key considerations
         3. Solution approach
         """
-        result = str(self.maki.request(prompt))
+        result = self.maki.request(prompt).content
 
         self.reasoning_history.append({
             'problem': problem,
@@ -123,7 +123,7 @@ class ReasoningEngine:
 
             Please revise your response to be more accurate and complete.
             """
-            current = str(self.maki.request(prompt))
+            current = self.maki.request(prompt).content
 
             self.reasoning_history.append({
                 'iteration': i + 1,
@@ -181,7 +181,7 @@ class ReasoningEngine:
                 raise
             raise MakiNetworkError(f"Failed to get task decomposition from LLM: {str(e)}")
 
-        result = str(raw)
+        result = raw.content
 
         self.reasoning_history.append({
             'original_task': task,

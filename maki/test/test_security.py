@@ -15,6 +15,11 @@ from unittest.mock import MagicMock, patch
 
 from maki.maki import Maki
 from maki.objects import LLMResponse, RateLimiter
+
+
+def _r(content: str) -> LLMResponse:
+    return LLMResponse(content=content, model="test", prompt_tokens=0,
+                       completion_tokens=0, total_tokens=0, elapsed_seconds=0.0)
 from maki.agents import Agent, WorkflowTask
 from maki.agents.reasoning import _extract_json_array
 from maki.plugins.ftp_client.ftp_client import FTPClient
@@ -275,7 +280,7 @@ class TestPluginSecurity(unittest.TestCase):
         self.agent.plugins["plug"] = plugin
 
         directive = 'TOOL: {"plugin": "plug", "method": "_secret", "args": {}}\nsome text'
-        with patch.object(self.maki, 'request', return_value="final answer"):
+        with patch.object(self.maki, 'request', return_value=_r("final answer")):
             self.agent.handle_plugin_calls(directive, "task", None)
         plugin._secret.assert_not_called()
 
@@ -285,7 +290,7 @@ class TestPluginSecurity(unittest.TestCase):
         self.agent.plugins["plug"] = plugin
 
         directive = 'TOOL: {"plugin": "plug", "method": "other_method", "args": {}}\ntext'
-        with patch.object(self.maki, 'request', return_value="final answer"):
+        with patch.object(self.maki, 'request', return_value=_r("final answer")):
             self.agent.handle_plugin_calls(directive, "task", None)
         plugin.other_method.assert_not_called()
 
@@ -478,7 +483,7 @@ class TestExtractJsonArray(unittest.TestCase):
         maki = Maki("localhost", "11434", "llama3", 0.7)
         agent = Agent("A", maki, "researcher", "Be helpful")
         fenced = '```json\n[{"description": "Step 1", "resources": "none", "expected_outcome": "done"}]\n```'
-        with patch.object(maki, 'request', return_value=fenced):
+        with patch.object(maki, 'request', return_value=_r(fenced)):
             subtasks = agent.decompose_task("big task")
         self.assertEqual(len(subtasks), 1)
         self.assertEqual(subtasks[0]['description'], 'Step 1')
@@ -487,14 +492,14 @@ class TestExtractJsonArray(unittest.TestCase):
         maki = Maki("localhost", "11434", "llama3", 0.7)
         agent = Agent("A", maki, "researcher", "Be helpful")
         messy = 'Sure, here are the subtasks:\n[{"description": "Step 1", "resources": "none", "expected_outcome": "done"}]\nLet me know if you need changes!'
-        with patch.object(maki, 'request', return_value=messy):
+        with patch.object(maki, 'request', return_value=_r(messy)):
             subtasks = agent.decompose_task("big task")
         self.assertEqual(subtasks[0]['description'], 'Step 1')
 
     def test_decompose_task_still_raises_on_garbage(self):
         maki = Maki("localhost", "11434", "llama3", 0.7)
         agent = Agent("A", maki, "researcher", "Be helpful")
-        with patch.object(maki, 'request', return_value="I cannot decompose this task."):
+        with patch.object(maki, 'request', return_value=_r("I cannot decompose this task.")):
             with self.assertRaises(ValueError):
                 agent.decompose_task("big task")
 

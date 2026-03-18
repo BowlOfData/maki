@@ -251,4 +251,4 @@ class PluginHandler:
         Previous partial response: {clean_response}
         Please provide your final answer incorporating the tool results.
         """
-        return self.maki.request(follow_up)
+        return self.maki.request(follow_up).content

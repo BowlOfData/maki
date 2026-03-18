@@ -22,6 +22,12 @@ from unittest.mock import patch, MagicMock, call
 from maki.maki import Maki
 from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus, WorkflowState
 from maki.exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
+from maki.objects import LLMResponse
+
+
+def _r(content: str) -> LLMResponse:
+    return LLMResponse(content=content, model="test", prompt_tokens=0,
+                       completion_tokens=0, total_tokens=0, elapsed_seconds=0.0)
 
 
 class Base(unittest.TestCase):
@@ -38,7 +44,7 @@ class Base(unittest.TestCase):
 class TestUsePlugins(Base):
     def test_no_plugins_loaded_use_plugins_false(self):
         """execute_task works normally when no plugins are loaded"""
-        with patch.object(self.maki, 'request', return_value="ok") as mock:
+        with patch.object(self.maki, 'request', return_value=_r("ok")) as mock:
             result = self.agent.execute_task("do something", use_plugins=False)
         self.assertEqual(result, "ok")
 
@@ -52,7 +58,7 @@ class TestUsePlugins(Base):
 
         def fake_request(prompt):
             captured_prompts.append(prompt)
-            return "final answer"
+            return _r("final answer")
 
         with patch.object(self.maki, 'request', side_effect=fake_request):
             self.agent.execute_task("read a file", use_plugins=True)
@@ -67,8 +73,8 @@ class TestUsePlugins(Base):
         self.agent.plugins['FileReader'] = fake_plugin
 
         responses = iter([
-            'TOOL: {"plugin": "FileReader", "method": "read_file", "args": {"file_path": "/tmp/x.txt"}}\nPartial answer.',
-            "Final answer with file content."
+            _r('TOOL: {"plugin": "FileReader", "method": "read_file", "args": {"file_path": "/tmp/x.txt"}}\nPartial answer.'),
+            _r("Final answer with file content.")
         ])
 
         with patch.object(self.maki, 'request', side_effect=lambda p: next(responses)):
@@ -82,7 +88,7 @@ class TestUsePlugins(Base):
         fake_plugin = MagicMock()
         self.agent.plugins['FileReader'] = fake_plugin
 
-        with patch.object(self.maki, 'request', return_value="answer"):
+        with patch.object(self.maki, 'request', return_value=_r("answer")):
             self.agent.execute_task("do something", use_plugins=False)
 
         fake_plugin.read_file.assert_not_called()
@@ -92,8 +98,8 @@ class TestUsePlugins(Base):
         self.agent.plugins['FileReader'] = MagicMock()
 
         responses = iter([
-            'TOOL: {"plugin": "NonExistent", "method": "foo", "args": {}}\npartial',
-            "final"
+            _r('TOOL: {"plugin": "NonExistent", "method": "foo", "args": {}}\npartial'),
+            _r("final")
         ])
         with patch.object(self.maki, 'request', side_effect=lambda p: next(responses)):
             result = self.agent.execute_task("task", use_plugins=True)
@@ -110,7 +116,7 @@ class TestWorkflowTaskIntegration(Base):
         wt = WorkflowTask(name="t1", agent="A", task="do it")
         self.assertEqual(wt.status, TaskStatus.PENDING)
 
-        with patch.object(self.maki, 'request', return_value="done"):
+        with patch.object(self.maki, 'request', return_value=_r("done")):
             self.manager.run_workflow([wt])
 
         self.assertEqual(wt.status, TaskStatus.COMPLETED)
@@ -119,7 +125,7 @@ class TestWorkflowTaskIntegration(Base):
 
     def test_run_workflow_tasks_returns_results_dict(self):
         wt = WorkflowTask(name="step1", agent="A", task="analyse")
-        with patch.object(self.maki, 'request', return_value="analysis"):
+        with patch.object(self.maki, 'request', return_value=_r("analysis")):
             results = self.manager.run_workflow([wt])
 
         self.assertIn("step1", results)
@@ -139,7 +145,7 @@ class TestWorkflowTaskIntegration(Base):
             name="skip_me", agent="A", task="skipped",
             conditions=[lambda ctx: False]
         )
-        with patch.object(self.maki, 'request', return_value="should not appear") as mock:
+        with patch.object(self.maki, 'request', return_value=_r("should not appear")) as mock:
             results = self.manager.run_workflow([wt])
 
         mock.assert_not_called()
@@ -158,11 +164,11 @@ class TestDependencyEnforcement(Base):
         def fake_request(prompt):
             if "task1_content" in prompt:
                 call_order.append("t1")
-                return "result1"
+                return _r("result1")
             if "task2_content" in prompt:
                 call_order.append("t2")
-                return "result2"
-            return "ok"
+                return _r("result2")
+            return _r("ok")
 
         t1 = WorkflowTask(name="t1", agent="A", task="task1_content")
         t2 = WorkflowTask(name="t2", agent="A", task="task2_content", dependencies=["t1"])
@@ -185,7 +191,7 @@ class TestDependencyEnforcement(Base):
     def test_missing_dependency_skipped_gracefully(self):
         """A dependency that is not in the task list is ignored (absent from results)"""
         t1 = WorkflowTask(name="t1", agent="A", task="do it", dependencies=["ghost"])
-        with patch.object(self.maki, 'request', return_value="ok"):
+        with patch.object(self.maki, 'request', return_value=_r("ok")):
             results = self.manager.run_workflow([t1])
         self.assertIn("t1", results)
 
@@ -197,7 +203,7 @@ class TestStatefulAgent(Base):
     def test_stateful_false_no_history_in_prompt(self):
         agent = Agent("Bot", self.maki, "assistant", "", stateful=False)
         captured = []
-        with patch.object(self.maki, 'request', side_effect=lambda p: captured.append(p) or "r"):
+        with patch.object(self.maki, 'request', side_effect=lambda p: captured.append(p) or _r("r")):
             agent.execute_task("first")
             agent.execute_task("second")
 
@@ -206,7 +212,7 @@ class TestStatefulAgent(Base):
     def test_stateful_true_history_in_subsequent_prompt(self):
         agent = Agent("Bot", self.maki, "assistant", "", stateful=True)
         captured = []
-        with patch.object(self.maki, 'request', side_effect=lambda p: captured.append(p) or "response"):
+        with patch.object(self.maki, 'request', side_effect=lambda p: captured.append(p) or _r("response")):
             agent.execute_task("first task")
             agent.execute_task("second task")
 
@@ -215,14 +221,14 @@ class TestStatefulAgent(Base):
 
     def test_reset_conversation_clears_history(self):
         agent = Agent("Bot", self.maki, "assistant", "", stateful=True)
-        with patch.object(self.maki, 'request', return_value="r"):
+        with patch.object(self.maki, 'request', return_value=_r("r")):
             agent.execute_task("task one")
 
         agent.reset_conversation()
         self.assertEqual(agent._conversation_history, [])
 
         captured = []
-        with patch.object(self.maki, 'request', side_effect=lambda p: captured.append(p) or "r"):
+        with patch.object(self.maki, 'request', side_effect=lambda p: captured.append(p) or _r("r")):
             agent.execute_task("task two")
 
         self.assertNotIn("Prior conversation", captured[0])
@@ -234,18 +240,18 @@ class TestStatefulAgent(Base):
 class TestDecomposeTaskError(Base):
     def test_valid_json_returns_subtasks(self):
         payload = '[{"description": "Step 1", "resources": "none", "expected_outcome": "done"}]'
-        with patch.object(self.maki, 'request', return_value=payload):
+        with patch.object(self.maki, 'request', return_value=_r(payload)):
             subtasks = self.agent.decompose_task("big task")
         self.assertEqual(len(subtasks), 1)
         self.assertEqual(subtasks[0]["description"], "Step 1")
 
     def test_invalid_json_raises_value_error(self):
-        with patch.object(self.maki, 'request', return_value="This is not JSON at all."):
+        with patch.object(self.maki, 'request', return_value=_r("This is not JSON at all.")):
             with self.assertRaises(ValueError):
                 self.agent.decompose_task("big task")
 
     def test_non_list_json_raises_value_error(self):
-        with patch.object(self.maki, 'request', return_value='{"key": "value"}'):
+        with patch.object(self.maki, 'request', return_value=_r('{"key": "value"}')):
             with self.assertRaises(ValueError):
                 self.agent.decompose_task("big task")
 
@@ -255,7 +261,7 @@ class TestDecomposeTaskError(Base):
 # ---------------------------------------------------------------------------
 class TestSelfCorrect(Base):
     def test_single_iteration_default(self):
-        with patch.object(self.maki, 'request', return_value="improved") as mock:
+        with patch.object(self.maki, 'request', return_value=_r("improved")) as mock:
             result = self.agent.self_correct("original", "be better")
         mock.assert_called_once()
         self.assertEqual(result, "improved")
@@ -265,7 +271,7 @@ class TestSelfCorrect(Base):
 
         def fake(prompt):
             call_count[0] += 1
-            return f"v{call_count[0]}"
+            return _r(f"v{call_count[0]}")
 
         # 3 iterations → 3 LLM calls
         with patch.object(self.maki, 'request', side_effect=fake):
@@ -275,7 +281,7 @@ class TestSelfCorrect(Base):
         self.assertEqual(result, "v3")
 
     def test_each_iteration_recorded_in_history(self):
-        responses = ["v1", "v2"]
+        responses = [_r("v1"), _r("v2")]
         with patch.object(self.maki, 'request', side_effect=responses):
             self.agent.self_correct("original", "feedback", max_iterations=2)
 
@@ -299,7 +305,7 @@ class TestHistoryDeque(Base):
         self.agent._max_history_entries = 5
         self.agent.task_history = deque(maxlen=5)
 
-        with patch.object(self.maki, 'request', return_value="r"):
+        with patch.object(self.maki, 'request', return_value=_r("r")):
             for i in range(10):
                 self.agent.execute_task(f"task {i}")
 
@@ -308,7 +314,7 @@ class TestHistoryDeque(Base):
         self.assertEqual(self.agent.task_history[-1]['task'], "task 9")
 
     def test_set_max_history_entries_recreates_deque(self):
-        with patch.object(self.maki, 'request', return_value="r"):
+        with patch.object(self.maki, 'request', return_value=_r("r")):
             for i in range(10):
                 self.agent.execute_task(f"task {i}")
 
@@ -327,13 +333,13 @@ class TestHistoryDeque(Base):
 # ---------------------------------------------------------------------------
 class TestRetryBehaviour(Base):
     def test_retries_on_network_error(self):
-        side_effects = [MakiNetworkError("conn"), MakiNetworkError("conn"), "ok"]
+        side_effects = [MakiNetworkError("conn"), MakiNetworkError("conn"), _r("ok")]
         with patch.object(self.maki, 'request', side_effect=side_effects):
             result = self.agent.execute_task_with_retry("task", retry_delay=0)
         self.assertEqual(result, "ok")
 
     def test_retries_on_timeout_error(self):
-        side_effects = [MakiTimeoutError("timeout"), "ok"]
+        side_effects = [MakiTimeoutError("timeout"), _r("ok")]
         with patch.object(self.maki, 'request', side_effect=side_effects):
             result = self.agent.execute_task_with_retry("task", retry_delay=0)
         self.assertEqual(result, "ok")
@@ -400,7 +406,7 @@ class TestCollaborativeTaskStrict(Base):
             call_count[0] += 1
             if call_count[0] == 1:
                 raise MakiNetworkError("agent A down")
-            return "synthesised"
+            return _r("synthesised")
 
         with patch.object(self.maki, 'request', side_effect=fake_request):
             result = self.manager.collaborative_task("task", ["A", "B"])
@@ -415,7 +421,7 @@ class TestCollaborativeTaskStrict(Base):
             call_count[0] += 1
             if call_count[0] == 1:
                 raise MakiNetworkError("agent A down")
-            return "ok"
+            return _r("ok")
 
         with patch.object(self.maki, 'request', side_effect=fake_request):
             with self.assertRaises(RuntimeError):
