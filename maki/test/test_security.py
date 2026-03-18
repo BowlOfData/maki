@@ -64,16 +64,18 @@ class TestFTPRemotePathValidation(unittest.TestCase):
     # --- valid remote paths ---
 
     def test_valid_absolute_remote_path(self):
+        # Absolute remote paths are treated as path injection (CVE-2.1 / CVE-2.2)
         result = self.client._validate_path('/var/ftp/files/report.txt', is_local=False)
-        self.assertTrue(result['valid'])
+        self.assertFalse(result['valid'])
 
     def test_valid_relative_remote_path(self):
         result = self.client._validate_path('uploads/document.pdf', is_local=False)
         self.assertTrue(result['valid'])
 
     def test_valid_remote_root(self):
+        # '/' is an absolute path and blocked as path injection
         result = self.client._validate_path('/', is_local=False)
-        self.assertTrue(result['valid'])
+        self.assertFalse(result['valid'])
 
     def test_valid_remote_current_dir(self):
         result = self.client._validate_path('.', is_local=False)

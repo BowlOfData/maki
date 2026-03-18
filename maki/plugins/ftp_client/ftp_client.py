@@ -123,6 +123,7 @@ class FTPClient:
                     'error': 'Absolute remote paths are not allowed'
                 }
 
+
         return {
             'valid': True,
             'normalized_path': normalized_path,

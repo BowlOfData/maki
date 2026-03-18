@@ -27,8 +27,8 @@ class Maki(LLMBackend):
         # Setup logging
         self.logger = logging.getLogger(__name__)
 
-        # Validate URL (None is allowed for local/offline backends like HFBackend)
-        if url is not None and (not isinstance(url, str) or not url.strip()):
+        # Validate URL
+        if not isinstance(url, str) or not url.strip():
             raise ValueError("URL must be a non-empty string")
 
         # Validate port (only when provided)
@@ -53,7 +53,7 @@ class Maki(LLMBackend):
         if temperature < 0 or temperature > 1:
             raise ValueError("Temperature must be between 0 and 1")
 
-        self.url = url.strip() if url else None
+        self.url = url.strip()
         self.port = port
         self.model = model.strip()
         self.temperature = float(temperature)
