@@ -128,7 +128,7 @@ class Agent(PluginHandler, ReasoningEngine):
         try:
             logger.debug(f"Executing task '{task}' for agent '{self.name}'")
             start_time = time.time()
-            result = self.maki.request(prompt)
+            result = str(self.maki.request(prompt))
 
             # Execute any TOOL: directives the LLM emitted
             if use_plugins and self.plugins:

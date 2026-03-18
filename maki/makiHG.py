@@ -130,14 +130,14 @@ class HFBackend(Maki):
             "pass image tokens through generate() with an appropriate chat template"
         )
 
-    def request(self, prompt: str) -> str:
+    def request(self, prompt: str) -> LLMResponse:
         """Override Maki.request to route through the local HF pipeline.
 
         Args:
             prompt: user prompt
 
         Returns:
-            Generated text as a string
+            An LLMResponse containing the generated text and metadata
 
         Raises:
             ValueError: If prompt is not a valid string
@@ -145,9 +145,10 @@ class HFBackend(Maki):
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be a non-empty string")
 
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
         messages = [{"role": "user", "content": prompt.strip()}]
-        response = self.generate(messages, GenerationConfig())
-        return response.content
+        return self.generate(messages, GenerationConfig())
 
     def generate(self, messages: list[dict], config: GenerationConfig) -> LLMResponse:
         """Run full generation and return an LLMResponse."""

@@ -34,7 +34,7 @@ class TestMakiFunctionality(unittest.TestCase):
             mock_simple.return_value = "Test response"
 
             result = self.maki.request("Test prompt")
-            self.assertEqual(result, "Test response")
+            self.assertEqual(result.content, "Test response")
 
             # Verify that the correct URL and data were passed
             mock_simple.assert_called_once()
@@ -90,7 +90,7 @@ class TestMakiFunctionality(unittest.TestCase):
             mock_simple.return_value = "Test image response"
 
             result = self.maki.request_with_images("Test prompt", "test_image.jpg")
-            self.assertEqual(result, "Test image response")
+            self.assertEqual(result.content, "Test image response")
 
             # Verify that the correct calls were made
             mock_convert.assert_called_once()

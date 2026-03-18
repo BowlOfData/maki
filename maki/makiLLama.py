@@ -66,25 +66,39 @@ class MakiLLama(Maki):
         config: Optional[GenerationConfig] = None,
         system_prompt: Optional[str] = None,
         timeout: int = 120,
+        rate_limit: Optional[int] = None,
     ) -> None:
         parsed = urlparse(base_url)
         port = str(parsed.port) if parsed.port else "11434"
-        super().__init__(url=base_url, port=port, model=model, temperature=config.temperature if config else 0.7)
+        super().__init__(url=base_url, port=port, model=model,
+                         temperature=config.temperature if config else 0.7,
+                         rate_limit=rate_limit)
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.config = config or GenerationConfig()
         self.system_prompt = system_prompt
         self.timeout = timeout
+        self._session = requests.Session()
         self._verify_connection()
 
     # ------------------------------------------------------------------
     # Connection helpers
     # ------------------------------------------------------------------
 
+    def close(self) -> None:
+        """Close the underlying HTTP session and release connections."""
+        self._session.close()
+
+    def __del__(self) -> None:
+        try:
+            self._session.close()
+        except Exception:
+            pass
+
     def _verify_connection(self) -> None:
         """Ping the Ollama daemon; raise a friendly error if unreachable."""
         try:
-            r = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            r = self._session.get(f"{self.base_url}/api/tags", timeout=5)
             r.raise_for_status()
             available = [m["name"] for m in r.json().get("models", [])]
             log.debug("Available models: %s", available)
@@ -105,7 +119,7 @@ class MakiLLama(Maki):
 
     def list_models(self) -> list[str]:
         """Return names of all locally pulled models."""
-        r = requests.get(f"{self.base_url}/api/tags", timeout=10)
+        r = self._session.get(f"{self.base_url}/api/tags", timeout=10)
         r.raise_for_status()
         return [m["name"] for m in r.json().get("models", [])]
 
@@ -115,7 +129,7 @@ class MakiLLama(Maki):
         log.info("Pulling model '%s' …", target)
         response = None
         try:
-            response = requests.post(
+            response = self._session.post(
                 f"{self.base_url}/api/pull",
                 json={"name": target},
                 stream=True,
@@ -195,9 +209,11 @@ class MakiLLama(Maki):
         Returns a fully resolved LLMResponse.
         """
         log.debug("chat: %s", prompt[:100])
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
         payload = self._build_payload(prompt, history, config, stream=False)
         t0 = time.perf_counter()
-        r = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+        r = self._session.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
         elapsed = time.perf_counter() - t0
         r.raise_for_status()
         response = self._parse_response(r.json(), elapsed)
@@ -218,10 +234,12 @@ class MakiLLama(Maki):
                 print(chunk, end="", flush=True)
         """
         log.debug("stream: %s", prompt[:100])
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
         payload = self._build_payload(prompt, history, config, stream=True)
         response = None
         try:
-            response = requests.post(
+            response = self._session.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=True,
@@ -266,6 +284,12 @@ class MakiLLama(Maki):
         response = self._parse_response(r.json(), elapsed)
         log.info("async_chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
+
+    def request(self, prompt: str) -> LLMResponse:
+        """Override base request() to route through the chat API."""
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be a non-empty string")
+        return self.chat(prompt)
 
     def session(self, system: Optional[str] = None) -> "ChatSession":
         """Create a stateful multi-turn chat session."""

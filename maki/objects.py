@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+import threading
+import time as _time
 
 
 @dataclass
@@ -64,3 +66,36 @@ class LLMResponse:
     @property
     def tokens_per_second(self) -> float:
         return self.completion_tokens / self.elapsed_seconds if self.elapsed_seconds else 0.0
+
+
+class RateLimiter:
+    """Thread-safe token-bucket rate limiter.
+
+    Allows up to `requests_per_minute` calls per minute, supporting
+    short bursts up to that capacity and refilling continuously.
+    """
+
+    def __init__(self, requests_per_minute: int) -> None:
+        if not isinstance(requests_per_minute, int) or requests_per_minute <= 0:
+            raise ValueError("requests_per_minute must be a positive integer")
+        self._capacity = float(requests_per_minute)
+        self._tokens = float(requests_per_minute)
+        self._refill_rate = requests_per_minute / 60.0  # tokens per second
+        self._lock = threading.Lock()
+        self._last_refill = _time.monotonic()
+
+    def acquire(self) -> None:
+        """Block until a request token is available, then consume one."""
+        while True:
+            with self._lock:
+                now = _time.monotonic()
+                self._tokens = min(
+                    self._capacity,
+                    self._tokens + (now - self._last_refill) * self._refill_rate,
+                )
+                self._last_refill = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                wait = (1.0 - self._tokens) / self._refill_rate
+            _time.sleep(wait)

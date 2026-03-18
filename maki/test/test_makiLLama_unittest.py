@@ -33,8 +33,8 @@ class TestMakiLLama(unittest.TestCase):
         self.assertIsNotNone(session)
 
 
-    @patch('requests.post')
-    @patch('requests.get')
+    @patch('requests.Session.post')
+    @patch('requests.Session.get')
     def test_chat_method(self, mock_get, mock_post):
         """Test the chat method functionality"""
 
@@ -67,8 +67,8 @@ class TestMakiLLama(unittest.TestCase):
         self.assertEqual(response.completion_tokens, 20)
         self.assertEqual(response.total_tokens, 30)
 
-    @patch('requests.post')
-    @patch('requests.get')
+    @patch('requests.Session.post')
+    @patch('requests.Session.get')
     def test_stream_method(self, mock_get, mock_post):
         """Test the stream method functionality"""
 

@@ -5,11 +5,13 @@ from .utils import Utils
 from .connector import Connector
 from .urls import Actions
 from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
+from .objects import LLMResponse, RateLimiter
 import re
+import time
 import logging
 
 class Maki:
-    def __init__(self, url: Optional[str] = None, port: Union[str, int, None] = None, model: str = "", temperature=0):
+    def __init__(self, url: Optional[str] = None, port: Union[str, int, None] = None, model: str = "", temperature=0, rate_limit: Optional[int] = None):
         """ Initialize the Maki object
 
         Args:
@@ -54,17 +56,18 @@ class Maki:
         self.port = port
         self.model = model.strip()
         self.temperature = float(temperature)
+        self._rate_limiter = RateLimiter(rate_limit) if rate_limit is not None else None
 
         self.logger.info(f"Maki initialized with URL: {self.url}, Port: {self.port}, Model: {self.model}")
 
-    def request(self, prompt: str) -> str:
+    def request(self, prompt: str) -> LLMResponse:
         """ Send the request to the LLM
 
         Args:
             prompt: user prompt
 
         Returns:
-            A string containing the payload
+            An LLMResponse containing the generated text and metadata
 
         Raises:
             ValueError: If prompt is not a valid string
@@ -75,16 +78,26 @@ class Maki:
 
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be a non-empty string")
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
         self.logger.debug(f"Sending request with prompt: {prompt[:100]}...")
         url = Utils.compose_url(self.url, self.port, Actions.GENERATE.value)
         data = self._compose_data(prompt)
         try:
-            result = Connector.simple(url, data)
+            t0 = time.perf_counter()
+            text = Connector.simple(url, data)
+            elapsed = time.perf_counter() - t0
             self.logger.debug("Request completed successfully")
-            return result
+            return LLMResponse(
+                content=text,
+                model=self.model,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                elapsed_seconds=elapsed,
+            )
         except Exception as e:
             self.logger.error(f"Request failed: {str(e)}", exc_info=True)
-            # Re-raise with more specific type if needed
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
             else:
@@ -152,7 +165,7 @@ class Maki:
         self.logger.debug("Data payload composed successfully")
         return payload
 
-    def request_with_images(self, prompt: str, img:str)-> str:
+    def request_with_images(self, prompt: str, img: str) -> LLMResponse:
         """ Send a request with image input to the LLM
 
         Args:
@@ -160,7 +173,7 @@ class Maki:
             img: path to image file
 
         Returns:
-            A string containing the response
+            An LLMResponse containing the generated text and metadata
 
         Raises:
             ValueError: If prompt or img is not valid
@@ -174,18 +187,28 @@ class Maki:
         if not isinstance(img, str) or not img.strip():
             raise ValueError("Image path must be a non-empty string")
 
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
         self.logger.debug(f"Sending request with image: {img}")
         url = Utils.compose_url(self.url, self.port, Actions.GENERATE.value)
         try:
             converted_imgs = Utils.convert64(img)
             imgs = [converted_imgs.decode("utf-8")]
             data = self._compose_data(prompt, imgs=imgs)
-            result = Connector.simple(url, data)
+            t0 = time.perf_counter()
+            text = Connector.simple(url, data)
+            elapsed = time.perf_counter() - t0
             self.logger.debug("Request with image completed successfully")
-            return result
+            return LLMResponse(
+                content=text,
+                model=self.model,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                elapsed_seconds=elapsed,
+            )
         except Exception as e:
             self.logger.error(f"Request with image failed: {str(e)}")
-            # Re-raise with more specific type if needed
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
             else:
