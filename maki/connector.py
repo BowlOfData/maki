@@ -8,7 +8,7 @@ from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError, MakiVa
 class Connector:
 
     @staticmethod
-    def simple(url: str, prompt: dict) -> str:
+    def simple(url: str, prompt: dict) -> dict:
         """Send a simple request to the Ollama API
 
         Args:
@@ -16,7 +16,7 @@ class Connector:
             prompt: the data to send
 
         Returns:
-            The LLM response text as a string
+            The full parsed JSON response from the API as a dict.
 
         Raises:
             MakiValidationError: If url or prompt is invalid
@@ -56,11 +56,10 @@ class Connector:
             response.raise_for_status()  # Raise an exception for bad status codes
             logger.debug("HTTP request completed successfully")
             jsonify = Utils.jsonify(response.text)
-            # Check if response contains the expected structure
-            if "response" not in jsonify:
-                raise MakiAPIError("Invalid API response format: missing 'response' field")
+            if not isinstance(jsonify, dict):
+                raise MakiAPIError("Invalid API response format: expected a JSON object")
             logger.debug("Request completed successfully")
-            return jsonify["response"]
+            return jsonify
         except requests.exceptions.Timeout:
             logger.error("HTTP request timed out", exc_info=True)
             raise MakiTimeoutError("HTTP request timed out")

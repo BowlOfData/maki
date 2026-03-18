@@ -186,7 +186,12 @@ class HFBackend(LLMBackend):
             backend="transformers",
         )
 
-    def stream(self, messages: list[dict], config: GenerationConfig) -> Generator[str, None, None]:
+    def stream(self, prompt: str) -> Generator[str, None, None]:  # type: ignore[override]
+        """Stream tokens for a plain-text *prompt* (satisfies LLMBackend contract)."""
+        messages = [{"role": "user", "content": prompt.strip()}]
+        yield from self.stream_messages(messages, GenerationConfig())
+
+    def stream_messages(self, messages: list[dict], config: GenerationConfig) -> Generator[str, None, None]:
         """Token-by-token streaming using a TextIteratorStreamer."""
         prompt = self._apply_chat_template(messages)
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)

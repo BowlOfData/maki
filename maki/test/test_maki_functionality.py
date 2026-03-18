@@ -31,10 +31,17 @@ class TestMakiFunctionality(unittest.TestCase):
         """Test the request method functionality"""
         # Mock the connector to avoid actual HTTP requests
         with patch.object(Connector, 'simple') as mock_simple:
-            mock_simple.return_value = "Test response"
+            mock_simple.return_value = {
+                "response": "Test response",
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+            }
 
             result = self.maki.request("Test prompt")
             self.assertEqual(result.content, "Test response")
+            self.assertEqual(result.prompt_tokens, 10)
+            self.assertEqual(result.completion_tokens, 5)
+            self.assertEqual(result.total_tokens, 15)
 
             # Verify that the correct URL and data were passed
             mock_simple.assert_called_once()
@@ -87,7 +94,7 @@ class TestMakiFunctionality(unittest.TestCase):
              patch.object(Utils, 'convert64') as mock_convert:
 
             mock_convert.return_value = b"test_image_data"
-            mock_simple.return_value = "Test image response"
+            mock_simple.return_value = {"response": "Test image response"}
 
             result = self.maki.request_with_images("Test prompt", "test_image.jpg")
             self.assertEqual(result.content, "Test image response")

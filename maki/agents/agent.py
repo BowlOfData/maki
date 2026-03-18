@@ -215,11 +215,6 @@ class Agent(PluginHandler, ReasoningEngine):
         Returns:
             A generator that yields response chunks
         """
-        if not hasattr(self.maki, 'stream'):
-            raise NotImplementedError(
-                f"Backend '{type(self.maki).__name__}' does not support streaming. "
-                "Use MakiLLama instead."
-            )
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
@@ -233,7 +228,13 @@ class Agent(PluginHandler, ReasoningEngine):
 
         Please provide a detailed response to the task.
         """
-        return self.maki.stream(prompt)
+        try:
+            return self.maki.stream(prompt)
+        except NotImplementedError:
+            raise NotImplementedError(
+                f"Backend '{type(self.maki).__name__}' does not support streaming. "
+                "Use MakiLLama or another streaming-capable backend instead."
+            )
 
     def remember(self, key: str, value: Any):
         """Store information in the agent's memory."""

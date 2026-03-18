@@ -86,15 +86,19 @@ class Maki(LLMBackend):
         data = self._compose_data(prompt)
         try:
             t0 = time.perf_counter()
-            text = Connector.simple(url, data)
+            data_response = Connector.simple(url, data)
             elapsed = time.perf_counter() - t0
+            if "response" not in data_response:
+                raise MakiAPIError("Invalid API response format: missing 'response' field")
             self.logger.debug("Request completed successfully")
+            prompt_tokens = data_response.get("prompt_eval_count", 0)
+            completion_tokens = data_response.get("eval_count", 0)
             return LLMResponse(
-                content=text,
+                content=data_response["response"],
                 model=self.model,
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
                 elapsed_seconds=elapsed,
             )
         except Exception as e:
@@ -197,15 +201,19 @@ class Maki(LLMBackend):
             imgs = [converted_imgs.decode("utf-8")]
             data = self._compose_data(prompt, imgs=imgs)
             t0 = time.perf_counter()
-            text = Connector.simple(url, data)
+            data_response = Connector.simple(url, data)
             elapsed = time.perf_counter() - t0
+            if "response" not in data_response:
+                raise MakiAPIError("Invalid API response format: missing 'response' field")
             self.logger.debug("Request with image completed successfully")
+            prompt_tokens = data_response.get("prompt_eval_count", 0)
+            completion_tokens = data_response.get("eval_count", 0)
             return LLMResponse(
-                content=text,
+                content=data_response["response"],
                 model=self.model,
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
                 elapsed_seconds=elapsed,
             )
         except Exception as e:

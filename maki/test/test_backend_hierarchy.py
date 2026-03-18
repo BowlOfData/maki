@@ -257,5 +257,110 @@ class TestPublicExport(unittest.TestCase):
         self.assertIn("LLMBackend", maki.__all__)
 
 
+# ---------------------------------------------------------------------------
+# stream() contract on LLMBackend
+# ---------------------------------------------------------------------------
+
+class TestStreamContract(unittest.TestCase):
+
+    def test_base_class_stream_raises_not_implemented(self):
+        """LLMBackend.stream() must raise NotImplementedError by default."""
+        backend = _concrete_backend()
+        # _concrete_backend() is a MagicMock(spec=LLMBackend); test with a real subclass.
+        class NoStream(LLMBackend):
+            model = "test"
+            temperature = 0.0
+            def request(self, prompt):
+                return MagicMock()
+
+        obj = NoStream()
+        with self.assertRaises(NotImplementedError):
+            obj.stream("hello")
+
+    def test_makillama_stream_is_defined(self):
+        """MakiLLama must have a stream() method callable with a plain prompt."""
+        from maki.makiLLama import MakiLLama
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
+        self.assertTrue(callable(llm.stream))
+
+    def test_agent_stream_task_raises_not_implemented_for_plain_maki(self):
+        """Agent.stream_task() must raise NotImplementedError for a non-streaming backend."""
+        backend = _concrete_backend()
+        # Make stream() raise NotImplementedError (as the base class default does).
+        backend.stream.side_effect = NotImplementedError
+        agent = Agent("streamer", backend)
+        with self.assertRaises(NotImplementedError):
+            list(agent.stream_task("do something"))
+
+
+# ---------------------------------------------------------------------------
+# Token counts from Maki.request()
+# ---------------------------------------------------------------------------
+
+class TestMakiTokenCounts(unittest.TestCase):
+
+    def _make_maki(self):
+        return Maki("localhost", "11434", "llama3", 0.7)
+
+    def test_token_counts_populated_from_api_response(self):
+        """Maki.request() must populate token counts from the Ollama API response."""
+        from unittest.mock import patch
+        from maki.connector import Connector
+        maki = self._make_maki()
+        fake_response = {
+            "response": "hello",
+            "prompt_eval_count": 7,
+            "eval_count": 3,
+        }
+        with patch.object(Connector, 'simple', return_value=fake_response):
+            result = maki.request("test prompt")
+        self.assertEqual(result.prompt_tokens, 7)
+        self.assertEqual(result.completion_tokens, 3)
+        self.assertEqual(result.total_tokens, 10)
+        self.assertEqual(result.content, "hello")
+
+    def test_token_counts_default_to_zero_when_absent(self):
+        """Token counts fall back to 0 if the API omits eval fields."""
+        from unittest.mock import patch
+        from maki.connector import Connector
+        maki = self._make_maki()
+        with patch.object(Connector, 'simple', return_value={"response": "hi"}):
+            result = maki.request("test")
+        self.assertEqual(result.prompt_tokens, 0)
+        self.assertEqual(result.completion_tokens, 0)
+        self.assertEqual(result.total_tokens, 0)
+
+
+# ---------------------------------------------------------------------------
+# MakiLLama exception wrapping
+# ---------------------------------------------------------------------------
+
+class TestMakiLLamaExceptionWrapping(unittest.TestCase):
+
+    def _make(self):
+        from maki.makiLLama import MakiLLama
+        with patch.object(MakiLLama, '_verify_connection'):
+            return MakiLLama(model="gemma3")
+
+    def test_chat_wraps_timeout(self):
+        """MakiLLama.chat() must raise MakiTimeoutError on requests.Timeout."""
+        import requests
+        from maki.exceptions import MakiTimeoutError
+        llm = self._make()
+        llm._session.post = MagicMock(side_effect=requests.exceptions.Timeout)
+        with self.assertRaises(MakiTimeoutError):
+            llm.chat("hello")
+
+    def test_chat_wraps_connection_error(self):
+        """MakiLLama.chat() must raise MakiNetworkError on ConnectionError."""
+        import requests
+        from maki.exceptions import MakiNetworkError
+        llm = self._make()
+        llm._session.post = MagicMock(side_effect=requests.exceptions.ConnectionError)
+        with self.assertRaises(MakiNetworkError):
+            llm.chat("hello")
+
+
 if __name__ == "__main__":
     unittest.main()

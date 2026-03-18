@@ -404,7 +404,7 @@ class TestRateLimiter(unittest.TestCase):
         maki = Maki("localhost", "11434", "llama3", 0.7, rate_limit=60)
         maki._rate_limiter = MagicMock()
 
-        with patch('maki.connector.Connector.simple', return_value="response"):
+        with patch('maki.connector.Connector.simple', return_value={"response": "response"}):
             maki.request("hello")
 
         maki._rate_limiter.acquire.assert_called_once()
