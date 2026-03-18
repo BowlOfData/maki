@@ -108,6 +108,11 @@ class TestRemotePathTraversalValidation(unittest.TestCase):
         "uploads/../../etc/cron.d",
         "foo/../../../root/.ssh/id_rsa",
         "..",
+        # Absolute path injection
+        "/etc/passwd",
+        "/root/.ssh/authorized_keys",
+        "/var/spool/cron/crontabs/root",
+        "/",
     ]
 
     def setUp(self):

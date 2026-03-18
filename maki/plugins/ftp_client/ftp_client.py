@@ -115,6 +115,14 @@ class FTPClient:
                     'error': 'Path traversal attempt detected'
                 }
 
+            # Reject absolute remote paths to prevent writing to arbitrary server locations
+            if posixpath.isabs(normalized_path):
+                return {
+                    'valid': False,
+                    'normalized_path': None,
+                    'error': 'Absolute remote paths are not allowed'
+                }
+
         return {
             'valid': True,
             'normalized_path': normalized_path,
