@@ -11,7 +11,7 @@ import time
 from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ..maki import Maki
+from ..backend import LLMBackend
 from .agent import Agent
 from .workflow import WorkflowTask, WorkflowState, TaskStatus
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class AgentManager:
     """Manages a collection of agents and facilitates their coordination."""
 
-    def __init__(self, maki_instance: Maki):
+    def __init__(self, maki_instance: LLMBackend):
         """
         Initialize the agent manager.
 
@@ -36,7 +36,7 @@ class AgentManager:
         logger.info("AgentManager initialized")
 
     def add_agent(self, name: str, role: str = "", instructions: str = "",
-                  maki_instance: Maki = None) -> Agent:
+                  maki_instance: LLMBackend = None) -> Agent:
         """
         Add a new agent to the manager.
 
@@ -61,8 +61,8 @@ class AgentManager:
 
         maki_to_use = maki_instance if maki_instance is not None else self.maki
 
-        if not isinstance(maki_to_use, Maki):
-            raise TypeError("maki_instance must be a Maki instance")
+        if not isinstance(maki_to_use, LLMBackend):
+            raise TypeError("maki_instance must be an LLMBackend instance")
 
         agent = Agent(name, maki_to_use, role, instructions)
         self.agents[name] = agent

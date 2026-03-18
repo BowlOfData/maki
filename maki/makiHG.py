@@ -7,11 +7,11 @@ from typing import Generator, Optional
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, TextIteratorStreamer
 
-from .maki import Maki
+from .backend import LLMBackend
 from .objects import GenerationConfig, LLMResponse
 
 
-class HFBackend(Maki):
+class HFBackend(LLMBackend):
     """
     Runs any HuggingFace chat model directly via `transformers`.
 
@@ -33,7 +33,10 @@ class HFBackend(Maki):
         trust_remote_code: bool = False,
         cache_dir: Optional[str] = None,
     ) -> None:
-        super().__init__(model=model_id)
+        self.model = model_id
+        self.temperature = 0.0
+        self.logger = logging.getLogger(__name__)
+        self._rate_limiter = None
 
         self._model_id = model_id
 

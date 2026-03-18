@@ -12,7 +12,7 @@ import json
 import logging
 import time
 
-from ..maki import Maki
+from ..backend import LLMBackend
 from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
@@ -26,7 +26,7 @@ _RETRYABLE_ERRORS = (MakiNetworkError, MakiTimeoutError)
 class Agent(PluginHandler, ReasoningEngine):
     """An individual agent that can perform tasks using the Maki framework."""
 
-    def __init__(self, name: str, maki_instance: Maki, role: str = "", instructions: str = "",
+    def __init__(self, name: str, maki_instance: LLMBackend, role: str = "", instructions: str = "",
                  stateful: bool = False):
         """
         Initialize an agent.
@@ -51,8 +51,8 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(instructions, str):
             raise ValueError("Instructions must be a string")
 
-        if not isinstance(maki_instance, Maki):
-            raise TypeError("maki_instance must be a Maki instance")
+        if not isinstance(maki_instance, LLMBackend):
+            raise TypeError("maki_instance must be an LLMBackend instance")
 
         self.name = name.strip()
         self.maki = maki_instance

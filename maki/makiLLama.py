@@ -21,9 +21,9 @@ from typing import Generator, Iterator, Optional
 
 from urllib.parse import urlparse
 
-from .maki import Maki
+from .backend import LLMBackend
 from .utils import Utils
-from .objects import LLMResponse, Message, GenerationConfig
+from .objects import LLMResponse, Message, GenerationConfig, RateLimiter
 
 import requests
 import httpx
@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 # Core wrapper
 # ---------------------------------------------------------------------------
 
-class MakiLLama(Maki):
+class MakiLLama(LLMBackend):
     """
     A flexible wrapper around the Ollama HTTP API.
 
@@ -68,12 +68,9 @@ class MakiLLama(Maki):
         timeout: int = 120,
         rate_limit: Optional[int] = None,
     ) -> None:
-        parsed = urlparse(base_url)
-        port = str(parsed.port) if parsed.port else "11434"
-        super().__init__(url=base_url, port=port, model=model,
-                         temperature=config.temperature if config else 0.7,
-                         rate_limit=rate_limit)
         self.model = model
+        self.temperature = config.temperature if config else 0.7
+        self._rate_limiter = RateLimiter(rate_limit) if rate_limit is not None else None
         self.base_url = base_url.rstrip("/")
         self.config = config or GenerationConfig()
         self.system_prompt = system_prompt

@@ -12,6 +12,7 @@ from collections import deque
 from unittest.mock import MagicMock
 
 from maki.maki import Maki
+from maki.backend import LLMBackend
 from maki.agents import Agent, PluginHostProtocol, ReasoningHostProtocol
 from maki.agents.plugin_handler import PluginHandler
 from maki.agents.reasoning import ReasoningEngine
@@ -21,9 +22,9 @@ from maki.agents.reasoning import ReasoningEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _mock_maki() -> Maki:
-    """Return a Maki-typed mock that satisfies isinstance(x, Maki)."""
-    m = MagicMock(spec=Maki)
+def _mock_maki() -> LLMBackend:
+    """Return a mock that satisfies isinstance(x, LLMBackend)."""
+    m = MagicMock(spec=LLMBackend)
     return m
 
 

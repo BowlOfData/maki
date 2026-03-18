@@ -6,11 +6,12 @@ from .connector import Connector
 from .urls import Actions
 from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 from .objects import LLMResponse, RateLimiter
+from .backend import LLMBackend
 import re
 import time
 import logging
 
-class Maki:
+class Maki(LLMBackend):
     def __init__(self, url: Optional[str] = None, port: Union[str, int, None] = None, model: str = "", temperature=0, rate_limit: Optional[int] = None):
         """ Initialize the Maki object
 
