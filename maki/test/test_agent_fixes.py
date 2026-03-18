@@ -450,5 +450,90 @@ class TestCircularDependency(Base):
             self.manager._topological_sort([t1, t2, t3])
 
 
+# ---------------------------------------------------------------------------
+# 12. coordinate_agents / assign_task return-type and failure contracts
+# ---------------------------------------------------------------------------
+class TestCoordinateAgentsReturnType(Base):
+    def test_synthesis_success_includes_final_synthesis_key(self):
+        """When coordination_prompt is given and synthesis succeeds, 'final_synthesis' is a string."""
+        with patch.object(self.maki, 'request', return_value=_r("ok")):
+            result = self.manager.coordinate_agents(
+                [{'agent': 'A', 'task': 'do something'}],
+                coordination_prompt="Summarise"
+            )
+        self.assertIn('final_synthesis', result)
+        self.assertEqual(result['final_synthesis'], "ok")
+
+    def test_synthesis_failure_sets_final_synthesis_to_none(self):
+        """When synthesis fails, 'final_synthesis' is None and individual results survive."""
+        call_count = [0]
+
+        def fake_request(prompt):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return _r("agent result")
+            raise MakiNetworkError("synthesis down")
+
+        with patch.object(self.maki, 'request', side_effect=fake_request):
+            result = self.manager.coordinate_agents(
+                [{'agent': 'A', 'task': 'do something'}],
+                coordination_prompt="Summarise"
+            )
+
+        self.assertIn('final_synthesis', result)
+        self.assertIsNone(result['final_synthesis'])
+        # Individual agent results must still be present
+        task_keys = [k for k in result if k != 'final_synthesis']
+        self.assertEqual(len(task_keys), 1)
+        self.assertEqual(result[task_keys[0]], "agent result")
+
+    def test_no_coordination_prompt_omits_final_synthesis_key(self):
+        """Without a coordination_prompt, 'final_synthesis' should not appear."""
+        with patch.object(self.maki, 'request', return_value=_r("agent result")):
+            result = self.manager.coordinate_agents(
+                [{'agent': 'A', 'task': 'do something'}]
+            )
+        self.assertNotIn('final_synthesis', result)
+
+    def test_task_failure_propagates_as_runtime_error(self):
+        """A failing agent task raises RuntimeError out of coordinate_agents."""
+        with patch.object(self.maki, 'request', side_effect=MakiNetworkError("agent down")):
+            with self.assertRaises(RuntimeError):
+                self.manager.coordinate_agents(
+                    [{'agent': 'A', 'task': 'do something'}]
+                )
+
+    def test_assign_task_wraps_exception_with_context(self):
+        """assign_task raises RuntimeError chained to the original exception."""
+        original = MakiNetworkError("backend down")
+        with patch.object(self.maki, 'request', side_effect=original):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.manager.assign_task('A', 'do something')
+        self.assertIs(ctx.exception.__cause__, original)
+
+
+class TestCollaborativeTaskSynthesisFailure(Base):
+    def setUp(self):
+        super().setUp()
+        self.manager.add_agent("B", "writer", "Write things")
+
+    def test_synthesis_failure_after_agent_success_raises_runtime_error(self):
+        """When agents succeed but synthesis fails, RuntimeError is raised."""
+        call_count = [0]
+
+        def fake_request(prompt):
+            call_count[0] += 1
+            if call_count[0] <= 2:          # agent A and B succeed
+                return _r(f"result {call_count[0]}")
+            raise MakiNetworkError("synthesis down")  # synthesis fails
+
+        with patch.object(self.maki, 'request', side_effect=fake_request):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.manager.collaborative_task("task", ["A", "B"])
+
+        self.assertIn("synthesis failed", str(ctx.exception).lower())
+        self.assertIsInstance(ctx.exception.__cause__, MakiNetworkError)
+
+
 if __name__ == '__main__':
     unittest.main()

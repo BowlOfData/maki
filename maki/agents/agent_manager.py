@@ -92,7 +92,11 @@ class AgentManager:
             context: Additional context for the task
 
         Returns:
-            The result of the task execution
+            The result of the task execution as a string.
+
+        Raises:
+            ValueError: If agent_name or task are invalid, or the agent is not registered.
+            RuntimeError: If the agent raises an exception during task execution.
         """
         if not isinstance(agent_name, str) or not agent_name.strip():
             raise ValueError("Agent name must be a non-empty string")
@@ -107,20 +111,31 @@ class AgentManager:
         try:
             return agent.execute_task(task, context)
         except Exception as e:
-            raise Exception(f"Failed to assign task '{task}' to agent '{agent_name}': {str(e)}")
+            raise RuntimeError(f"Failed to assign task '{task}' to agent '{agent_name}': {str(e)}") from e
 
-    def coordinate_agents(self, tasks: List[Dict], coordination_prompt: str = "") -> Dict[str, str]:
+    def coordinate_agents(self, tasks: List[Dict], coordination_prompt: str = "") -> Dict[str, Any]:
         """
         Coordinate multiple agents to complete a set of tasks sequentially.
 
         Args:
             tasks: List of task dicts with 'agent', 'task', and optional 'context' keys
-            coordination_prompt: If provided, a synthesis LLM call merges all results
+            coordination_prompt: If provided, a synthesis LLM call merges all results.
+                When synthesis fails, 'final_synthesis' is set to None so that individual
+                task results are still accessible (graceful degradation).
 
         Returns:
-            A dict mapping unique task keys to results, plus 'final_synthesis' if requested
+            A dict mapping unique task keys (``"task_{i}_{agent}"`` format) to agent
+            result strings.  When *coordination_prompt* is supplied, also contains a
+            ``'final_synthesis'`` key whose value is the synthesised string, or ``None``
+            if synthesis failed.
+
+        Raises:
+            RuntimeError: Propagated from :meth:`assign_task` when an individual agent
+                task raises an exception.  Synthesis failures do NOT raise; they set
+                ``'final_synthesis'`` to ``None`` so callers can still access the
+                individual results.
         """
-        results = {}
+        results: Dict[str, Any] = {}
         task_metadata = {}
 
         for i, task_dict in enumerate(tasks):
@@ -157,7 +172,8 @@ class AgentManager:
             try:
                 results['final_synthesis'] = self.maki.request(synthesis_prompt).content
             except Exception as e:
-                logger.error(f"Failed to create synthesis: {str(e)}")
+                logger.error(f"Failed to create synthesis: {str(e)}", exc_info=True)
+                results['final_synthesis'] = None
 
         return results
 
@@ -165,6 +181,11 @@ class AgentManager:
                            context: Optional[Dict] = None, strict: bool = False) -> str:
         """
         Have multiple agents collaborate on a single task.
+
+        Unlike :meth:`coordinate_agents`, the synthesised response *is* the
+        output of this method.  If synthesis fails after agents have produced
+        results, a ``RuntimeError`` is raised rather than falling back to raw
+        data, because there is no meaningful partial result to return.
 
         Args:
             task: The main task for collaboration
@@ -174,10 +195,12 @@ class AgentManager:
                     proceeding with partial results
 
         Returns:
-            A synthesised response from all successful agents
+            A synthesised string response produced by the LLM from all successful
+            agents' outputs.
 
         Raises:
-            RuntimeError: If all agents fail, or if strict=True and any agent fails
+            RuntimeError: If all agents fail; if strict=True and any agent fails;
+                or if the final synthesis LLM call fails.
         """
         agent_results = {}
         agent_errors = {}
@@ -227,8 +250,10 @@ class AgentManager:
         try:
             return self.maki.request(synthesis_prompt).content
         except Exception as e:
-            logger.error(f"Failed to create final synthesis: {str(e)}")
-            return json.dumps(agent_results, indent=2)
+            logger.error(f"Failed to create final synthesis: {str(e)}", exc_info=True)
+            raise RuntimeError(
+                f"collaborative_task: synthesis failed after all agents succeeded: {str(e)}"
+            ) from e
 
     def run_workflow(self, workflow: List) -> Dict[str, Any]:
         """
