@@ -13,7 +13,7 @@ import logging
 import time
 
 from ..backend import LLMBackend
-from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
+from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
 
@@ -83,6 +83,28 @@ class Agent(PluginHandler, ReasoningEngine):
     def __repr__(self):
         return f"Agent(name='{self.name}', role='{self.role}')"
 
+    def _build_history_section(self) -> str:
+        """Return the prior-conversation block for stateful prompts, or empty string."""
+        if not self.stateful or not self._conversation_history:
+            return ""
+        lines = []
+        for turn in list(self._conversation_history)[-self._stateful_context_window:]:
+            lines.append(f"Task: {turn['task']}")
+            lines.append(f"Response: {turn['result'][:300]}")
+        return "\n\nPrior conversation:\n" + "\n".join(lines)
+
+    def _build_prompt(self, task: str, context: Optional[Dict], use_plugins: bool) -> str:
+        """Assemble the full prompt string for a task."""
+        plugin_section = self.build_plugin_prompt_section() if use_plugins and self.plugins else ""
+        return (
+            f"\n        You are {self.name}, a {self.role}.\n"
+            f"        {self.instructions}{self._build_history_section()}\n\n"
+            f"        Task: {task}\n\n"
+            f"        Context: {json.dumps(context) if context else 'None'}"
+            f"{plugin_section}\n\n"
+            f"        Please provide a detailed response to the task.\n        "
+        )
+
     def execute_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False) -> str:
         """
         Execute a task using this agent.
@@ -106,30 +128,7 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
-        # Build conversation history section (stateful mode)
-        history_section = ""
-        if self.stateful and self._conversation_history:
-            lines = []
-            for turn in list(self._conversation_history)[-self._stateful_context_window:]:
-                lines.append(f"Task: {turn['task']}")
-                lines.append(f"Response: {turn['result'][:300]}")
-            history_section = "\n\nPrior conversation:\n" + "\n".join(lines)
-
-        # Build plugin section when use_plugins is requested
-        plugin_section = ""
-        if use_plugins and self.plugins:
-            plugin_section = self.build_plugin_prompt_section()
-
-        prompt = f"""
-        You are {self.name}, a {self.role}.
-        {self.instructions}{history_section}
-
-        Task: {task}
-
-        Context: {json.dumps(context) if context else 'None'}{plugin_section}
-
-        Please provide a detailed response to the task.
-        """
+        prompt = self._build_prompt(task, context, use_plugins)
 
         try:
             logger.debug(f"Executing task '{task}' for agent '{self.name}'")
@@ -144,12 +143,12 @@ class Agent(PluginHandler, ReasoningEngine):
 
             execution_time = time.time() - start_time
             logger.debug(f"Task '{task}' completed in {execution_time:.2f}s for agent '{self.name}'")
-        except (MakiNetworkError, MakiTimeoutError, MakiAPIError, ValueError, TypeError) as e:
+        except (MakiError, ValueError, TypeError) as e:
             logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
             raise
         except Exception as e:
             logger.error(f"Unexpected error executing task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
-            raise MakiNetworkError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}") from e
+            raise MakiError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}") from e
 
         # Record the task execution in history
         self.task_history.append({
@@ -207,16 +206,25 @@ class Agent(PluginHandler, ReasoningEngine):
         # Unreachable, but satisfies type checkers
         raise RuntimeError(f"Task '{task}' failed after {max_retries} attempts")
 
-    def stream_task(self, task: str, context: Optional[Dict] = None):
+    def stream_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False):
         """
         Stream a task response token by token.
 
         Requires a backend that supports streaming (e.g., MakiLLama). Raises
         NotImplementedError if the configured backend has no stream() method.
 
+        History (task_history and stateful conversation history) is recorded
+        via a finally block in the returned generator, so it is always updated
+        regardless of whether the caller consumes the stream fully or abandons
+        it early.
+
         Args:
             task: The task to perform
             context: Additional context for the task
+            use_plugins: When True and plugins are loaded, plugin descriptions
+                are included in the prompt. Note: TOOL: directives emitted
+                during streaming are not executed mid-stream; use execute_task()
+                if you need plugin call/response cycles.
 
         Returns:
             A generator that yields response chunks
@@ -224,31 +232,36 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
-        history_section = ""
-        if self.stateful and self._conversation_history:
-            lines = []
-            for turn in list(self._conversation_history)[-self._stateful_context_window:]:
-                lines.append(f"Task: {turn['task']}")
-                lines.append(f"Response: {turn['result'][:300]}")
-            history_section = "\n\nPrior conversation:\n" + "\n".join(lines)
+        prompt = self._build_prompt(task, context, use_plugins)
 
-        prompt = f"""
-        You are {self.name}, a {self.role}.
-        {self.instructions}{history_section}
-
-        Task: {task}
-
-        Context: {json.dumps(context) if context else 'None'}
-
-        Please provide a detailed response to the task.
-        """
         try:
-            return self.maki.stream(prompt)
+            raw_stream = self.maki.stream(prompt)
         except NotImplementedError as e:
             raise NotImplementedError(
                 f"Backend '{type(self.maki).__name__}' does not support streaming. "
                 "Use MakiLLama or another streaming-capable backend instead."
             ) from e
+
+        def _tracked():
+            chunks = []
+            try:
+                for chunk in raw_stream:
+                    chunks.append(chunk)
+                    yield chunk
+            finally:
+                # Always record whatever was produced, even on early abandonment.
+                if chunks:
+                    full_result = "".join(chunks)
+                    self.task_history.append({
+                        'task': task,
+                        'context': context,
+                        'result': full_result,
+                        'timestamp': time.time(),
+                    })
+                    if self.stateful:
+                        self._conversation_history.append({'task': task, 'result': full_result})
+
+        return _tracked()
 
     def remember(self, key: str, value: Any):
         """Store information in the agent's memory."""

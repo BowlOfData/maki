@@ -50,8 +50,8 @@ class Maki(LLMBackend):
         if not isinstance(temperature, (int, float)):
             raise ValueError("Temperature must be a number")
 
-        if temperature < 0 or temperature > 1:
-            raise ValueError("Temperature must be between 0 and 1")
+        if temperature < 0.0 or temperature > 2.0:
+            raise ValueError("Temperature must be between 0.0 and 2.0")
 
         self.url = url.strip()
         self.port = port

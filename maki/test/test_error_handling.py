@@ -51,7 +51,7 @@ class TestErrorHandling(unittest.TestCase):
             Maki("localhost", "11434", "llama3", -0.1)
 
         with self.assertRaises(ValueError):
-            Maki("localhost", "11434", "llama3", 1.5)
+            Maki("localhost", "11434", "llama3", 2.1)
 
         with self.assertRaises(ValueError):
             Maki("localhost", "11434", "llama3", "invalid")
