@@ -160,10 +160,12 @@ class MakiLLama(Maki):
         self,
         prompt: str,
         history: Optional[list[Message]] = None,
+        system: Optional[str] = None,
     ) -> list[dict]:
         msgs: list[dict] = []
-        if self.system_prompt:
-            msgs.append(Message("system", self.system_prompt).to_dict())
+        effective_system = system if system is not None else self.system_prompt
+        if effective_system:
+            msgs.append(Message("system", effective_system).to_dict())
         if history:
             msgs.extend(m.to_dict() for m in history)
         msgs.append(Message("user", prompt).to_dict())
@@ -176,11 +178,12 @@ class MakiLLama(Maki):
         config: Optional[GenerationConfig],
         *,
         stream: bool,
+        system: Optional[str] = None,
     ) -> dict:
         cfg = config or self.config
         return {
             "model": self.model,
-            "messages": self._build_messages(prompt, history),
+            "messages": self._build_messages(prompt, history, system=system),
             "stream": stream,
             "options": cfg.to_ollama_options(),
         }
@@ -203,6 +206,7 @@ class MakiLLama(Maki):
         prompt: str,
         history: Optional[list[Message]] = None,
         config: Optional[GenerationConfig] = None,
+        system: Optional[str] = None,
     ) -> LLMResponse:
         """
         Single-turn (or multi-turn with explicit history) generation.
@@ -211,7 +215,7 @@ class MakiLLama(Maki):
         log.debug("chat: %s", prompt[:100])
         if self._rate_limiter:
             self._rate_limiter.acquire()
-        payload = self._build_payload(prompt, history, config, stream=False)
+        payload = self._build_payload(prompt, history, config, stream=False, system=system)
         t0 = time.perf_counter()
         r = self._session.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
         elapsed = time.perf_counter() - t0
@@ -225,6 +229,7 @@ class MakiLLama(Maki):
         prompt: str,
         history: Optional[list[Message]] = None,
         config: Optional[GenerationConfig] = None,
+        system: Optional[str] = None,
     ) -> Generator[str, None, None]:
         """
         Streaming generation — yields text chunks as they arrive.
@@ -236,7 +241,7 @@ class MakiLLama(Maki):
         log.debug("stream: %s", prompt[:100])
         if self._rate_limiter:
             self._rate_limiter.acquire()
-        payload = self._build_payload(prompt, history, config, stream=True)
+        payload = self._build_payload(prompt, history, config, stream=True, system=system)
         response = None
         try:
             response = self._session.post(
@@ -343,11 +348,6 @@ class ChatSession:
         self._history: list[Message] = []
         self._system = system
 
-        # Override system prompt for this session only
-        if system:
-            self._llm_snapshot_system = self._llm.system_prompt
-            self._llm.system_prompt = system
-
     def say(
         self,
         prompt: str,
@@ -358,7 +358,7 @@ class ChatSession:
         log.debug("Session saying: %s", prompt[:100] + "..." if len(prompt) > 100 else prompt)
         if stream:
             return self._say_stream(prompt, config)
-        response = self._llm.chat(prompt, history=self._history, config=config)
+        response = self._llm.chat(prompt, history=self._history, config=config, system=self._system)
         self._history.append(Message("user", prompt))
         self._history.append(Message("assistant", response.content))
         return response
@@ -366,7 +366,7 @@ class ChatSession:
     def _say_stream(self, prompt: str, config: Optional[GenerationConfig]) -> Iterator[str]:
         """Generator that streams tokens and appends to history when done."""
         full = ""
-        for chunk in self._llm.stream(prompt, history=self._history, config=config):
+        for chunk in self._llm.stream(prompt, history=self._history, config=config, system=self._system):
             full += chunk
             yield chunk
         self._history.append(Message("user", prompt))
