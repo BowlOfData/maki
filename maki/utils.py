@@ -335,11 +335,18 @@ class Utils:
                 # For sync methods, we can close directly
                 if hasattr(client, 'close'):
                     client.close()
-                # For async methods, we need to await aclose()
+                # For async clients, run aclose() via the event loop
                 elif hasattr(client, 'aclose'):
                     import asyncio
-                    # This is a bit tricky - for async context we'd want to await,
-                    # but this is a sync utility, so we'll just ignore it here
-                    pass
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # Schedule cleanup as a fire-and-forget task
+                            loop.create_task(client.aclose())
+                        else:
+                            loop.run_until_complete(client.aclose())
+                    except RuntimeError:
+                        # No event loop available; best-effort cleanup
+                        asyncio.run(client.aclose())
             except Exception:
                 pass  # Ignore cleanup errors

@@ -58,9 +58,16 @@ class WorkflowTask:
 
     def should_execute(self, context: Optional[Dict] = None) -> bool:
         """Check if task should execute based on conditions"""
-        # Check conditions
         for condition in self.conditions:
-            if not condition(context):
+            try:
+                if not condition(context):
+                    logger.debug("Task '%s' skipped: condition '%s' returned False",
+                                 self.name, getattr(condition, '__name__', repr(condition)))
+                    return False
+            except Exception as e:
+                logger.error("Task '%s': condition '%s' raised an exception: %s",
+                             self.name, getattr(condition, '__name__', repr(condition)), e,
+                             exc_info=True)
                 return False
         return True
 

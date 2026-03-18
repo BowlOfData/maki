@@ -6,6 +6,7 @@ It allows agents to upload and download files, list directories, remove folders,
 """
 
 import os
+import posixpath
 import logging
 from typing import Dict, Any
 
@@ -68,20 +69,26 @@ class FTPClient:
                 'error': 'Path must be a non-empty string'
             }
 
-        # Normalize the path
-        normalized_path = os.path.normpath(path)
-
-        # Check for path traversal attempts (e.g., ../, ..\\)
-        if '..' in normalized_path.split(os.sep):
+        # Reject null bytes in all paths
+        if '\x00' in path:
             return {
                 'valid': False,
                 'normalized_path': None,
-                'error': 'Path traversal attempt detected'
+                'error': 'Path contains invalid characters'
             }
 
-        # For local paths, check that they don't go outside of allowed directories
         if is_local:
-            # Check for absolute paths (not allowed)
+            normalized_path = os.path.normpath(path)
+
+            # Check for path traversal attempts using OS-specific separator
+            if '..' in normalized_path.split(os.sep):
+                return {
+                    'valid': False,
+                    'normalized_path': None,
+                    'error': 'Path traversal attempt detected'
+                }
+
+            # Check for absolute paths (not allowed for local)
             if os.path.isabs(normalized_path):
                 return {
                     'valid': False,
@@ -89,8 +96,19 @@ class FTPClient:
                     'error': 'Absolute paths are not allowed'
                 }
 
-            # Additional check: prevent going above current working directory
+            # Prevent going above current working directory
             if normalized_path.startswith(os.pardir):
+                return {
+                    'valid': False,
+                    'normalized_path': None,
+                    'error': 'Path traversal attempt detected'
+                }
+        else:
+            # Remote paths always use POSIX separators regardless of local OS
+            normalized_path = posixpath.normpath(path)
+
+            # Check for traversal components using POSIX split
+            if '..' in normalized_path.split('/'):
                 return {
                     'valid': False,
                     'normalized_path': None,
