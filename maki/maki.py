@@ -24,8 +24,8 @@ class Maki:
         # Setup logging
         self.logger = logging.getLogger(__name__)
 
-        # Validate URL
-        if url is None or not isinstance(url, str) or not url.strip():
+        # Validate URL (None is allowed for local/offline backends like HFBackend)
+        if url is not None and (not isinstance(url, str) or not url.strip()):
             raise ValueError("URL must be a non-empty string")
 
         # Validate port (only when provided)

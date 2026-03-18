@@ -333,18 +333,20 @@ class ChatSession:
         """Send a message and automatically extend the conversation history."""
         log.debug("Session saying: %s", prompt[:100] + "..." if len(prompt) > 100 else prompt)
         if stream:
-            # Collect streamed chunks and store to history after
-            full = ""
-            for chunk in self._llm.stream(prompt, history=self._history, config=config):
-                full += chunk
-                yield chunk
-            self._history.append(Message("user", prompt))
-            self._history.append(Message("assistant", full))
-        else:
-            response = self._llm.chat(prompt, history=self._history, config=config)
-            self._history.append(Message("user", prompt))
-            self._history.append(Message("assistant", response.content))
-            return response
+            return self._say_stream(prompt, config)
+        response = self._llm.chat(prompt, history=self._history, config=config)
+        self._history.append(Message("user", prompt))
+        self._history.append(Message("assistant", response.content))
+        return response
+
+    def _say_stream(self, prompt: str, config: Optional[GenerationConfig]) -> Iterator[str]:
+        """Generator that streams tokens and appends to history when done."""
+        full = ""
+        for chunk in self._llm.stream(prompt, history=self._history, config=config):
+            full += chunk
+            yield chunk
+        self._history.append(Message("user", prompt))
+        self._history.append(Message("assistant", full))
 
     def reset(self) -> None:
         """Clear conversation history."""

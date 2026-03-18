@@ -15,6 +15,13 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of keyword arguments a tool call may pass.
+_MAX_ARGS_COUNT = 20
+# Maximum length of any single string argument value.
+_MAX_ARG_STRING_LENGTH = 10_000
+# JSON-safe primitive types accepted as argument values.
+_SAFE_ARG_TYPES = (str, int, float, bool, list, dict, type(None))
+
 
 class PluginHandler:
     """Mixin that adds plugin loading and tool-call execution to an agent."""
@@ -76,16 +83,64 @@ class PluginHandler:
         if plugin_name in self.plugins:
             del self.plugins[plugin_name]
 
+    def _validate_plugin_call(
+        self, plugin, plugin_name: str, method_name: str, args: dict
+    ) -> Optional[str]:
+        """Return an error string if the call is not allowed, else None."""
+        # Block private and dunder methods.
+        if method_name.startswith("_"):
+            return f"Method '{method_name}' is not callable via tool directives"
+
+        # Respect an explicit whitelist declared on the plugin class.
+        # Only treat it as a whitelist if it is an actual collection type,
+        # so duck-typed mocks or other non-collection attributes are ignored.
+        allowed = getattr(plugin, "ALLOWED_METHODS", None)
+        if isinstance(allowed, (list, set, tuple, frozenset)) and method_name not in allowed:
+            return (
+                f"Method '{method_name}' is not in the allowed methods "
+                f"for plugin '{plugin_name}'"
+            )
+
+        # args must be a plain dict.
+        if not isinstance(args, dict):
+            return "Tool args must be a JSON object"
+
+        if len(args) > _MAX_ARGS_COUNT:
+            return f"Too many arguments ({len(args)} > {_MAX_ARGS_COUNT})"
+
+        for key, val in args.items():
+            if not isinstance(key, str):
+                return "Argument keys must be strings"
+            if not isinstance(val, _SAFE_ARG_TYPES):
+                return (
+                    f"Argument '{key}' has unsupported type "
+                    f"'{type(val).__name__}'"
+                )
+            if isinstance(val, str) and len(val) > _MAX_ARG_STRING_LENGTH:
+                return (
+                    f"Argument '{key}' exceeds the maximum allowed length "
+                    f"of {_MAX_ARG_STRING_LENGTH} characters"
+                )
+
+        return None
+
+    def _allowed_methods(self, plugin) -> list:
+        """Return the list of method names exposed by *plugin* to the LLM."""
+        explicit = getattr(plugin, "ALLOWED_METHODS", None)
+        if isinstance(explicit, (list, set, tuple, frozenset)):
+            return [m for m in explicit if callable(getattr(plugin, m, None))]
+        return [
+            m for m in dir(plugin)
+            if not m.startswith("_") and callable(getattr(plugin, m))
+        ]
+
     def build_plugin_prompt_section(self) -> str:
         """Build the plugin description section for inclusion in a prompt."""
         if not self.plugins:
             return ""
         descriptions = []
         for pname, plugin in self.plugins.items():
-            methods = [
-                m for m in dir(plugin)
-                if not m.startswith('_') and callable(getattr(plugin, m))
-            ]
+            methods = self._allowed_methods(plugin)
             descriptions.append(f"- {pname}: {', '.join(methods)}")
         return (
             "\n\nAvailable plugins:\n" + "\n".join(descriptions) +
@@ -115,7 +170,28 @@ class PluginHandler:
                 method_name = call.get("method")
                 args = call.get("args", {})
                 plugin = self.plugins.get(plugin_name)
-                if plugin and hasattr(plugin, method_name):
+                if not plugin:
+                    tool_results.append({
+                        "plugin": plugin_name,
+                        "method": method_name,
+                        "error": f"Plugin '{plugin_name}' not loaded"
+                    })
+                    continue
+
+                validation_error = self._validate_plugin_call(
+                    plugin, plugin_name, method_name, args
+                )
+                if validation_error:
+                    logger.warning(
+                        f"Blocked plugin call {plugin_name}.{method_name}: "
+                        f"{validation_error}"
+                    )
+                    tool_results.append({
+                        "plugin": plugin_name,
+                        "method": method_name,
+                        "error": validation_error
+                    })
+                elif hasattr(plugin, method_name):
                     method = getattr(plugin, method_name)
                     output = method(**args)
                     tool_results.append({
@@ -127,7 +203,7 @@ class PluginHandler:
                     tool_results.append({
                         "plugin": plugin_name,
                         "method": method_name,
-                        "error": f"Plugin '{plugin_name}' or method '{method_name}' not available"
+                        "error": f"Method '{method_name}' not found on plugin '{plugin_name}'"
                     })
             except Exception as e:
                 logger.warning(f"Plugin call failed: {str(e)}")

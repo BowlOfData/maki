@@ -214,3 +214,5 @@ TEST_FIX_SUMMARY.md
 maki/orchestrator.py
 orchestrator.py
 
+CLAUDE.md
+examples/modular_agents_example.py

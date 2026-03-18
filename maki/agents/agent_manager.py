@@ -183,19 +183,14 @@ class AgentManager:
         agent_errors = {}
 
         for agent_name in agents:
-            agent_prompt = f"""
-            You are working on the following task:
-
-            Task: {task}
-
-            Your role: {agent_name}
-
-            Context: {json.dumps(context) if context else 'None'}
-
-            Please provide your specific response to this task.
-            """
+            agent = self.get_agent(agent_name)
+            if agent is None:
+                msg = f"Agent '{agent_name}' not found"
+                logger.error(msg)
+                agent_errors[agent_name] = msg
+                continue
             try:
-                agent_results[agent_name] = self.maki.request(agent_prompt)
+                agent_results[agent_name] = agent.execute_task(task, context)
             except Exception as e:
                 logger.error(f"Failed to get result from agent {agent_name}: {str(e)}")
                 agent_errors[agent_name] = str(e)
