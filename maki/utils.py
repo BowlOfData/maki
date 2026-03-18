@@ -5,6 +5,7 @@ import logging
 import re
 import ipaddress
 import socket
+from typing import Any
 from .urls import GENERIC_LLAMA_URL
 
 logger = logging.getLogger(__name__)
@@ -124,11 +125,9 @@ class Utils:
         if port_num < 1 or port_num > 65535:
             raise ValueError("Port must be between 1 and 65535")
 
-        # Additional check to prevent certain problematic ports
-        if port_num in [0, 80, 443, 22, 21]:  # Common ports that might be problematic
-            # These are allowed but with warning
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Using potentially problematic port: {port_num}")
+        # Block non-HTTP protocol ports to prevent SSRF probing of internal services
+        if port_num in (21, 22):
+            raise ValueError(f"Port {port_num} is not allowed (non-HTTP service port)")
 
     @staticmethod
     def compose_url(url: str, port: str, action: str) -> str:
@@ -189,12 +188,6 @@ class Utils:
             # Strip surrounding brackets from IPv6 addresses (e.g. '[::1]' -> '::1')
             if domain_part.startswith('[') and domain_part.endswith(']'):
                 domain_part = domain_part[1:-1]
-        else:
-            # If no protocol is provided in the input, we still need to ensure
-            # a proper protocol is used for the final URL
-            # This addresses the issue where README examples use "localhost"
-            # without explicit protocol
-            pass
 
         # Sanitize only the domain portion — keep alphanumerics, dots, hyphens, colons.
         # Forward slashes are intentionally excluded here; the protocol is handled separately.
@@ -230,7 +223,7 @@ class Utils:
         return composed
 
     @staticmethod
-    def jsonify(data)-> json:
+    def jsonify(data) -> Any:
         """Parse JSON data
 
         Args:
@@ -277,29 +270,22 @@ class Utils:
         if not isinstance(img, str) or not img.strip():
             raise ValueError("Image path must be a non-empty string")
 
-        # Additional security checks to prevent path traversal attacks
         img = img.strip()
 
-        # Check for path traversal attempts using multiple methods
-        # 1. Check for forbidden patterns like .. in the path
-        if '..' in img:
-            # More comprehensive check for directory traversal
-            if img == '..' or img.startswith('../') or img.endswith('/..') or '/..' in img:
-                raise ValueError("Image path contains invalid traversal characters")
+        # Resolve both the logical absolute path and the fully dereferenced real path.
+        # Any mismatch means there is a symlink or '..' traversal somewhere in the
+        # path chain — both are rejected to prevent directory traversal attacks.
+        abs_img = os.path.abspath(img)
+        real_img = os.path.realpath(img)
+        if abs_img != real_img:
+            raise ValueError(
+                "Image path must not contain symbolic links or path traversal sequences"
+            )
 
-            # Also check for encoded versions of path traversal
-            if '%2e%2e' in img.lower():
-                raise ValueError("Image path contains encoded traversal characters")
-
-        # 2. Check for symbolic links to prevent directory traversal
-        if os.path.islink(img):
-            raise ValueError("Image path must not be a symbolic link")
-
-        # 3. Check that the file exists and is actually a file (not a directory)
-        if not os.path.exists(img):
+        if not os.path.exists(abs_img):
             raise FileNotFoundError(f"Image file not found: {img}")
 
-        if not os.path.isfile(img):
+        if not os.path.isfile(abs_img):
             raise ValueError("Image path must point to a file, not a directory")
 
         try:
@@ -342,14 +328,11 @@ class Utils:
                 elif hasattr(client, 'aclose'):
                     import asyncio
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # Schedule cleanup as a fire-and-forget task
-                            loop.create_task(client.aclose())
-                        else:
-                            loop.run_until_complete(client.aclose())
+                        loop = asyncio.get_running_loop()
+                        # A loop is already running; schedule cleanup as a fire-and-forget task
+                        loop.create_task(client.aclose())
                     except RuntimeError:
-                        # No event loop available; best-effort cleanup
+                        # No running event loop — safe to block
                         asyncio.run(client.aclose())
             except Exception as e:
                 logger.debug(f"Failed to close client: {e}")
