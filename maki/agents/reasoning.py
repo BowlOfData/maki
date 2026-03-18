@@ -7,12 +7,36 @@ self-correction, and task decomposition capabilities.
 
 import json
 import logging
+import re
 import time
 from typing import Dict, List
 
 from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_json_array(text: str) -> str:
+    """Extract a JSON array from potentially messy LLM output.
+
+    Handles all common LLM output patterns:
+    - Clean JSON arrays
+    - Markdown code fences (```json ... ```, ``` ... ```, any language label)
+    - Preamble text before the array ("Here is the JSON: [...]")
+    - Trailing commentary after the array ("[...] Hope this helps!")
+    - Combinations of the above
+    """
+    # Strip code fence markers with any optional language label
+    cleaned = re.sub(r'```[a-zA-Z]*\s*', '', text)
+    cleaned = cleaned.strip()
+
+    # Find the outermost JSON array: first '[' to last ']'
+    start = cleaned.find('[')
+    end = cleaned.rfind(']')
+    if start != -1 and end != -1 and end > start:
+        return cleaned[start:end + 1]
+
+    return cleaned
 
 
 class ReasoningEngine:
@@ -29,7 +53,7 @@ class ReasoningEngine:
         2. Key considerations
         3. Solution approach
         """
-        result = self.maki.request(prompt)
+        result = str(self.maki.request(prompt))
 
         self.reasoning_history.append({
             'problem': problem,
@@ -62,7 +86,7 @@ class ReasoningEngine:
 
             Please revise your response to be more accurate and complete.
             """
-            current = self.maki.request(prompt)
+            current = str(self.maki.request(prompt))
 
             self.reasoning_history.append({
                 'iteration': i + 1,
@@ -114,11 +138,13 @@ class ReasoningEngine:
         """
 
         try:
-            result = self.maki.request(prompt)
+            raw = self.maki.request(prompt)
         except Exception as e:
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
             raise MakiNetworkError(f"Failed to get task decomposition from LLM: {str(e)}")
+
+        result = str(raw)
 
         self.reasoning_history.append({
             'original_task': task,
@@ -126,15 +152,7 @@ class ReasoningEngine:
             'timestamp': time.time()
         })
 
-        # Strip markdown code fences if present
-        json_str = result.strip()
-        if json_str.startswith('```json'):
-            json_str = json_str[7:]
-        elif json_str.startswith('```'):
-            json_str = json_str[3:]
-        if json_str.endswith('```'):
-            json_str = json_str[:-3]
-        json_str = json_str.strip()
+        json_str = _extract_json_array(result)
 
         try:
             subtasks = json.loads(json_str)
