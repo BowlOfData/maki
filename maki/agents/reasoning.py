@@ -9,11 +9,17 @@ import json
 import logging
 import re
 import time
-from typing import Dict, List
+from typing import Dict, List, TYPE_CHECKING
 
 from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 
+if TYPE_CHECKING:
+    from .protocols import ReasoningHostProtocol
+
 logger = logging.getLogger(__name__)
+
+# Attributes the host class must provide before _init_reasoning() is called.
+_REQUIRED_ATTRS = ("maki", "reasoning_history")
 
 
 def _extract_json_array(text: str) -> str:
@@ -40,7 +46,38 @@ def _extract_json_array(text: str) -> str:
 
 
 class ReasoningEngine:
-    """Mixin that adds reasoning capabilities to an agent."""
+    """
+    Mixin that adds reasoning capabilities to an agent.
+
+    **Contract** – the host class must set the following instance attributes
+    *before* calling ``_init_reasoning()``:
+
+    * ``maki``              – a Maki LLM backend instance.
+    * ``reasoning_history`` – a :class:`collections.deque` for storing steps.
+
+    If either attribute is missing, ``_init_reasoning()`` raises
+    :exc:`TypeError` immediately.  See
+    :class:`~maki.agents.protocols.ReasoningHostProtocol` for the full
+    contract definition.
+    """
+
+    def _init_reasoning(self) -> None:
+        """
+        Validate the ReasoningEngine mixin contract.
+
+        Must be called from the host class ``__init__`` *after* ``maki`` and
+        ``reasoning_history`` have been set.
+
+        Raises:
+            TypeError: If the host class has not set the required attributes.
+        """
+        missing = [a for a in _REQUIRED_ATTRS if not hasattr(self, a)]
+        if missing:
+            raise TypeError(
+                f"'{type(self).__name__}' uses ReasoningEngine but is missing "
+                f"required attribute(s): {missing}. "
+                f"Set these before calling _init_reasoning()."
+            )
 
     def think_step_by_step(self, problem: str, steps: int = 3) -> str:
         """Execute reasoning through multiple steps."""

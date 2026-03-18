@@ -69,7 +69,8 @@ class Agent(PluginHandler, ReasoningEngine):
         # Stateful multi-turn conversation memory (separate from task_history)
         self._conversation_history: List[Dict] = []
 
-        # Initialize plugin support
+        # Validate and initialise mixin contracts (must come after all attrs are set).
+        self._init_reasoning()
         self._init_plugins()
 
         logger.info(f"Agent '{self.name}' initialized with role '{self.role}'")

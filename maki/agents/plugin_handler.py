@@ -11,7 +11,10 @@ import json
 import logging
 import os
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .protocols import PluginHostProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +25,43 @@ _MAX_ARG_STRING_LENGTH = 10_000
 # JSON-safe primitive types accepted as argument values.
 _SAFE_ARG_TYPES = (str, int, float, bool, list, dict, type(None))
 
+# Attributes the host class must provide before _init_plugins() is called.
+_REQUIRED_ATTRS = ("name", "maki")
+
 
 class PluginHandler:
-    """Mixin that adds plugin loading and tool-call execution to an agent."""
+    """
+    Mixin that adds plugin loading and tool-call execution to an agent.
 
-    def _init_plugins(self):
-        """Initialize plugin storage. Call from Agent.__init__."""
+    **Contract** – the host class must set the following instance attributes
+    *before* calling ``_init_plugins()``:
+
+    * ``name`` (str)  – a non-empty identifier used in log messages.
+    * ``maki``        – a Maki LLM backend instance, passed to plugins on load.
+
+    If either attribute is missing, ``_init_plugins()`` raises :exc:`TypeError`
+    immediately rather than allowing a cryptic :exc:`AttributeError` later.
+    See :class:`~maki.agents.protocols.PluginHostProtocol` for the full
+    contract definition.
+    """
+
+    def _init_plugins(self) -> None:
+        """
+        Initialize plugin storage.
+
+        Must be called from the host class ``__init__`` *after* ``name`` and
+        ``maki`` have been set.
+
+        Raises:
+            TypeError: If the host class has not set the required attributes.
+        """
+        missing = [a for a in _REQUIRED_ATTRS if not hasattr(self, a)]
+        if missing:
+            raise TypeError(
+                f"'{type(self).__name__}' uses PluginHandler but is missing "
+                f"required attribute(s): {missing}. "
+                f"Set these before calling _init_plugins()."
+            )
         self.plugins: Dict = {}
 
     def load_plugin(self, plugin_name: str, plugin_path: str = None):

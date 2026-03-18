@@ -9,5 +9,9 @@ coordination, delegation, and collaboration.
 from .agent import Agent
 from .agent_manager import AgentManager
 from .workflow import WorkflowTask, WorkflowState, TaskStatus
+from .protocols import PluginHostProtocol, ReasoningHostProtocol
 
-__all__ = ['Agent', 'AgentManager', 'WorkflowTask', 'TaskStatus', 'WorkflowState']
+__all__ = [
+    'Agent', 'AgentManager', 'WorkflowTask', 'TaskStatus', 'WorkflowState',
+    'PluginHostProtocol', 'ReasoningHostProtocol',
+]
