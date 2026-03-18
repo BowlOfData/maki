@@ -1,11 +1,49 @@
+import urllib.parse
 import requests
-import json
 import logging
-import socket
 from .utils import Utils
 from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError, MakiValidationError
 
+logger = logging.getLogger(__name__)
+
+
 class Connector:
+
+    @staticmethod
+    def _validate_url(url: str) -> None:
+        """Validate URL format and apply SSRF protection.
+
+        Args:
+            url: The URL to validate
+
+        Raises:
+            MakiValidationError: If the URL is malformed, uses a disallowed
+                scheme, or targets a private/reserved address.
+        """
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme and parsed.scheme not in ('http', 'https'):
+            raise MakiValidationError("URL must use http or https protocol")
+        if parsed.hostname:
+            try:
+                Utils._validate_domain(parsed.hostname)
+            except ValueError as e:
+                raise MakiValidationError(str(e)) from e
+
+    @staticmethod
+    def _raise_for_http_error(exc: requests.exceptions.HTTPError) -> None:
+        """Translate a requests.HTTPError into the appropriate Maki exception.
+
+        Raises:
+            MakiNetworkError: For 5xx or unknown-status errors.
+            MakiAPIError: For 4xx errors.
+        """
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code is not None and status_code >= 500:
+            raise MakiNetworkError(f"HTTP server error {status_code}: {exc}") from exc
+        elif status_code is not None:
+            raise MakiAPIError(f"HTTP client error {status_code}: {exc}") from exc
+        else:
+            raise MakiNetworkError(f"HTTP request failed (unknown status): {exc}") from exc
 
     @staticmethod
     def simple(url: str, prompt: dict) -> dict:
@@ -24,38 +62,20 @@ class Connector:
             MakiNetworkError: For other HTTP request errors
             MakiAPIError: For API response errors
         """
-        logger = logging.getLogger(__name__)
-
-        logger.debug(f"Preparing to send simple request to URL: {url}")
-
         if not isinstance(url, str) or not url.strip():
             raise MakiValidationError("URL must be a non-empty string")
 
         if not isinstance(prompt, dict):
             raise MakiValidationError("Prompt must be a dictionary")
 
-        # Validate that URL is properly formatted and doesn't contain SSRF vulnerabilities
-        try:
-            # Extract domain from URL for validation
-            import urllib.parse
-            parsed_url = urllib.parse.urlparse(url)
-            if parsed_url.scheme and parsed_url.scheme not in ['http', 'https']:
-                raise MakiValidationError("URL must use http or https protocol")
-
-            # Validate domain is not vulnerable to SSRF
-            if parsed_url.hostname:
-                Utils._validate_domain(parsed_url.hostname)
-        except MakiValidationError:
-            raise
-        except ValueError as e:
-            raise MakiValidationError(f"Invalid URL format: {str(e)}") from e
+        Connector._validate_url(url)
 
         logger.debug(f"Sending simple request to URL: {url}")
         logger.debug(f"Request data: {prompt}")
 
         try:
             response = requests.post(url, json=prompt, timeout=180)
-            response.raise_for_status()  # Raise an exception for bad status codes
+            response.raise_for_status()
             logger.debug("HTTP request completed successfully")
             jsonify = Utils.jsonify(response.text)
             if not isinstance(jsonify, dict):
@@ -69,27 +89,11 @@ class Connector:
             logger.error(f"HTTP connection failed: {str(e)}", exc_info=True)
             raise MakiNetworkError(f"HTTP connection failed: {str(e)}") from e
         except requests.exceptions.HTTPError as e:
-            # Extract status code from the exception object
-            status_code = e.response.status_code if e.response else "unknown"
-            logger.error(f"HTTP request failed with status {status_code}: {str(e)}", exc_info=True)
-            # Convert to integer if possible for comparison
-            try:
-                status_code_int = int(status_code)
-                if status_code_int >= 500:
-                    raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}") from e
-                else:
-                    raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}") from e
-            except (ValueError, TypeError):
-                # If we can't convert status code to int, treat as generic network error
-                raise MakiNetworkError(f"HTTP request failed with status {status_code}: {str(e)}") from e
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed: {str(e)}", exc_info=True)
-            raise MakiAPIError(f"JSON parsing failed: {str(e)}") from e
-        except KeyError as e:
-            logger.error(f"API response structure error: {str(e)}", exc_info=True)
-            raise MakiAPIError(f"API response structure error: {str(e)}") from e
+            logger.error(f"HTTP request failed: {str(e)}", exc_info=True)
+            Connector._raise_for_http_error(e)
+        except (MakiAPIError, MakiNetworkError, MakiTimeoutError):
+            raise
         except Exception as e:
-            # Catch-all for any other unexpected exceptions
             logger.error(f"Unexpected error in HTTP request: {str(e)}", exc_info=True)
             raise MakiNetworkError(f"Unexpected error in HTTP request: {str(e)}") from e
 
@@ -108,10 +112,10 @@ class Connector:
             MakiTimeoutError: For HTTP timeout errors
             MakiNetworkError: For other HTTP request errors
         """
-        logger = logging.getLogger(__name__)
-
         if not isinstance(url, str) or not url.strip():
             raise MakiValidationError("URL must be a non-empty string")
+
+        Connector._validate_url(url)
 
         logger.debug(f"Fetching version from URL: {url}")
         try:
@@ -126,21 +130,8 @@ class Connector:
             logger.error(f"HTTP connection failed: {str(e)}", exc_info=True)
             raise MakiNetworkError(f"HTTP connection failed: {str(e)}") from e
         except requests.exceptions.HTTPError as e:
-            # Extract status code from the exception object
-            status_code = e.response.status_code if e.response else "unknown"
-            logger.error(f"HTTP request failed with status {status_code}: {str(e)}", exc_info=True)
-            # Convert to integer if possible for comparison
-            try:
-                status_code_int = int(status_code)
-                if status_code_int >= 500:
-                    raise MakiNetworkError(f"HTTP server error {status_code}: {str(e)}") from e
-                else:
-                    raise MakiAPIError(f"HTTP client error {status_code}: {str(e)}") from e
-            except (ValueError, TypeError):
-                # If we can't convert status code to int, treat as generic network error
-                raise MakiNetworkError(f"HTTP request failed with status {status_code}: {str(e)}") from e
+            logger.error(f"HTTP request failed: {str(e)}", exc_info=True)
+            Connector._raise_for_http_error(e)
         except Exception as e:
-            # Catch-all for any other unexpected exceptions
             logger.error(f"Unexpected error in version request: {str(e)}", exc_info=True)
             raise MakiNetworkError(f"Unexpected error in version request: {str(e)}") from e
-    
