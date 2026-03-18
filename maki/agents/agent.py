@@ -7,7 +7,7 @@ ReasoningEngine mixins.
 """
 
 from collections import deque
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 import json
 import logging
 import time
@@ -67,7 +67,7 @@ class Agent(PluginHandler, ReasoningEngine):
         self.task_history: deque = deque(maxlen=self._max_history_entries)
 
         # Stateful multi-turn conversation memory (separate from task_history)
-        self._conversation_history: List[Dict] = []
+        self._conversation_history: deque = deque(maxlen=self._max_history_entries)
 
         # Validate and initialise mixin contracts (must come after all attrs are set).
         self._init_reasoning()
@@ -105,7 +105,7 @@ class Agent(PluginHandler, ReasoningEngine):
         history_section = ""
         if self.stateful and self._conversation_history:
             lines = []
-            for turn in self._conversation_history[-10:]:
+            for turn in list(self._conversation_history)[-10:]:
                 lines.append(f"Task: {turn['task']}")
                 lines.append(f"Response: {turn['result'][:300]}")
             history_section = "\n\nPrior conversation:\n" + "\n".join(lines)
@@ -262,6 +262,7 @@ class Agent(PluginHandler, ReasoningEngine):
         # Recreate deques with new maxlen, preserving most recent entries
         self.reasoning_history = deque(self.reasoning_history, maxlen=max_entries)
         self.task_history = deque(self.task_history, maxlen=max_entries)
+        self._conversation_history = deque(self._conversation_history, maxlen=max_entries)
 
     def _cleanup_history(self):
         """No-op: deque(maxlen=...) enforces the size limit automatically on every append."""
