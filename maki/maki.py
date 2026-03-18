@@ -106,7 +106,7 @@ class Maki(LLMBackend):
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
             else:
-                raise MakiNetworkError(f"HTTP request failed: {str(e)}")
+                raise MakiNetworkError(f"HTTP request failed: {str(e)}") from e
 
     def version(self) -> str:
         """ Returns the LLM version
@@ -127,11 +127,10 @@ class Maki(LLMBackend):
             return result
         except Exception as e:
             self.logger.error(f"Failed to retrieve version: {str(e)}", exc_info=True)
-            # Re-raise with more specific type if needed
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
             else:
-                raise MakiNetworkError(f"Failed to retrieve version: {str(e)}")
+                raise MakiNetworkError(f"Failed to retrieve version: {str(e)}") from e
 
     def _compose_data(self, prompt:str, imgs=None) -> dict:
         """Compose the data payload for the LLM request
@@ -217,11 +216,11 @@ class Maki(LLMBackend):
                 elapsed_seconds=elapsed,
             )
         except Exception as e:
-            self.logger.error(f"Request with image failed: {str(e)}")
+            self.logger.error(f"Request with image failed: {str(e)}", exc_info=True)
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
             else:
-                raise MakiNetworkError(f"HTTP request with image failed: {str(e)}")
+                raise MakiNetworkError(f"HTTP request with image failed: {str(e)}") from e
 
     def _get_model(self)->str:
         return self.model

@@ -272,7 +272,7 @@ class PluginHandler:
                         "error": f"Method '{method_name}' not found on plugin '{plugin_name}'"
                     })
             except Exception as e:
-                logger.warning(f"Plugin call failed: {str(e)}")
+                logger.warning(f"Plugin call failed: {str(e)}", exc_info=True)
                 tool_results.append({"error": str(e)})
 
         # Strip TOOL: lines from the partial response, then ask for a final answer

@@ -143,7 +143,7 @@ class Agent(PluginHandler, ReasoningEngine):
             # callers (e.g. execute_task_with_retry) can distinguish retryable vs non-retryable.
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError, ValueError, TypeError)):
                 raise
-            raise MakiNetworkError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}")
+            raise MakiNetworkError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}") from e
 
         # Record the task execution in history
         self.task_history.append({
@@ -230,11 +230,11 @@ class Agent(PluginHandler, ReasoningEngine):
         """
         try:
             return self.maki.stream(prompt)
-        except NotImplementedError:
+        except NotImplementedError as e:
             raise NotImplementedError(
                 f"Backend '{type(self.maki).__name__}' does not support streaming. "
                 "Use MakiLLama or another streaming-capable backend instead."
-            )
+            ) from e
 
     def remember(self, key: str, value: Any):
         """Store information in the agent's memory."""

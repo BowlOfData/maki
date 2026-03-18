@@ -253,7 +253,7 @@ class Utils:
             return result
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing failed: {str(e)}")
-            raise ValueError(f"Invalid JSON data: {str(e)}")
+            raise ValueError(f"Invalid JSON data: {str(e)}") from e
 
     @staticmethod
     def convert64(img: str) -> bytes:
@@ -306,9 +306,9 @@ class Utils:
                 result = base64.b64encode(image_file.read())
             logger.debug("Image conversion completed successfully")
             return result
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Image conversion failed: {str(e)}", exc_info=True)
-            raise Exception(f"Error reading image file {img}: {str(e)}")
+            raise OSError(f"Error reading image file {img}: {str(e)}") from e
 
     @staticmethod
     def cleanup_response(response, client=None):
@@ -326,8 +326,8 @@ class Utils:
         if response is not None and hasattr(response, 'close'):
             try:
                 response.close()
-            except Exception:
-                pass  # Ignore cleanup errors
+            except Exception as e:
+                logger.debug(f"Failed to close response: {e}")
 
         # Clean up httpx.AsyncClient if provided
         if client is not None:
@@ -348,5 +348,5 @@ class Utils:
                     except RuntimeError:
                         # No event loop available; best-effort cleanup
                         asyncio.run(client.aclose())
-            except Exception:
-                pass  # Ignore cleanup errors
+            except Exception as e:
+                logger.debug(f"Failed to close client: {e}")

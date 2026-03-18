@@ -60,8 +60,8 @@ class HFBackend(LLMBackend):
                     load_in_8bit=load_in_8bit,
                     bnb_4bit_compute_dtype=torch.float16,
                 )
-            except Exception:
-                self.logger.warning("BitsAndBytes quantization not available; loading in full precision.")
+            except Exception as e:
+                self.logger.warning("BitsAndBytes quantization not available; loading in full precision. Reason: %s", e)
 
         # ── Load tokenizer ────────────────────────────────────────────────
         self.logger.info("Loading tokenizer …")
@@ -109,8 +109,9 @@ class HFBackend(LLMBackend):
                 tokenize=False,
                 add_generation_prompt=True,
             )
-        except Exception:
+        except Exception as e:
             # Fallback: simple concatenation for models without a chat template
+            self.logger.debug("Chat template unavailable, using fallback formatter: %s", e)
             text = ""
             for m in messages:
                 role, content = m["role"], m["content"]

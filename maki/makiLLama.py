@@ -219,15 +219,15 @@ class MakiLLama(LLMBackend):
             r = self._session.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
             elapsed = time.perf_counter() - t0
             r.raise_for_status()
-        except requests.exceptions.Timeout:
-            raise MakiTimeoutError(f"chat() timed out after {self.timeout}s")
+        except requests.exceptions.Timeout as e:
+            raise MakiTimeoutError(f"chat() timed out after {self.timeout}s") from e
         except requests.exceptions.ConnectionError as e:
-            raise MakiNetworkError(f"chat() connection failed: {e}")
+            raise MakiNetworkError(f"chat() connection failed: {e}") from e
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response else "unknown"
-            raise MakiAPIError(f"chat() HTTP error {status}: {e}")
+            raise MakiAPIError(f"chat() HTTP error {status}: {e}") from e
         except requests.exceptions.RequestException as e:
-            raise MakiNetworkError(f"chat() request failed: {e}")
+            raise MakiNetworkError(f"chat() request failed: {e}") from e
         response = self._parse_response(r.json(), elapsed)
         log.info("chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
@@ -288,14 +288,14 @@ class MakiLLama(LLMBackend):
                 r = await client.post(f"{self.base_url}/api/chat", json=payload)
             elapsed = time.perf_counter() - t0
             r.raise_for_status()
-        except httpx.TimeoutException:
-            raise MakiTimeoutError(f"async_chat() timed out after {self.timeout}s")
+        except httpx.TimeoutException as e:
+            raise MakiTimeoutError(f"async_chat() timed out after {self.timeout}s") from e
         except httpx.ConnectError as e:
-            raise MakiNetworkError(f"async_chat() connection failed: {e}")
+            raise MakiNetworkError(f"async_chat() connection failed: {e}") from e
         except httpx.HTTPStatusError as e:
-            raise MakiAPIError(f"async_chat() HTTP error {e.response.status_code}: {e}")
+            raise MakiAPIError(f"async_chat() HTTP error {e.response.status_code}: {e}") from e
         except httpx.RequestError as e:
-            raise MakiNetworkError(f"async_chat() request failed: {e}")
+            raise MakiNetworkError(f"async_chat() request failed: {e}") from e
         response = self._parse_response(r.json(), elapsed)
         log.info("async_chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response

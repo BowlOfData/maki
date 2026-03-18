@@ -205,7 +205,7 @@ class ReasoningEngine:
         except Exception as e:
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
-            raise MakiNetworkError(f"Failed to get task decomposition from LLM: {str(e)}")
+            raise MakiNetworkError(f"Failed to get task decomposition from LLM: {str(e)}") from e
 
         result = raw.content
 
@@ -223,7 +223,7 @@ class ReasoningEngine:
             raise ValueError(
                 f"LLM did not return valid JSON for task decomposition: {str(e)}. "
                 f"Raw response (first 300 chars): {result[:300]}"
-            )
+            ) from e
 
         if not isinstance(subtasks, list):
             raise ValueError("LLM response is not a JSON array")
