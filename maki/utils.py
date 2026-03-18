@@ -7,6 +7,9 @@ import ipaddress
 import socket
 from .urls import GENERIC_LLAMA_URL
 
+logger = logging.getLogger(__name__)
+
+
 class Utils:
 
     # List of private IP ranges that should be blocked to prevent SSRF
