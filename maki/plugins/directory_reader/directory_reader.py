@@ -21,15 +21,17 @@ class DirectoryReader(FileReader):
     files from a directory, optionally recursively.
     """
 
-    def __init__(self, maki_instance=None):
+    def __init__(self, maki_instance=None, base_dir: str = None):
         """
         Initialize the DirectoryReader plugin.
 
         Args:
             maki_instance: Optional Maki instance to use for logging and
                 potential LLM interactions
+            base_dir: Root directory that all paths must resolve within.
+                      Defaults to the current working directory.
         """
-        super().__init__(maki_instance)
+        super().__init__(maki_instance, base_dir=base_dir)
         self.logger = logging.getLogger(__name__)
         self.logger.info("DirectoryReader plugin initialized")
 
@@ -112,17 +114,24 @@ class DirectoryReader(FileReader):
         }
 
         try:
-            if not os.path.exists(dir_path):
+            safe_dir = self._safe_path(dir_path)
+        except ValueError as exc:
+            result['error'] = str(exc)
+            self.logger.warning(str(exc))
+            return result
+
+        try:
+            if not os.path.exists(safe_dir):
                 result['error'] = f"Directory not found: {dir_path}"
                 self.logger.error(f"Directory not found: {dir_path}")
                 return result
 
-            if not os.path.isdir(dir_path):
+            if not os.path.isdir(safe_dir):
                 result['error'] = f"Path is not a directory: {dir_path}"
                 self.logger.error(f"Path is not a directory: {dir_path}")
                 return result
 
-            for entry_path in self._collect_entries(dir_path, recursive):
+            for entry_path in self._collect_entries(safe_dir, recursive):
                 entry_name = os.path.basename(entry_path)
 
                 if not include_hidden and entry_name.startswith('.'):
@@ -210,14 +219,15 @@ class DirectoryReader(FileReader):
         return result
 
 
-def register_plugin(maki_instance=None):
+def register_plugin(maki_instance=None, base_dir: str = None):
     """
     Register the DirectoryReader plugin with the Maki framework.
 
     Args:
         maki_instance: Maki instance to use for the plugin
+        base_dir: Root directory that all paths must resolve within.
 
     Returns:
         DirectoryReader: An instance of the DirectoryReader plugin
     """
-    return DirectoryReader(maki_instance)
+    return DirectoryReader(maki_instance, base_dir=base_dir)

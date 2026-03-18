@@ -31,7 +31,8 @@ def test_directory_reader():
         with open(nested_text_path, 'w', encoding='utf-8') as file_handle:
             file_handle.write("Nested line 1\nNested line 2")
 
-        directory_reader = DirectoryReader()
+        # Restrict reads to the system temp directory
+        directory_reader = DirectoryReader(base_dir=tempfile.gettempdir())
 
         result = directory_reader.read_directory(temp_dir)
         print("Reading directory result:", result)
@@ -70,11 +71,21 @@ def test_directory_reader():
         assert "Line 1" in aggregated_result['content']
         assert "Nested line 1" in aggregated_result['content']
 
-        non_existent_result = directory_reader.read_directory("/non/existent/folder")
+        # Non-existent directory inside base_dir
+        non_existent_result = directory_reader.read_directory(
+            os.path.join(tempfile.gettempdir(), "non_existent_maki_dir")
+        )
         print("Non-existent directory result:", non_existent_result)
 
         assert non_existent_result['success'] == False
         assert 'not found' in non_existent_result['error'].lower()
+
+        # Path traversal outside base_dir must be blocked
+        traversal_result = directory_reader.read_directory("../../etc")
+        print("Traversal result:", traversal_result)
+
+        assert traversal_result['success'] == False
+        assert 'resolves outside' in traversal_result['error'].lower()
 
         print("All tests passed!")
 

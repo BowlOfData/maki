@@ -18,16 +18,44 @@ class FileWriter:
     options for handling existing files and encoding.
     """
 
-    def __init__(self, maki_instance=None):
+    def __init__(self, maki_instance=None, base_dir: str = None):
         """
         Initialize the FileWriter plugin.
 
         Args:
-            maki_instance: Optional Maki instance to use for logging and potential LLM interactions
+            maki_instance: Optional Maki instance for logging and LLM interactions
+            base_dir: Root directory that all file paths must resolve within.
+                      Defaults to the current working directory. Symlinks in
+                      this path are resolved so that link-based escapes are
+                      caught consistently.
         """
         self.maki = maki_instance
         self.logger = logging.getLogger(__name__)
-        self.logger.info("FileWriter plugin initialized")
+        self.base_dir = os.path.realpath(base_dir if base_dir is not None else os.getcwd())
+        self.logger.info(f"FileWriter plugin initialized (base_dir='{self.base_dir}')")
+
+    def _safe_path(self, path: str) -> str:
+        """
+        Resolve *path* within self.base_dir and verify it does not escape.
+
+        Symlinks are fully resolved so that a link pointing outside base_dir
+        is caught the same way as a plain ``../../`` traversal.
+
+        Args:
+            path: A relative or absolute file/directory path supplied by the caller.
+
+        Returns:
+            The canonicalised absolute path, guaranteed to be inside base_dir.
+
+        Raises:
+            ValueError: If the resolved path is outside base_dir.
+        """
+        resolved = os.path.realpath(os.path.join(self.base_dir, path))
+        if resolved != self.base_dir and not resolved.startswith(self.base_dir + os.sep):
+            raise ValueError(
+                f"Path '{path}' resolves outside the allowed directory '{self.base_dir}'"
+            )
+        return resolved
 
     def write_file(self, file_path: str, content: str, encoding: str = 'utf-8',
                    mode: str = 'w', create_dirs: bool = True) -> Dict[str, Any]:
@@ -69,14 +97,21 @@ class FileWriter:
         }
 
         try:
+            safe = self._safe_path(file_path)
+        except ValueError as exc:
+            result['error'] = str(exc)
+            self.logger.warning(str(exc))
+            return result
+
+        try:
             # Create parent directories if needed
             if create_dirs:
-                parent_dir = os.path.dirname(file_path)
+                parent_dir = os.path.dirname(safe)
                 if parent_dir and not os.path.exists(parent_dir):
                     os.makedirs(parent_dir, exist_ok=True)
 
             # Write the file
-            with open(file_path, mode, encoding=encoding) as file:
+            with open(safe, mode, encoding=encoding) as file:
                 bytes_written = file.write(content)
 
             result['success'] = True
@@ -125,8 +160,15 @@ class FileWriter:
         }
 
         try:
+            safe = self._safe_path(file_path)
+        except ValueError as exc:
+            result['error'] = str(exc)
+            self.logger.warning(str(exc))
+            return result
+
+        try:
             # Append to the file
-            with open(file_path, 'a', encoding=encoding) as file:
+            with open(safe, 'a', encoding=encoding) as file:
                 bytes_written = file.write(content)
 
             result['success'] = True
@@ -180,14 +222,21 @@ class FileWriter:
         }
 
         try:
+            safe = self._safe_path(file_path)
+        except ValueError as exc:
+            result['error'] = str(exc)
+            self.logger.warning(str(exc))
+            return result
+
+        try:
             # Create parent directories if needed
             if create_dirs:
-                parent_dir = os.path.dirname(file_path)
+                parent_dir = os.path.dirname(safe)
                 if parent_dir and not os.path.exists(parent_dir):
                     os.makedirs(parent_dir, exist_ok=True)
 
             # Write the lines to file
-            with open(file_path, mode, encoding=encoding) as file:
+            with open(safe, mode, encoding=encoding) as file:
                 lines_written = 0
                 for line in lines:
                     file.write(str(line) + '\n')
@@ -235,12 +284,19 @@ class FileWriter:
         }
 
         try:
-            result['exists'] = os.path.exists(file_path)
-            result['is_file'] = os.path.isfile(file_path)
-            result['is_directory'] = os.path.isdir(file_path)
+            safe = self._safe_path(file_path)
+        except ValueError as exc:
+            result['error'] = str(exc)
+            self.logger.warning(str(exc))
+            return result
+
+        try:
+            result['exists'] = os.path.exists(safe)
+            result['is_file'] = os.path.isfile(safe)
+            result['is_directory'] = os.path.isdir(safe)
 
             if result['exists'] and result['is_file']:
-                result['size'] = os.path.getsize(file_path)
+                result['size'] = os.path.getsize(safe)
                 result['success'] = True
 
             self.logger.info(f"Retrieved file info for: {file_path}")
@@ -253,7 +309,7 @@ class FileWriter:
 
 
 # Plugin registration function
-def register_plugin(maki_instance=None):
+def register_plugin(maki_instance=None, base_dir: str = None):
     """
     Register the FileWriter plugin with the Maki framework.
 
@@ -263,4 +319,4 @@ def register_plugin(maki_instance=None):
     Returns:
         FileWriter: An instance of the FileWriter plugin
     """
-    return FileWriter(maki_instance)
+    return FileWriter(maki_instance, base_dir=base_dir)

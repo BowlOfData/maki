@@ -10,11 +10,14 @@ from maki.plugins.file_writer.file_writer import FileWriter
 def test_file_writer():
     """Test the FileWriter plugin functionality"""
 
-    # Initialize the plugin
-    file_writer = FileWriter()
+    base = tempfile.gettempdir()
+
+    # Restrict writes to the system temp directory
+    file_writer = FileWriter(base_dir=base)
 
     # Test writing to a file
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt',
+                                     dir=base) as f:
         temp_file_path = f.name
 
     try:
@@ -59,8 +62,8 @@ def test_file_writer():
         assert info_result['exists'] == True
         assert info_result['size'] > 0
 
-        # Test with non-existent directory (should create it)
-        temp_dir = tempfile.mkdtemp()
+        # Test with non-existent subdirectory inside base_dir (should create it)
+        temp_dir = tempfile.mkdtemp(dir=base)
         new_file_path = os.path.join(temp_dir, "subdir", "new_file.txt")
 
         dir_result = file_writer.write_file(new_file_path, "Content in subdirectory")
@@ -73,6 +76,13 @@ def test_file_writer():
         os.unlink(new_file_path)
         os.rmdir(os.path.join(temp_dir, "subdir"))
         os.rmdir(temp_dir)
+
+        # Test that path traversal outside base_dir is blocked
+        traversal_result = file_writer.write_file("../../etc/evil.txt", "pwned")
+        print("Traversal result:", traversal_result)
+
+        assert traversal_result['success'] == False
+        assert 'resolves outside' in traversal_result['error'].lower()
 
         print("All tests passed!")
 
