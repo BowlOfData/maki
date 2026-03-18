@@ -69,6 +69,11 @@ class Agent(PluginHandler, ReasoningEngine):
         # Stateful multi-turn conversation memory (separate from task_history)
         self._conversation_history: deque = deque(maxlen=self._max_history_entries)
 
+        # Number of recent turns injected into the prompt when stateful=True.
+        # Kept separate from _max_history_entries so callers can tune context
+        # window size independently of the total retention limit.
+        self._stateful_context_window = 10
+
         # Validate and initialise mixin contracts (must come after all attrs are set).
         self._init_reasoning()
         self._init_plugins()
@@ -105,7 +110,7 @@ class Agent(PluginHandler, ReasoningEngine):
         history_section = ""
         if self.stateful and self._conversation_history:
             lines = []
-            for turn in list(self._conversation_history)[-10:]:
+            for turn in list(self._conversation_history)[-self._stateful_context_window:]:
                 lines.append(f"Task: {turn['task']}")
                 lines.append(f"Response: {turn['result'][:300]}")
             history_section = "\n\nPrior conversation:\n" + "\n".join(lines)
@@ -130,6 +135,8 @@ class Agent(PluginHandler, ReasoningEngine):
             logger.debug(f"Executing task '{task}' for agent '{self.name}'")
             start_time = time.time()
             result = self.maki.request(prompt).content
+            if result is None:
+                raise MakiAPIError(f"Backend returned None content for task '{task}'")
 
             # Execute any TOOL: directives the LLM emitted
             if use_plugins and self.plugins:
@@ -137,12 +144,11 @@ class Agent(PluginHandler, ReasoningEngine):
 
             execution_time = time.time() - start_time
             logger.debug(f"Task '{task}' completed in {execution_time:.2f}s for agent '{self.name}'")
-        except Exception as e:
+        except (MakiNetworkError, MakiTimeoutError, MakiAPIError, ValueError, TypeError) as e:
             logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
-            # Re-raise Maki exceptions and programming errors (ValueError, TypeError) as-is so
-            # callers (e.g. execute_task_with_retry) can distinguish retryable vs non-retryable.
-            if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError, ValueError, TypeError)):
-                raise
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error executing task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
             raise MakiNetworkError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}") from e
 
         # Record the task execution in history
@@ -218,9 +224,17 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
+        history_section = ""
+        if self.stateful and self._conversation_history:
+            lines = []
+            for turn in list(self._conversation_history)[-self._stateful_context_window:]:
+                lines.append(f"Task: {turn['task']}")
+                lines.append(f"Response: {turn['result'][:300]}")
+            history_section = "\n\nPrior conversation:\n" + "\n".join(lines)
+
         prompt = f"""
         You are {self.name}, a {self.role}.
-        {self.instructions}
+        {self.instructions}{history_section}
 
         Task: {task}
 
@@ -264,6 +278,3 @@ class Agent(PluginHandler, ReasoningEngine):
         self.task_history = deque(self.task_history, maxlen=max_entries)
         self._conversation_history = deque(self._conversation_history, maxlen=max_entries)
 
-    def _cleanup_history(self):
-        """No-op: deque(maxlen=...) enforces the size limit automatically on every append."""
-        pass

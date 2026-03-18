@@ -324,10 +324,6 @@ class TestHistoryDeque(Base):
         self.assertEqual(self.agent.task_history.maxlen, 3)
         self.assertLessEqual(len(self.agent.task_history), 3)
 
-    def test_cleanup_history_is_noop(self):
-        """_cleanup_history should be a no-op (deque self-manages)"""
-        self.agent._cleanup_history()  # Must not raise
-
 
 # ---------------------------------------------------------------------------
 # 8. execute_task_with_retry only retries transient errors
