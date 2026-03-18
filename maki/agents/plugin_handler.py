@@ -29,6 +29,9 @@ _SAFE_ARG_TYPES = (str, int, float, bool, list, dict, type(None))
 # Attributes the host class must provide before _init_plugins() is called.
 _REQUIRED_ATTRS = ("name", "maki")
 
+# Pre-compiled pattern for TOOL: directives emitted by the LLM.
+_TOOL_PATTERN = re.compile(r'^TOOL:\s*(\{.*\})', re.MULTILINE)
+
 
 class PluginHandler:
     """
@@ -113,6 +116,7 @@ class PluginHandler:
         """
         try:
             if plugin_path:
+                plugin_path = os.path.realpath(plugin_path)
                 plugin_file = os.path.join(plugin_path, plugin_name, "__init__.py")
                 if not os.path.exists(plugin_file):
                     plugin_file = os.path.join(plugin_path, f"{plugin_name}.py")
@@ -158,14 +162,21 @@ class PluginHandler:
             return f"Method '{method_name}' is not callable via tool directives"
 
         # Respect an explicit whitelist declared on the plugin class.
-        # Only treat it as a whitelist if it is an actual collection type,
-        # so duck-typed mocks or other non-collection attributes are ignored.
+        # Fail closed: if ALLOWED_METHODS is present but not a recognized
+        # collection type (e.g. an empty dict {}), block all calls rather than
+        # silently bypassing the whitelist.
         allowed = getattr(plugin, "ALLOWED_METHODS", None)
-        if isinstance(allowed, (list, set, tuple, frozenset)) and method_name not in allowed:
-            return (
-                f"Method '{method_name}' is not in the allowed methods "
-                f"for plugin '{plugin_name}'"
-            )
+        if allowed is not None:
+            if not isinstance(allowed, (list, set, tuple, frozenset)):
+                return (
+                    f"Plugin '{plugin_name}' has an invalid ALLOWED_METHODS type "
+                    f"'{type(allowed).__name__}'; all calls blocked"
+                )
+            if method_name not in allowed:
+                return (
+                    f"Method '{method_name}' is not in the allowed methods "
+                    f"for plugin '{plugin_name}'"
+                )
 
         # args must be a plain dict.
         if not isinstance(args, dict):
@@ -193,7 +204,9 @@ class PluginHandler:
     def _allowed_methods(self, plugin) -> list:
         """Return the list of method names exposed by *plugin* to the LLM."""
         explicit = getattr(plugin, "ALLOWED_METHODS", None)
-        if isinstance(explicit, (list, set, tuple, frozenset)):
+        if explicit is not None:
+            if not isinstance(explicit, (list, set, tuple, frozenset)):
+                return []  # fail closed: invalid whitelist type → expose nothing
             return [m for m in explicit if callable(getattr(plugin, m, None))]
         return [
             m for m in dir(plugin)
@@ -223,8 +236,7 @@ class PluginHandler:
         The expected format emitted by the LLM is:
             TOOL: {"plugin": "<name>", "method": "<method>", "args": {...}}
         """
-        tool_pattern = re.compile(r'^TOOL:\s*(\{.*\})', re.MULTILINE)
-        matches = tool_pattern.findall(llm_response)
+        matches = _TOOL_PATTERN.findall(llm_response)
         if not matches:
             return llm_response
 
@@ -235,6 +247,14 @@ class PluginHandler:
                 plugin_name = call.get("plugin")
                 method_name = call.get("method")
                 args = call.get("args", {})
+
+                if not isinstance(plugin_name, str) or not plugin_name:
+                    tool_results.append({"error": "Tool call missing 'plugin' name"})
+                    continue
+                if not isinstance(method_name, str) or not method_name:
+                    tool_results.append({"plugin": plugin_name, "error": "Tool call missing 'method' name"})
+                    continue
+
                 plugin = self.plugins.get(plugin_name)
                 if not plugin:
                     tool_results.append({
@@ -276,7 +296,7 @@ class PluginHandler:
                 tool_results.append({"error": str(e)})
 
         # Strip TOOL: lines from the partial response, then ask for a final answer
-        clean_response = tool_pattern.sub('', llm_response).strip()
+        clean_response = _TOOL_PATTERN.sub('', llm_response).strip()
         follow_up = f"""
         Task: {task}
         Tool results: {json.dumps(tool_results, indent=2)}
