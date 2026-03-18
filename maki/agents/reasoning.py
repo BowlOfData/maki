@@ -5,6 +5,7 @@ Provides the ReasoningEngine mixin that gives agents step-by-step reasoning,
 self-correction, and task decomposition capabilities.
 """
 
+import functools
 import json
 import logging
 import re
@@ -50,16 +51,41 @@ class ReasoningEngine:
     Mixin that adds reasoning capabilities to an agent.
 
     **Contract** – the host class must set the following instance attributes
-    *before* calling ``_init_reasoning()``:
+    before ``__init__`` returns:
 
     * ``maki``              – a Maki LLM backend instance.
     * ``reasoning_history`` – a :class:`collections.deque` for storing steps.
 
-    If either attribute is missing, ``_init_reasoning()`` raises
-    :exc:`TypeError` immediately.  See
-    :class:`~maki.agents.protocols.ReasoningHostProtocol` for the full
+    Enforcement is automatic: :meth:`__init_subclass__` wraps every subclass
+    ``__init__`` so that a :exc:`TypeError` is raised immediately after
+    construction if any required attribute is missing — even if
+    ``super().__init__()`` was never called.
+
+    See :class:`~maki.agents.protocols.ReasoningHostProtocol` for the full
     contract definition.
     """
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Wrap the subclass ``__init__`` to enforce the reasoning contract."""
+        super().__init_subclass__(**kwargs)
+        orig = cls.__dict__.get('__init__')
+        if orig is None or getattr(orig, '_reasoning_contract_checked', False):
+            return
+
+        @functools.wraps(orig)
+        def _checked(self, *args, **kw):
+            orig(self, *args, **kw)
+            missing = [a for a in _REQUIRED_ATTRS if not hasattr(self, a)]
+            if missing:
+                raise TypeError(
+                    f"'{type(self).__name__}.__init__' completed without setting "
+                    f"required ReasoningEngine attribute(s): {missing}. "
+                    f"Ensure super().__init__() is called or set these "
+                    f"attributes before __init__ returns."
+                )
+
+        _checked._reasoning_contract_checked = True
+        cls.__init__ = _checked
 
     def _init_reasoning(self) -> None:
         """

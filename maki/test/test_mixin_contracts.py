@@ -239,5 +239,147 @@ class TestAgentSatisfiesProtocols(unittest.TestCase):
         self.assertTrue(hasattr(agent, "reasoning_history"))
 
 
+# ---------------------------------------------------------------------------
+# __init_subclass__ enforcement — the previously-silent failure modes
+# ---------------------------------------------------------------------------
+
+class TestInitSubclassEnforcement(unittest.TestCase):
+    """
+    Verify that __init_subclass__ catches mixin contract violations
+    automatically, even when _init_plugins() / _init_reasoning() are never
+    called (e.g., because super().__init__() was forgotten).
+    """
+
+    # --- PluginHandler ---
+
+    def test_plugin_handler_subclass_missing_attrs_raises_on_instantiation(self):
+        """
+        A PluginHandler subclass whose __init__ never sets 'name' or 'maki'
+        must raise TypeError at instantiation time, not later.
+        """
+        class Broken(PluginHandler):
+            def __init__(self):
+                pass  # forgot to set anything; no super() call
+
+        with self.assertRaises(TypeError) as ctx:
+            Broken()
+        msg = str(ctx.exception)
+        self.assertIn("Broken", msg)
+        self.assertIn("name", msg)
+        self.assertIn("maki", msg)
+
+    def test_plugin_handler_subclass_partial_attrs_raises(self):
+        """Setting only 'name' but not 'maki' still raises."""
+        class PartialPlugin(PluginHandler):
+            def __init__(self):
+                self.name = "partial"
+                # maki never set
+
+        with self.assertRaises(TypeError) as ctx:
+            PartialPlugin()
+        self.assertIn("maki", str(ctx.exception))
+
+    def test_plugin_handler_subclass_auto_inits_plugins_dict(self):
+        """
+        A PluginHandler subclass that sets 'name' and 'maki' but never sets
+        'plugins' should have it auto-initialized to {} after construction.
+        """
+        class MinimalPlugin(PluginHandler):
+            def __init__(self):
+                self.name = "minimal"
+                self.maki = _mock_maki()
+                # deliberately skip: self.plugins = {}
+
+        obj = MinimalPlugin()
+        self.assertEqual(obj.plugins, {})
+
+    # --- ReasoningEngine ---
+
+    def test_reasoning_engine_subclass_missing_attrs_raises_on_instantiation(self):
+        """
+        A ReasoningEngine subclass whose __init__ never sets required attrs
+        must raise TypeError at instantiation time.
+        """
+        class Broken(ReasoningEngine):
+            def __init__(self):
+                pass  # forgot everything
+
+        with self.assertRaises(TypeError) as ctx:
+            Broken()
+        msg = str(ctx.exception)
+        self.assertIn("Broken", msg)
+        self.assertIn("maki", msg)
+        self.assertIn("reasoning_history", msg)
+
+    def test_reasoning_engine_subclass_partial_attrs_raises(self):
+        """Setting only 'maki' but not 'reasoning_history' still raises."""
+        from collections import deque
+        class PartialReasoning(ReasoningEngine):
+            def __init__(self):
+                self.maki = _mock_maki()
+                # reasoning_history never set
+
+        with self.assertRaises(TypeError) as ctx:
+            PartialReasoning()
+        self.assertIn("reasoning_history", str(ctx.exception))
+
+    def test_reasoning_engine_subclass_correct_attrs_does_not_raise(self):
+        """A ReasoningEngine subclass that sets all attrs without super() is OK."""
+        from collections import deque
+        class GoodReasoning(ReasoningEngine):
+            def __init__(self):
+                self.maki = _mock_maki()
+                self.reasoning_history = deque(maxlen=10)
+
+        obj = GoodReasoning()  # must not raise
+        self.assertIsNotNone(obj)
+
+    # --- Agent subclasses (the primary real-world failure mode) ---
+
+    def test_agent_subclass_without_super_raises_on_instantiation(self):
+        """
+        The critical case: a subclass of Agent that overrides __init__ without
+        calling super() must fail immediately at instantiation, not silently
+        produce a broken agent.
+        """
+        maki = Maki("localhost", "11434", "llama3", 0.7)
+
+        class BrokenAgent(Agent):
+            def __init__(self, name):
+                # forgot to call super().__init__(name, maki)
+                self.name = name
+                # self.maki, self.reasoning_history, self.plugins are all absent
+
+        with self.assertRaises(TypeError) as ctx:
+            BrokenAgent("alice")
+        msg = str(ctx.exception)
+        self.assertIn("BrokenAgent", msg)
+
+    def test_agent_subclass_with_super_works_correctly(self):
+        """A well-formed Agent subclass must initialize without error."""
+        maki = Maki("localhost", "11434", "llama3", 0.7)
+
+        class GoodAgent(Agent):
+            def __init__(self, name, backend, extra="default"):
+                super().__init__(name, backend)
+                self.extra = extra
+
+        agent = GoodAgent("alice", maki, extra="custom")
+        self.assertEqual(agent.name, "alice")
+        self.assertEqual(agent.extra, "custom")
+        self.assertIsInstance(agent.plugins, dict)
+        self.assertIsNotNone(agent.reasoning_history)
+
+    def test_error_message_contains_super_hint(self):
+        """The error message must tell the developer to call super().__init__()."""
+        class Broken(PluginHandler):
+            def __init__(self):
+                pass
+
+        with self.assertRaises(TypeError) as ctx:
+            Broken()
+        self.assertIn("super().__init__()", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

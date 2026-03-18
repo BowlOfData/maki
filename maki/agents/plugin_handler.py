@@ -5,6 +5,7 @@ Provides the PluginHandler mixin that gives agents the ability to load,
 manage, and invoke plugins via LLM-emitted TOOL: directives.
 """
 
+import functools
 import importlib
 import importlib.util
 import json
@@ -34,16 +35,47 @@ class PluginHandler:
     Mixin that adds plugin loading and tool-call execution to an agent.
 
     **Contract** – the host class must set the following instance attributes
-    *before* calling ``_init_plugins()``:
+    before ``__init__`` returns:
 
     * ``name`` (str)  – a non-empty identifier used in log messages.
     * ``maki``        – a Maki LLM backend instance, passed to plugins on load.
 
-    If either attribute is missing, ``_init_plugins()`` raises :exc:`TypeError`
-    immediately rather than allowing a cryptic :exc:`AttributeError` later.
+    Enforcement is automatic: :meth:`__init_subclass__` wraps every subclass
+    ``__init__`` so that a :exc:`TypeError` is raised immediately after
+    construction if any required attribute is missing — even if
+    ``super().__init__()`` was never called.  The ``plugins`` dict is also
+    auto-initialized if the subclass did not set it.
+
     See :class:`~maki.agents.protocols.PluginHostProtocol` for the full
     contract definition.
     """
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Wrap the subclass ``__init__`` to enforce the plugin contract."""
+        super().__init_subclass__(**kwargs)
+        orig = cls.__dict__.get('__init__')
+        # Only wrap a __init__ defined directly on this class, and avoid
+        # double-wrapping if PluginHandler already processed it.
+        if orig is None or getattr(orig, '_plugin_contract_checked', False):
+            return
+
+        @functools.wraps(orig)
+        def _checked(self, *args, **kw):
+            orig(self, *args, **kw)
+            missing = [a for a in _REQUIRED_ATTRS if not hasattr(self, a)]
+            if missing:
+                raise TypeError(
+                    f"'{type(self).__name__}.__init__' completed without setting "
+                    f"required PluginHandler attribute(s): {missing}. "
+                    f"Ensure super().__init__() is called or set these "
+                    f"attributes before __init__ returns."
+                )
+            # Auto-initialize the plugins dict if the subclass did not.
+            if not hasattr(self, 'plugins'):
+                self.plugins = {}
+
+        _checked._plugin_contract_checked = True
+        cls.__init__ = _checked
 
     def _init_plugins(self) -> None:
         """
