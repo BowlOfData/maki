@@ -182,6 +182,34 @@ class TestDependencyEnforcement(Base):
         self.assertIn("t1", results)
         self.assertIn("t2", results)
 
+    def test_parallelizable_tasks_with_dependency_do_not_share_batch(self):
+        """A parallelizable dependent task must wait for its prerequisite batch to finish."""
+        call_order = []
+
+        def fake_request(prompt):
+            if "task1_content" in prompt:
+                call_order.append("t1")
+                return _r("result1")
+            if "task2_content" in prompt:
+                call_order.append("t2")
+                return _r("result2")
+            return _r("ok")
+
+        t1 = WorkflowTask(
+            name="t1", agent="A", task="task1_content", parallelizable=True
+        )
+        t2 = WorkflowTask(
+            name="t2", agent="A", task="task2_content",
+            dependencies=["t1"], parallelizable=True
+        )
+
+        with patch.object(self.maki, 'request', side_effect=fake_request):
+            results = self.manager.run_workflow([t1, t2])
+
+        self.assertEqual(call_order, ["t1", "t2"])
+        self.assertEqual(results["t1"]["result"], "result1")
+        self.assertEqual(results["t2"]["result"], "result2")
+
     def test_circular_dependency_raises(self):
         t1 = WorkflowTask(name="t1", agent="A", task="a", dependencies=["t2"])
         t2 = WorkflowTask(name="t2", agent="A", task="b", dependencies=["t1"])

@@ -350,10 +350,20 @@ class AgentManager:
 
         ordered = self._topological_sort(tasks)
 
-        # Batch consecutive parallelizable tasks
+        # Batch consecutive parallelizable tasks, but never place a task in the
+        # same batch as one of its dependencies. That would allow a dependent
+        # task to start before its prerequisite has produced a result.
         batches: List[List[WorkflowTask]] = []
         for wt in ordered:
-            if wt.parallelizable and batches and batches[-1][0].parallelizable:
+            current_batch = batches[-1] if batches else None
+            current_batch_names = {task.name for task in current_batch} if current_batch else set()
+            can_share_batch = (
+                wt.parallelizable
+                and current_batch is not None
+                and current_batch[0].parallelizable
+                and not any(dep in current_batch_names for dep in wt.dependencies)
+            )
+            if can_share_batch:
                 batches[-1].append(wt)
             else:
                 batches.append([wt])
