@@ -53,21 +53,21 @@ class TestSSRFProtection(unittest.TestCase):
         """Test that compose_url handles URLs with protocols properly"""
         # This should work - localhost with protocol
         url = Utils.compose_url("http://localhost", "11434", "generate")
-        self.assertTrue(url.startswith("http://"))
+        self.assertEqual(url, "http://localhost:11434/api/generate")
 
         # This should work - public domain with protocol
         url = Utils.compose_url("https://api.example.com", "443", "generate")
-        self.assertTrue(url.startswith("https://"))  # Note: protocol gets preserved by compose_url
+        self.assertEqual(url, "https://api.example.com:443/api/generate")
 
     def test_compose_url_with_ipv6(self):
         """Test that compose_url handles IPv6 addresses"""
         # This should work
         url = Utils.compose_url("::1", "11434", "generate")
-        self.assertTrue(url.startswith("http://"))
+        self.assertEqual(url, "http://[::1]:11434/api/generate")
 
         # This should work with IPv6 address
         url = Utils.compose_url("[2001:db8::1]", "11434", "generate")
-        self.assertTrue(url.startswith("http://"))
+        self.assertEqual(url, "http://[2001:db8::1]:11434/api/generate")
 
     def test_compose_url_with_invalid_inputs(self):
         """Test that compose_url validates inputs properly"""

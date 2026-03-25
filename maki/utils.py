@@ -4,7 +4,6 @@ import os
 import logging
 import re
 import ipaddress
-import socket
 from typing import Any
 from .urls import GENERIC_LLAMA_URL
 
@@ -209,6 +208,13 @@ class Utils:
         # Guard: ensure the sanitized domain contains only safe characters
         if not re.match(r'^[a-zA-Z0-9.\-:]+$', domain_part):
             raise ValueError("Invalid domain format after sanitization")
+
+        try:
+            parsed_ip = ipaddress.ip_address(domain_part)
+            if parsed_ip.version == 6:
+                domain_part = f"[{domain_part}]"
+        except ValueError:
+            pass
 
         composed = GENERIC_LLAMA_URL.format(domain=domain_part, port=port, action=action)
         # Always enforce the correct protocol by replacing whatever the template
