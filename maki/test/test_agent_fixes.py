@@ -217,12 +217,11 @@ class TestDependencyEnforcement(Base):
         with self.assertRaises(ValueError, msg="Circular dependency"):
             self.manager._topological_sort([t1, t2])
 
-    def test_missing_dependency_skipped_gracefully(self):
-        """A dependency that is not in the task list is ignored (absent from results)"""
+    def test_missing_dependency_raises(self):
+        """A dependency that is not in the task list should fail fast."""
         t1 = WorkflowTask(name="t1", agent="A", task="do it", dependencies=["ghost"])
-        with patch.object(self.maki, 'request', return_value=_r("ok")):
-            results = self.manager.run_workflow([t1])
-        self.assertIn("t1", results)
+        with self.assertRaises(ValueError, msg="Missing dependency"):
+            self.manager.run_workflow([t1])
 
 
 # ---------------------------------------------------------------------------

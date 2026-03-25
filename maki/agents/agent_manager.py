@@ -440,7 +440,7 @@ class AgentManager:
         Return tasks sorted so every dependency comes before the task that needs it.
 
         Raises:
-            ValueError: If a circular dependency is detected
+            ValueError: If a circular dependency is detected or a dependency is missing
         """
         task_map = {t.name: t for t in tasks}
         visited: set = set()
@@ -454,13 +454,13 @@ class AgentManager:
                 return
             visiting.add(name)
             task = task_map.get(name)
-            if task:
-                for dep in task.dependencies:
-                    visit(dep)
+            if task is None:
+                raise ValueError(f"Workflow dependency '{name}' is not defined")
+            for dep in task.dependencies:
+                visit(dep)
             visiting.discard(name)
             visited.add(name)
-            if task:
-                order.append(task)
+            order.append(task)
 
         for task in tasks:
             visit(task.name)
