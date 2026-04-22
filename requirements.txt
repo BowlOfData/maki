@@ -1,3 +1,8 @@
 requests >= 2.25.0
 paramiko >= 2.11.0
 httpx >= 0.23.0
+PySide6 >= 6.7.0
+feedparser >= 6.0
+readability-lxml >= 0.8
+html2text >= 2020.1.16
+pytrends >= 4.9.0

@@ -15,11 +15,16 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
+    include_package_data=True,
+    package_data={
+        "maki_gui": ["ui/qml/*.qml"],
+    },
     python_requires=">=3.7",
     install_requires=[
         "requests>=2.25.0",
         "paramiko>=2.11.0",
         "httpx>=0.23.0",
+        "PySide6>=6.7.0",
     ],
     extras_require={
         "dev": [
@@ -31,6 +36,7 @@ setup(
     entry_points={
         "console_scripts": [
             "maki=maki.__main__:main",
+            "maki-gui=maki_gui.app:run",
         ],
     },
 )

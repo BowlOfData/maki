@@ -216,3 +216,5 @@ orchestrator.py
 
 CLAUDE.md
 examples/modular_agents_example.py
+news_letter_plan.md
+maki_gui/*

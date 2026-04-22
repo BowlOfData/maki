@@ -12,18 +12,30 @@ Maki is a Python framework for building multi-agent LLM applications. It support
 - **Streaming support**: Token-by-token output via `MakiLLama.stream()`
 - **Async support**: `async_chat()` for asyncio-based applications
 - **Multi-turn sessions**: `ChatSession` for persistent conversations
-- **Plugin system**: Extend agents with built-in plugins (`file_reader`, `file_writer`, `directory_reader`, `web_to_md`, `ftp_client`)
+- **Plugin system**: Extend agents with built-in plugins (`file_reader`, `file_writer`, `directory_reader`, `web_to_md`, `ftp_client`, `web_search`)
 - **Tool calling in agents**: Agents can invoke plugins via structured `TOOL:` directives
 - **Workflow engine**: Dependency-based task orchestration with retries and parallel execution
 - **Image input support**: Send image files alongside prompts
 - **Configurable logging**: Explicit logging setup with no side effects on import
 - **Custom exceptions**: `MakiNetworkError`, `MakiTimeoutError`, `MakiAPIError`
+- **Newsletter application**: Ready-to-run multi-agent newsletter generator (`maki_newsletter`)
 
 ## Installation
 
 ### Option 1: Install with pip (recommended)
 ```bash
 pip install .
+```
+
+### Desktop GUI
+Install the optional GUI dependencies:
+```bash
+pip install ".[gui]"
+```
+
+Run the desktop shell:
+```bash
+maki-gui
 ```
 
 ### Option 2: Copy folder to your project
@@ -48,6 +60,22 @@ response = llm.chat("Tell me a joke")
 print(response.content)
 print(f"Tokens: {response.total_tokens} | Speed: {response.tokens_per_second:.1f} tok/s")
 ```
+
+## Desktop App Draft
+
+The repository now includes an initial cross-platform desktop GUI scaffold in `maki_gui/`.
+
+- `maki/`: framework core and runtime logic
+- `maki_gui/`: PySide6/QML desktop application
+- `maki_gui/state/`: UI-facing state objects
+- `maki_gui/services/`: service layer for connecting UI to the core runtime
+- `maki_gui/ui/qml/`: QML views and future shared components
+
+The current draft is a shell intended for the first Chat MVP. It provides:
+
+- a dedicated `maki-gui` entry point
+- a desktop window with navigation for Chat, Agents, Workflows, Settings, and Logs
+- a visual foundation that can evolve into reusable components and view models
 
 ## Backends
 
@@ -308,6 +336,7 @@ agent.unload_plugin("file_reader")
 | `directory_reader` | List and explore directory contents |
 | `web_to_md` | Fetch a URL and convert to Markdown |
 | `ftp_client` | Connect to and transfer files via FTP |
+| `web_search` | Fetch articles from RSS feeds and HackerNews |
 
 ### Tool calling in agents
 
@@ -434,6 +463,30 @@ python -m maki
 # MakiLLama demo
 python -m maki.makiLLama
 ```
+
+## Applications
+
+### Maki Newsletter
+
+`maki_newsletter/` is a ready-to-run multi-agent application that generates a weekly
+technical newsletter from RSS feeds and HackerNews.
+
+**Pipeline overview:**
+
+| Step | Command | Description |
+|------|---------|-------------|
+| 1 | `python -m maki_newsletter.main` | Search, download, rank, summarise, write evaluation file |
+| 2 | Review `output/articles/<month>/<week>/evaluate_<week>.md` | Approve or discard articles |
+| 3 | `python -m maki_newsletter.generate` | Assemble and write `output/news_<WW>_<YYYY>.md` |
+
+Articles are scored 0–10 by the LLM. By default only scores ≥ 6 ("good match") are
+included in the final newsletter. Pass `--min-score 4` to also include articles that
+need review.
+
+See [`maki_newsletter/README.md`](maki_newsletter/README.md) for full setup and
+configuration instructions.
+
+---
 
 ## License
 
