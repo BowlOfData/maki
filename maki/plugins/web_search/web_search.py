@@ -28,9 +28,14 @@ ALLOWED_METHODS = ["search_rss", "search_hackernews", "fetch_google_trends", "fe
 # Week-boundary helpers
 # ---------------------------------------------------------------------------
 
-def _week_start_utc() -> datetime:
+def _now_utc() -> datetime:
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
+
+
+def _week_start_utc(now: Optional[datetime] = None) -> datetime:
     """Return Monday 00:00:00 UTC of the current ISO calendar week."""
-    now = datetime.now(timezone.utc)
+    now = now or _now_utc()
     return now - timedelta(
         days=now.weekday(),
         hours=now.hour,
@@ -76,7 +81,7 @@ def _struct_time_to_datetime(st) -> Optional[datetime]:
         return None
 
 
-def _is_current_week(date_str: str) -> bool:
+def _is_current_week(date_str: str, now: Optional[datetime] = None) -> bool:
     """
     Return True if *date_str* falls within the current ISO calendar week
     (Monday 00:00:00 UTC through now).
@@ -86,7 +91,8 @@ def _is_current_week(date_str: str) -> bool:
     dt = _parse_published(date_str)
     if dt is None:
         return True
-    return dt >= _week_start_utc()
+    now = now or _now_utc()
+    return _week_start_utc(now) <= dt <= now
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +155,8 @@ class WebSearch:
             )
             return []
 
-        week_start = _week_start_utc()
+        now = _now_utc()
+        week_start = _week_start_utc(now)
         kw_lower = [k.lower() for k in keywords] if keywords else None
         results: List[Dict[str, Any]] = []
 
@@ -185,7 +192,7 @@ class WebSearch:
                 published_str = entry.get("published", "") or entry.get("updated", "")
 
                 # Drop articles published before this ISO week
-                if dt is not None and dt < week_start:
+                if dt is not None and not (week_start <= dt <= now):
                     continue
 
                 title = entry.get("title", "")
@@ -239,7 +246,8 @@ class WebSearch:
             List of article dicts
             (``title``, ``url``, ``snippet``, ``source``, ``published``).
         """
-        week_start_ts = int(_week_start_utc().timestamp())
+        now = _now_utc()
+        week_start_ts = int(_week_start_utc(now).timestamp())
         api_url = (
             "https://hn.algolia.com/api/v1/search"
             f"?query={urlquote(query)}"
@@ -256,6 +264,9 @@ class WebSearch:
                 article_url = hit.get("url", "")
                 if not article_url:
                     continue
+                published = hit.get("created_at", "")
+                if not _is_current_week(published, now=now):
+                    continue
                 results.append(
                     {
                         "title": hit.get("title", ""),
@@ -265,7 +276,7 @@ class WebSearch:
                             f"· {hit.get('num_comments', 0)} comments"
                         ),
                         "source": "HackerNews",
-                        "published": hit.get("created_at", ""),
+                        "published": published,
                     }
                 )
         except Exception as exc:
@@ -383,7 +394,8 @@ class WebSearch:
             Self-posts (no external URL) and very-low-score posts (< 10) are
             excluded.
         """
-        week_start = _week_start_utc()
+        now = _now_utc()
+        week_start = _week_start_utc(now)
         results: List[Dict[str, Any]] = []
         headers = {"User-Agent": "Mozilla/5.0 (compatible; MakiNewsletter/1.0)"}
 
@@ -414,7 +426,7 @@ class WebSearch:
                 created_utc = post.get("created_utc")
                 if created_utc:
                     post_dt = datetime.fromtimestamp(created_utc, tz=timezone.utc)
-                    if post_dt < week_start:
+                    if not (week_start <= post_dt <= now):
                         continue
                     published_str = post_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 else:
