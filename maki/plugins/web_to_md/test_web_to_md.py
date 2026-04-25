@@ -20,35 +20,36 @@ class TestWebToMd(unittest.TestCase):
         mock_maki = MagicMock()
         self.web_to_md = WebToMd(mock_maki)
 
-    @patch('requests.get')
-    def test_fetch_and_convert_to_md_success(self, mock_get):
+    def test_fetch_and_convert_to_md_success(self):
         """Test successful fetching and conversion."""
-        # Mock the response
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.headers = {"Content-Type": "text/html; charset=utf-8"}
         mock_response.text = "<html><head><title>Test</title></head><body><h1>Hello World</h1></body></html>"
-        mock_get.return_value = mock_response
 
-        # Mock the file writer
-        with patch.object(self.web_to_md.file_writer, 'write_file') as mock_write:
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+
+        with patch('requests.Session', return_value=mock_session), \
+             patch.object(self.web_to_md.file_writer, 'write_file') as mock_write:
             mock_write.return_value = {'success': True, 'file_path': 'test.md', 'bytes_written': 100}
-
             result = self.web_to_md.fetch_and_convert_to_md("https://example.com")
 
-            self.assertTrue(result['success'])
-            self.assertEqual(result['url'], "https://example.com")
-            self.assertIsNotNone(result['output_file'])
-            self.assertIsNotNone(result['content'])
+        self.assertTrue(result['success'])
+        self.assertEqual(result['url'], "https://example.com")
+        self.assertIsNotNone(result['output_file'])
+        self.assertIsNotNone(result['content'])
 
-    @patch('requests.get')
-    def test_fetch_and_convert_to_md_failure(self, mock_get):
-        """Test failed fetching."""
-        # Mock the response with an error
+    def test_fetch_and_convert_to_md_failure(self):
+        """Test failed fetching (404 response)."""
         mock_response = MagicMock()
         mock_response.status_code = 404
-        mock_get.return_value = mock_response
 
-        result = self.web_to_md.fetch_and_convert_to_md("https://example.com")
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+
+        with patch('requests.Session', return_value=mock_session):
+            result = self.web_to_md.fetch_and_convert_to_md("https://example.com")
 
         self.assertFalse(result['success'])
         self.assertIn('HTTP 404', result['error'])
@@ -61,9 +62,9 @@ class TestWebToMd(unittest.TestCase):
         self.assertIn('URL must be a non-empty string', result['error'])
 
     def test_html_to_markdown_conversion(self):
-        """Test HTML to markdown conversion."""
+        """Test HTML to markdown conversion via the regex fallback converter."""
         html_content = "<h1>Test Title</h1><p>This is a <strong>test</strong> paragraph.</p>"
-        markdown_content = self.web_to_md._html_to_markdown(html_content)
+        markdown_content = self.web_to_md._regex_to_markdown(html_content)
 
         self.assertIn('# Test Title', markdown_content)
         self.assertIn('**test**', markdown_content)

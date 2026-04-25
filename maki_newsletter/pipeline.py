@@ -179,12 +179,33 @@ class NewsletterPipeline:
     # Stage 1 — Search (dedicated function)
     # ------------------------------------------------------------------
 
-    def stage_search(self) -> List[Dict[str, Any]]:
+    def stage_search(
+        self, trending_keywords: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Fetch current-week articles from RSS feeds and HackerNews.
+        Fetch current-week articles from RSS feeds and HackerNews, guided by
+        the trending keywords retrieved in stage_trends().
+
+        RSS feeds are filtered so that only articles whose title or snippet
+        mentions at least one domain seed keyword (IT, AI, security, blockchain)
+        are kept.  HackerNews is searched using the specific trending queries
+        when available, falling back to SEARCH_QUERIES otherwise.
+
         Returns up to MAX_CANDIDATES deduplicated article dicts.
         """
-        logger.info("Stage 1: fetching articles from RSS feeds and HackerNews …")
+        logger.info("Stage 1: fetching trend-guided articles from RSS and HackerNews …")
+
+        trending_keywords = trending_keywords or []
+
+        # RSS filter: broad domain seeds ensure only IT/AI/security/blockchain
+        # articles are fetched, discarding unrelated content from general feeds.
+        rss_filter = list(TREND_SEED_KEYWORDS)
+
+        # HN queries: use specific trending topics when available so that
+        # HackerNews searches surface what is actually being discussed right now.
+        # Fall back to the static SEARCH_QUERIES when trends are unavailable.
+        hn_queries = trending_keywords[:len(SEARCH_QUERIES)] if trending_keywords else SEARCH_QUERIES
+
         seen_urls: set = set()
         candidates: List[Dict[str, Any]] = []
 
@@ -195,16 +216,21 @@ class NewsletterPipeline:
                     seen_urls.add(url)
                     candidates.append(a)
 
-        # Primary: RSS feeds queried directly (no search engine)
-        _add(self.web_search.search_rss(RSS_FEEDS, max_per_feed=MAX_PER_FEED))
+        # Primary: RSS feeds filtered to the domain areas
+        _add(self.web_search.search_rss(
+            RSS_FEEDS, max_per_feed=MAX_PER_FEED, keywords=rss_filter
+        ))
 
-        # Secondary: HackerNews Algolia API for each topic query
-        for query in SEARCH_QUERIES:
+        # Secondary: HackerNews searched with trending-derived queries
+        for query in hn_queries:
             if len(candidates) >= MAX_CANDIDATES:
                 break
             _add(self.web_search.search_hackernews(query, max_results=MAX_HN_PER_QUERY))
 
-        logger.info("Stage 1 complete: %d candidates found", len(candidates))
+        logger.info(
+            "Stage 1 complete: %d candidates found (rss_filter=%d keywords, hn_queries=%d)",
+            len(candidates), len(rss_filter), len(hn_queries),
+        )
         return candidates
 
     # ------------------------------------------------------------------
@@ -231,8 +257,13 @@ class NewsletterPipeline:
         )
 
         # Flatten Google Trends rising queries into a single keyword list
+        # and log each seed's results so they are visible in the run output.
         trending_keywords: list = []
         for seed, queries in google_trends.items():
+            if queries:
+                logger.info("  Google Trends [%s]: %s", seed, ", ".join(queries))
+            else:
+                logger.info("  Google Trends [%s]: (no results)", seed)
             for q in queries:
                 if q and q not in trending_keywords:
                     trending_keywords.append(q)
@@ -833,13 +864,14 @@ class NewsletterPipeline:
         logger.info("Newsletter pipeline started")
         logger.info("=" * 60)
 
-        candidates = self.stage_search()
-        if not candidates:
-            raise RuntimeError("Stage 1 returned no article candidates — check network connectivity.")
-
+        # Trends run FIRST so their keywords guide what gets searched and downloaded
         trend_articles, trending_keywords = self.stage_trends()
 
-        # Merge trend (Reddit) articles into candidates, deduplicating by URL
+        # Search using trends: RSS filtered to domain areas, HN queried with
+        # specific trending topics so only relevant articles are discovered
+        candidates = self.stage_search(trending_keywords)
+
+        # Merge Reddit hot posts (already domain-filtered by subreddit choice)
         seen_urls = {a["url"] for a in candidates}
         for a in trend_articles:
             if a["url"] not in seen_urls:
@@ -847,9 +879,12 @@ class NewsletterPipeline:
                 candidates.append(a)
         logger.info("Combined candidate pool: %d articles", len(candidates))
 
+        if not candidates:
+            raise RuntimeError("No article candidates found — check network connectivity and trend fetch.")
+
         downloaded = self.stage_download(candidates)
         if not downloaded:
-            raise RuntimeError("Stage 2 returned no downloaded articles — all fetches failed.")
+            raise RuntimeError("Stage 2: all article downloads failed — check network connectivity.")
 
         enriched = self.stage_read(downloaded)
         if not enriched:

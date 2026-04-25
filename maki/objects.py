@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Optional
 import threading
 import time as _time
 
@@ -7,9 +8,13 @@ import time as _time
 class Message:
     role: str          # "system" | "user" | "assistant"
     content: str
+    images: Optional[list[str]] = field(default=None, repr=False)  # base64-encoded images for vision models
 
     def to_dict(self) -> dict:
-        return {"role": self.role, "content": self.content}
+        d: dict = {"role": self.role, "content": self.content}
+        if self.images:
+            d["images"] = self.images
+        return d
 
 
 @dataclass

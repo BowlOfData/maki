@@ -261,6 +261,8 @@ class TestSearchHackerNews(unittest.TestCase):
         self.assertEqual(results, [])
 
     def test_skips_hits_without_url(self):
+        # Pin _now_utc to the same week as the mock dates (week of 2026-04-14)
+        fixed_now = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
             "hits": [
@@ -270,20 +272,24 @@ class TestSearchHackerNews(unittest.TestCase):
         }
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("maki.plugins.web_search.web_search.requests.get", return_value=mock_resp):
+        with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
+             patch("maki.plugins.web_search.web_search.requests.get", return_value=mock_resp):
             results = self.ws.search_hackernews("test")
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["source"], "HackerNews")
 
     def test_result_structure(self):
+        # Pin _now_utc to the same week as the mock dates (week of 2026-04-14)
+        fixed_now = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
             "hits": [{"title": "T", "url": "https://x.com", "points": 5, "num_comments": 1, "created_at": "2026-04-17"}]
         }
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("maki.plugins.web_search.web_search.requests.get", return_value=mock_resp):
+        with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
+             patch("maki.plugins.web_search.web_search.requests.get", return_value=mock_resp):
             results = self.ws.search_hackernews("test")
 
         self.assertEqual(len(results), 1)

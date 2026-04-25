@@ -65,6 +65,9 @@ TREND_SEED_KEYWORDS = [
     "cybersecurity",
     "blockchain",
     "information technology",
+    "bitcoin",
+    "space",
+    "finance",
 ]
 
 # Google Trends timeframe — "now 7-d" = last 7 days

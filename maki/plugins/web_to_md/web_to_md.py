@@ -12,11 +12,40 @@ A regex-based fallback is used if either library is unavailable.
 
 import logging
 import re
+import time
 import requests
+from requests.adapters import HTTPAdapter
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 from maki.plugins.file_writer.file_writer import FileWriter
+
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+}
+
+_MAX_RETRIES = 3
+_RETRY_DELAYS = (2.0, 5.0, 10.0)  # seconds between attempts
+_RETRYABLE_ERRORS = (
+    "RemoteDisconnected",
+    "ConnectionAborted",
+    "ConnectionReset",
+    "ConnectionError",
+    "ChunkedEncodingError",
+)
 
 # Optional dependencies — imported once at module load so the cost is paid
 # only when the module is first imported, not on every call.
@@ -82,18 +111,16 @@ class WebToMd:
         }
 
         try:
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/91.0.4472.124 Safari/537.36"
-                )
-            }
-            response = requests.get(url, headers=headers, timeout=20)
+            response = self._fetch_with_retry(url)
             result["status_code"] = response.status_code
 
             if response.status_code != 200:
                 result["error"] = f"HTTP {response.status_code}: Failed to fetch URL"
+                return result
+
+            content_type = response.headers.get("Content-Type", "")
+            if not any(t in content_type for t in ("text/html", "application/xhtml", "text/xml", "application/xml")):
+                result["error"] = f"Unsupported content type: {content_type}"
                 return result
 
             title, article_html = self._extract_article(response.text, url)
@@ -132,6 +159,42 @@ class WebToMd:
             "success": False, "url": url, "output_file": output_file,
             "content": "", "error": msg, "status_code": None,
         }
+
+    def _fetch_with_retry(self, url: str) -> requests.Response:
+        """
+        Fetch *url* with browser-like headers, retrying on transient connection
+        errors (RemoteDisconnected, ConnectionAborted, etc.).
+
+        Raises the last exception if all attempts are exhausted.
+        """
+        session = requests.Session()
+        session.headers.update(_BROWSER_HEADERS)
+        # Add a Referer that looks organic for news sites
+        parsed = urlparse(url)
+        session.headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+
+        last_exc: Exception = RuntimeError("No attempts made")
+        for attempt, delay in enumerate((*_RETRY_DELAYS, None), start=1):
+            try:
+                response = session.get(url, timeout=25, allow_redirects=True)
+                return response
+            except Exception as exc:
+                last_exc = exc
+                exc_name = type(exc).__name__
+                cause_name = type(exc.__cause__).__name__ if exc.__cause__ else ""
+                is_retryable = any(
+                    r in exc_name or r in cause_name or r in str(exc)
+                    for r in _RETRYABLE_ERRORS
+                )
+                if not is_retryable or delay is None:
+                    raise
+                self.logger.warning(
+                    "fetch attempt %d/%d failed for %s (%s) — retrying in %.0fs",
+                    attempt, _MAX_RETRIES, url, exc, delay,
+                )
+                time.sleep(delay)
+
+        raise last_exc
 
     def _extract_article(self, html: str, url: str = "") -> Tuple[str, str]:
         """

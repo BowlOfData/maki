@@ -159,6 +159,7 @@ class MakiLLama(LLMBackend):
         prompt: str,
         history: Optional[list[Message]] = None,
         system: Optional[str] = None,
+        images: Optional[list[str]] = None,
     ) -> list[dict]:
         msgs: list[dict] = []
         effective_system = system if system is not None else self.system_prompt
@@ -166,7 +167,7 @@ class MakiLLama(LLMBackend):
             msgs.append(Message("system", effective_system).to_dict())
         if history:
             msgs.extend(m.to_dict() for m in history)
-        msgs.append(Message("user", prompt).to_dict())
+        msgs.append(Message("user", prompt, images=images).to_dict())
         return msgs
 
     def _build_payload(
@@ -177,11 +178,12 @@ class MakiLLama(LLMBackend):
         *,
         stream: bool,
         system: Optional[str] = None,
+        images: Optional[list[str]] = None,
     ) -> dict:
         cfg = config or self.config
         return {
             "model": self.model,
-            "messages": self._build_messages(prompt, history, system=system),
+            "messages": self._build_messages(prompt, history, system=system, images=images),
             "stream": stream,
             "options": cfg.to_ollama_options(),
         }
@@ -205,15 +207,16 @@ class MakiLLama(LLMBackend):
         history: Optional[list[Message]] = None,
         config: Optional[GenerationConfig] = None,
         system: Optional[str] = None,
+        images: Optional[list[str]] = None,
     ) -> LLMResponse:
         """
         Single-turn (or multi-turn with explicit history) generation.
-        Returns a fully resolved LLMResponse.
+        Returns a fully resolved LLMResponse. Pass base64 strings in images for vision models.
         """
         log.debug("chat: %s", prompt[:100])
         if self._rate_limiter:
             self._rate_limiter.acquire()
-        payload = self._build_payload(prompt, history, config, stream=False, system=system)
+        payload = self._build_payload(prompt, history, config, stream=False, system=system, images=images)
         t0 = time.perf_counter()
         try:
             r = self._session.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
@@ -278,10 +281,12 @@ class MakiLLama(LLMBackend):
         prompt: str,
         history: Optional[list[Message]] = None,
         config: Optional[GenerationConfig] = None,
+        images: Optional[list[str]] = None,
+        system: Optional[str] = None,
     ) -> LLMResponse:
-        """Async variant of chat() for use inside asyncio event loops."""
+        """Async variant of chat() for use inside asyncio event loops. Supports vision via images."""
         log.debug("async_chat: %s", prompt[:100])
-        payload = self._build_payload(prompt, history, config, stream=False)
+        payload = self._build_payload(prompt, history, config, stream=False, images=images, system=system)
         t0 = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -299,6 +304,16 @@ class MakiLLama(LLMBackend):
         response = self._parse_response(r.json(), elapsed)
         log.info("async_chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
+
+    def chat_with_image(
+        self,
+        prompt: str,
+        image_b64: str,
+        config: Optional[GenerationConfig] = None,
+        system: Optional[str] = None,
+    ) -> LLMResponse:
+        """Single-turn vision chat with a base64-encoded image."""
+        return self.chat(prompt, config=config, system=system, images=[image_b64])
 
     def request(self, prompt: str) -> LLMResponse:
         """Override base request() to route through the chat API."""
@@ -410,6 +425,11 @@ class ChatSession:
 def gemma3(system: Optional[str] = None, **kwargs) -> MakiLLama:
     """Pre-configured wrapper for Google Gemma 3."""
     return MakiLLama(model="gemma3", system_prompt=system, **kwargs)
+
+
+def gemma4(variant: str = "gemma4:26b", system: Optional[str] = None, **kwargs) -> MakiLLama:
+    """Pre-configured wrapper for Google Gemma 4 (vision-capable)."""
+    return MakiLLama(model=variant, system_prompt=system, **kwargs)
 
 
 def qwen(variant: str = "qwen2.5:7b", system: Optional[str] = None, **kwargs) -> MakiLLama:

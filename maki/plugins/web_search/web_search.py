@@ -81,6 +81,29 @@ def _struct_time_to_datetime(st) -> Optional[datetime]:
         return None
 
 
+_MEDIA_EXTENSIONS = frozenset(
+    ".jpg .jpeg .png .gif .webp .svg .bmp .tiff .tif "
+    ".mp4 .mov .avi .webm .mkv .mp3 .wav .pdf".split()
+)
+_MEDIA_HOSTS = frozenset([
+    "i.redd.it", "preview.redd.it", "v.redd.it",
+    "i.imgur.com", "imgur.com",
+    "pbs.twimg.com", "video.twimg.com",
+])
+
+
+def _is_media_url(url: str) -> bool:
+    """Return True when *url* points to a direct media file rather than an article."""
+    try:
+        parsed = urlparse(url)
+        if parsed.netloc in _MEDIA_HOSTS:
+            return True
+        path_lower = parsed.path.lower()
+        return any(path_lower.endswith(ext) for ext in _MEDIA_EXTENSIONS)
+    except Exception:
+        return False
+
+
 def _is_current_week(date_str: str, now: Optional[datetime] = None) -> bool:
     """
     Return True if *date_str* falls within the current ISO calendar week
@@ -264,9 +287,6 @@ class WebSearch:
                 article_url = hit.get("url", "")
                 if not article_url:
                     continue
-                published = hit.get("created_at", "")
-                if not _is_current_week(published, now=now):
-                    continue
                 results.append(
                     {
                         "title": hit.get("title", ""),
@@ -276,7 +296,7 @@ class WebSearch:
                             f"· {hit.get('num_comments', 0)} comments"
                         ),
                         "source": "HackerNews",
-                        "published": published,
+                        "published": hit.get("created_at", ""),
                     }
                 )
         except Exception as exc:
@@ -323,48 +343,42 @@ class WebSearch:
 
         results: Dict[str, List[str]] = {kw: [] for kw in seed_keywords}
 
-        # Google Trends payload accepts max 5 keywords at once — batch them.
-        batch_size = 5
+        # One keyword per request: smaller payloads are far less likely to
+        # trigger Google's 429 rate limit than a multi-keyword batch.
+        _429_delays = (30.0, 60.0, 120.0)  # back-off ladder for 429 responses
+
         try:
             pytrends = TrendReq(hl="en-US", tz=0, timeout=(10, 25))
         except Exception as exc:
             self.logger.warning("fetch_google_trends: TrendReq init failed: %s", exc)
             return results
 
-        for batch_start in range(0, len(seed_keywords), batch_size):
-            batch = seed_keywords[batch_start: batch_start + batch_size]
-            try:
-                pytrends.build_payload(batch, timeframe=timeframe, geo=geo)
-                related = pytrends.related_queries()
-            except Exception as exc:
-                self.logger.warning(
-                    "fetch_google_trends: related_queries failed for batch %s: %s",
-                    batch, exc,
-                )
-                time.sleep(2)
+        for kw in seed_keywords:
+            related = self._google_trends_query(
+                pytrends, [kw], timeframe, geo, _429_delays
+            )
+            if related is None:
+                # All retries exhausted for this keyword — skip it
                 continue
 
-            for kw in batch:
-                kw_data = related.get(kw, {}) or {}
-                rising_df = kw_data.get("rising")
-                if rising_df is not None and not rising_df.empty:
-                    results[kw] = rising_df["query"].tolist()
+            kw_data = related.get(kw, {}) or {}
+            rising_df = kw_data.get("rising")
+            if rising_df is not None and not rising_df.empty:
+                results[kw] = rising_df["query"].tolist()
+                self.logger.debug(
+                    "fetch_google_trends: '%s' → %d rising queries", kw, len(results[kw])
+                )
+            else:
+                top_df = kw_data.get("top")
+                if top_df is not None and not top_df.empty:
+                    results[kw] = top_df["query"].head(10).tolist()
                     self.logger.debug(
-                        "fetch_google_trends: '%s' → %d rising queries",
+                        "fetch_google_trends: '%s' → %d top queries (no rising data)",
                         kw, len(results[kw]),
                     )
-                else:
-                    # Fall back to top queries when no rising data is available
-                    top_df = kw_data.get("top")
-                    if top_df is not None and not top_df.empty:
-                        results[kw] = top_df["query"].head(10).tolist()
-                        self.logger.debug(
-                            "fetch_google_trends: '%s' → %d top queries (no rising data)",
-                            kw, len(results[kw]),
-                        )
 
-            # Polite pause between batches to avoid rate limiting
-            time.sleep(1.5)
+            # Polite pause between keywords to stay well below rate limits
+            time.sleep(5.0)
 
         total = sum(len(v) for v in results.values())
         self.logger.info(
@@ -372,6 +386,41 @@ class WebSearch:
             total, len(seed_keywords),
         )
         return results
+
+    def _google_trends_query(
+        self,
+        pytrends,
+        keywords: List[str],
+        timeframe: str,
+        geo: str,
+        retry_delays: tuple,
+    ) -> Optional[Dict]:
+        """
+        Call pytrends.build_payload + related_queries for *keywords*.
+
+        Retries on 429 responses using *retry_delays* as the back-off ladder
+        (seconds to wait before each retry).  Returns None when all retries
+        are exhausted or on a non-retryable error.
+        """
+        for attempt, delay in enumerate((*retry_delays, None), start=1):
+            try:
+                pytrends.build_payload(keywords, timeframe=timeframe, geo=geo)
+                return pytrends.related_queries()
+            except Exception as exc:
+                is_429 = "429" in str(exc)
+                if is_429 and delay is not None:
+                    self.logger.warning(
+                        "fetch_google_trends: 429 rate-limited for %s "
+                        "(attempt %d/%d) — waiting %.0fs before retry",
+                        keywords, attempt, len(retry_delays) + 1, delay,
+                    )
+                    time.sleep(delay)
+                else:
+                    self.logger.warning(
+                        "fetch_google_trends: query failed for %s: %s", keywords, exc
+                    )
+                    return None
+        return None
 
     def fetch_reddit_hot(
         self,
@@ -421,6 +470,11 @@ class WebSearch:
                 if post.get("is_self") or not external_url:
                     continue
                 if post.get("score", 0) < 10:
+                    continue
+
+                # Skip direct media/image URLs — these are not articles
+                if _is_media_url(external_url):
+                    self.logger.debug("fetch_reddit_hot: skipping media URL %s", external_url)
                     continue
 
                 created_utc = post.get("created_utc")
