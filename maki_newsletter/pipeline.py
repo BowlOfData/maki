@@ -562,6 +562,18 @@ class NewsletterPipeline:
 
         for article in top10:
             local_path = article.get("local_path", "")
+            summary_path = local_path.replace(".md", "_summary.txt") if local_path else ""
+
+            if summary_path and os.path.exists(summary_path):
+                try:
+                    with open(summary_path, encoding="utf-8") as fh:
+                        summary = fh.read().strip()
+                    logger.debug("Loaded cached summary: %s", summary_path)
+                    summaries.append({**article, "summary": summary})
+                    continue
+                except OSError as exc:
+                    logger.warning("Could not load cached summary %s: %s — re-summarising", summary_path, exc)
+
             try:
                 raw = open(local_path, encoding="utf-8").read()
             except OSError as exc:
@@ -583,6 +595,13 @@ class NewsletterPipeline:
             except Exception as exc:
                 logger.warning("summarizer_agent failed for %s: %s", article.get("url"), exc)
                 summary = article.get("snippet", "No summary available.")
+
+            if summary_path:
+                try:
+                    with open(summary_path, "w", encoding="utf-8") as fh:
+                        fh.write(summary)
+                except OSError as exc:
+                    logger.warning("Could not save summary %s: %s", summary_path, exc)
 
             summaries.append({**article, "summary": summary})
 
@@ -619,6 +638,30 @@ class NewsletterPipeline:
             os.path.abspath(ARTICLES_DIR),
         )
         now = datetime.now(timezone.utc)
+
+        # ---------- merge with existing week data ----------
+        json_filename = f"summaries_{week_num:02d}_{year}.json"
+        json_path = os.path.join(os.path.abspath(OUTPUT_DIR), json_filename)
+        eval_filename = f"evaluate_{week_num}.md"
+        eval_path = os.path.join(articles_week_dir, eval_filename)
+
+        existing: List[Dict[str, Any]] = []
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, encoding="utf-8") as fh:
+                    existing = json.load(fh)
+                logger.info("Loaded %d existing articles from %s", len(existing), json_path)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Could not load existing summaries %s: %s — starting fresh", json_path, exc)
+
+        if existing:
+            seen_urls = {a.get("url", "") for a in existing}
+            new_articles = [a for a in summaries if a.get("url", "") not in seen_urls]
+            if new_articles:
+                logger.info("Enriching evaluation with %d new article(s)", len(new_articles))
+            else:
+                logger.info("No new articles to add — evaluation already up to date")
+            summaries = existing + new_articles
 
         # Pre-compute lowercase trend keywords for fast matching
         kw_lower = [kw.lower() for kw in (trending_keywords or [])]
@@ -704,16 +747,12 @@ class NewsletterPipeline:
             lines += _article_block(i, a)
 
         eval_md = "\n".join(lines)
-        eval_filename = f"evaluate_{week_num}.md"
-        eval_path = os.path.join(articles_week_dir, eval_filename)
         os.makedirs(articles_week_dir, exist_ok=True)
         with open(eval_path, "w", encoding="utf-8") as fh:
             fh.write(eval_md)
         logger.info("Evaluation file written to %s", eval_path)
 
         # ---------- persist summaries JSON for generate.py ----------
-        json_filename = f"summaries_{week_num:02d}_{year}.json"
-        json_path = os.path.join(os.path.abspath(OUTPUT_DIR), json_filename)
         os.makedirs(os.path.abspath(OUTPUT_DIR), exist_ok=True)
         with open(json_path, "w", encoding="utf-8") as fh:
             json.dump(summaries, fh, indent=2, ensure_ascii=False)
@@ -829,6 +868,7 @@ class NewsletterPipeline:
             if lp:
                 keep.add(os.path.abspath(lp))
                 keep.add(os.path.abspath(lp.replace(".md", "_meta.json")))
+                keep.add(os.path.abspath(lp.replace(".md", "_summary.txt")))
 
         # Always keep the evaluation file
         if week_num is not None:

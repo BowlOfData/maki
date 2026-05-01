@@ -14,6 +14,7 @@ RSS_FEEDS = {
     "TechRadar":    "https://www.techradar.com/rss",
     "Gizmodo":      "https://gizmodo.com/rss",
     "HackerNews":   "https://news.ycombinator.com/rss",
+    "CoinDesk":     "https://www.coindesk.com/arc/outboundfeeds/rss",
 }
 
 # ---------------------------------------------------------------------------
@@ -31,10 +32,10 @@ SEARCH_QUERIES = [
 ]
 
 # Maximum article candidates before ranking
-MAX_CANDIDATES = 30
+MAX_CANDIDATES = 50
 
 # Number of articles in the final newsletter
-TOP_N = 30
+TOP_N = 50
 
 # Max articles fetched per RSS feed
 MAX_PER_FEED = 10
