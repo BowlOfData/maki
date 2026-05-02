@@ -523,11 +523,12 @@ class WebSearch:
 
                 title = post.get("title", "")
                 selftext = post.get("selftext", "") or ""
+                snippet = selftext[:400].strip() if selftext else title.strip()
 
                 results.append({
                     "title": title,
                     "url": external_url,
-                    "snippet": selftext[:400].strip() if selftext else f"r/{sub} · {post.get('score', 0)} upvotes",
+                    "snippet": snippet,
                     "source": f"Reddit r/{sub}",
                     "published": published_str,
                 })

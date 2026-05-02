@@ -113,6 +113,113 @@ def _iso_week_parts(dt: datetime) -> tuple[int, int]:
     return iso[1], iso[0]
 
 
+def _cap_sentences(text: str, max_sentences: int = 2) -> str:
+    """Return *text* truncated to at most *max_sentences* sentences."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    return " ".join(sentences[:max_sentences])
+
+
+def _extract_complete_sentences(text: str) -> List[str]:
+    """Return only complete sentences from *text*, preserving punctuation."""
+    cleaned = _clean_summary_text(text)
+    if not cleaned:
+        return []
+    return re.findall(r"[^.!?]+[.!?](?:['\")\]]+)?", cleaned)
+
+
+def _clean_summary_text(text: str) -> str:
+    """Normalize whitespace and strip common formatting noise from summaries."""
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    cleaned = re.sub(r"^[>*#\-\s]+", "", cleaned)
+    return cleaned.strip(" \"'")
+
+
+def _is_low_signal_summary(text: str) -> bool:
+    """
+    Return True when *text* looks like feed metadata rather than a real summary.
+
+    This catches cases such as ``r/netsec · 20 upvotes`` that occasionally leak
+    in through snippets, caches, or model output.
+    """
+    cleaned = _clean_summary_text(text)
+    if not cleaned:
+        return True
+
+    lower = cleaned.lower()
+    if re.fullmatch(r"r/[a-z0-9_+-]+\s*[·|:-]\s*\d+\s+upvotes?", lower):
+        return True
+
+    words = re.findall(r"\b\w+\b", lower)
+    if len(words) <= 8 and any(token in lower for token in ("upvotes", "points", "comments")):
+        if "r/" in lower or "hacker news" in lower:
+            return True
+
+    return False
+
+
+def _fallback_summary(article: Dict[str, Any]) -> str:
+    """Return the best non-empty non-metadata fallback text for *article*."""
+    snippet = _clean_summary_text(article.get("snippet", ""))
+    if snippet and not _is_low_signal_summary(snippet):
+        return snippet
+
+    title = _clean_summary_text(article.get("title", ""))
+    return title
+
+
+def _title_as_sentence(article: Dict[str, Any]) -> str:
+    """Convert the article title into a complete sentence."""
+    title = _clean_summary_text(article.get("title", ""))
+    if not title:
+        return ""
+    return title if re.search(r"[.!?]['\")\]]*$", title) else f"{title}."
+
+
+def _article_derived_second_sentence(article: Dict[str, Any], first_sentence: str) -> str:
+    """Build a second sentence using only article-derived text."""
+    title_sentence = _title_as_sentence(article)
+    if title_sentence and title_sentence.lower() != first_sentence.lower():
+        return title_sentence
+
+    snippet = _clean_summary_text(article.get("snippet", ""))
+    snippet_sentences = [sentence.strip() for sentence in _extract_complete_sentences(snippet)]
+    for sentence in snippet_sentences:
+        if sentence.lower() != first_sentence.lower():
+            return sentence
+
+    if snippet:
+        snippet_sentence = snippet if re.search(r"[.!?]['\")\]]*$", snippet) else f"{snippet.rstrip(',:;')}."
+        if snippet_sentence.lower() != first_sentence.lower():
+            return snippet_sentence
+
+    return first_sentence
+
+
+def _normalize_two_sentence_summary(text: str, article: Dict[str, Any]) -> str:
+    """
+    Return exactly two complete sentences without truncating mid-sentence.
+
+    If fewer than two complete sentences are available, synthesize the second
+    sentence from article-derived text rather than returning a fragment.
+    """
+    cleaned = _clean_summary_text(text)
+    sentences = [sentence.strip() for sentence in _extract_complete_sentences(cleaned)]
+
+    if not sentences and cleaned:
+        cleaned = cleaned.rstrip(",:;")
+        if cleaned:
+            sentences = [f"{cleaned}."]
+
+    if not sentences:
+        title = _clean_summary_text(article.get("title", "")) or "This article highlights a technical development"
+        sentences = [f"{title.rstrip(' .!?')}."]
+
+    if len(sentences) == 1:
+        sentences.append(_article_derived_second_sentence(article, sentences[0]))
+
+    return " ".join(sentences[:2])
+
+
 def _summaries_filename_parts(path: str) -> Optional[tuple[int, int]]:
     """Parse `summaries_WW_YYYY.json` and return `(week_num, iso_year)`."""
     match = re.fullmatch(r"summaries_(\d{2})_(\d{4})\.json", os.path.basename(path))
@@ -177,9 +284,10 @@ class NewsletterPipeline:
             name="summarizer_agent",
             role="technical writer",
             instructions=(
-                f"You write concise technical summaries of no more than {SUMMARY_MAX_WORDS} words. "
-                "Focus on key insights, technologies mentioned, and practical impact. "
-                "Return only the summary text — no titles, headings, or preamble. "
+                "You write concise technical summaries of EXACTLY 2 sentences. "
+                "The first sentence states what is new or what happened. "
+                "The second sentence explains why it matters to software engineers and tech professionals. "
+                "Return only the 2-sentence summary — no titles, headings, bullet points, or preamble. "
                 "Do NOT use dashes as punctuation (-- or ---); use commas or semicolons instead."
             ),
         )
@@ -226,13 +334,14 @@ class NewsletterPipeline:
 
         seen_urls: set = set()
         candidates: List[Dict[str, Any]] = []
+        downloaded_canonical_urls: set = set()  # tracks canonical URLs resolved during download
 
         def _add(articles: List[Dict]) -> None:
             for a in articles:
-                url = a.get("url", "")
+                url = (a.get("url") or "").rstrip("/")
                 if url and url not in seen_urls and len(candidates) < MAX_CANDIDATES:
                     seen_urls.add(url)
-                    candidates.append(a)
+                    candidates.append({**a, "url": url})
 
         # Primary: RSS feeds filtered to the domain areas
         _add(self.web_search.search_rss(
@@ -373,14 +482,30 @@ class NewsletterPipeline:
                     except OSError as exc:
                         logger.warning("Could not remove short article cache %s: %s", output_path, exc)
                     continue
+
+                # Use the canonical URL after redirects if it differs from the original
+                canonical_url = (result.get("final_url") or url).rstrip("/")
+                if canonical_url in downloaded_canonical_urls:
+                    logger.debug("Skipping duplicate after redirect: %s → %s", url, canonical_url)
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                    continue
+                downloaded_canonical_urls.add(canonical_url)
+
+                if canonical_url != url:
+                    logger.info("Resolved canonical URL: %s → %s", url, canonical_url)
+
                 downloaded.append(
                     {
                         **article,
+                        "url":        canonical_url,
                         "local_path": output_path,
-                        "filename": filename,
+                        "filename":   filename,
                     }
                 )
-                logger.debug("Downloaded: %s → %s", url, filename)
+                logger.debug("Downloaded: %s → %s", canonical_url, filename)
             else:
                 logger.warning("Failed to download %s: %s", url, result.get("error"))
 
@@ -608,13 +733,13 @@ class NewsletterPipeline:
             if summary_path and os.path.exists(summary_path):
                 try:
                     with open(summary_path, encoding="utf-8") as fh:
-                        cached = fh.read().strip()
-                    if cached:
+                        cached = _clean_summary_text(fh.read())
+                    if cached and not _is_low_signal_summary(cached):
                         logger.debug("Loaded cached summary: %s", summary_path)
-                        summaries.append({**article, "summary": cached})
+                        summaries.append({**article, "summary": _normalize_two_sentence_summary(cached, article)})
                         continue
                     else:
-                        logger.warning("Empty cached summary %s — re-summarising", summary_path)
+                        logger.warning("Invalid cached summary %s — re-summarising", summary_path)
                         os.remove(summary_path)
                 except OSError as exc:
                     logger.warning("Could not load cached summary %s: %s — re-summarising", summary_path, exc)
@@ -631,8 +756,7 @@ class NewsletterPipeline:
             # Skip LLM if there is nothing to summarise
             if not content.strip():
                 logger.warning("No content available for %s — skipping", article.get("url"))
-                snippet_fallback = article.get("snippet", "").strip()
-                summaries.append({**article, "summary": snippet_fallback or article.get("title", "")})
+                summaries.append({**article, "summary": _normalize_two_sentence_summary(_fallback_summary(article), article)})
                 continue
 
             task = (
@@ -645,17 +769,20 @@ class NewsletterPipeline:
 
             summary = ""
             try:
-                summary = agent.execute_task(task).strip()
+                summary = _clean_summary_text(agent.execute_task(task))
             except Exception as exc:
                 logger.warning("summarizer_agent failed for %s: %s", article.get("url"), exc)
 
             summary = re.sub(r"\s*---+\s*", "; ", summary)
             summary = re.sub(r"\s*--\s*", ", ", summary)
+            summary = _clean_summary_text(summary)
 
-            # If LLM returned nothing, fall back to snippet then title
-            if not summary:
-                logger.warning("Empty summary from LLM for %s — using fallback", article.get("url"))
-                summary = article.get("snippet", "").strip() or article.get("title", "")
+            # If LLM returned nothing useful, fall back to snippet then title
+            if _is_low_signal_summary(summary):
+                logger.warning("Low-signal summary from LLM for %s — using fallback", article.get("url"))
+                summary = _fallback_summary(article)
+
+            summary = _normalize_two_sentence_summary(summary, article)
 
             # Only cache non-empty summaries
             if summary and summary_path:

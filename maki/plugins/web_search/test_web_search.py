@@ -313,5 +313,40 @@ class TestSearchHackerNews(unittest.TestCase):
         self.assertIn(f"created_at_i>{week_start_ts}", captured[0])
 
 
+class TestFetchRedditHot(unittest.TestCase):
+
+    def setUp(self):
+        self.ws = WebSearch()
+
+    def test_uses_title_when_selftext_is_empty(self):
+        fixed_now = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        created_utc = fixed_now.timestamp()
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "data": {
+                "children": [{
+                    "data": {
+                        "title": "New sandbox escape write-up",
+                        "url": "https://example.com/writeup",
+                        "is_self": False,
+                        "score": 20,
+                        "selftext": "",
+                        "created_utc": created_utc,
+                    }
+                }]
+            }
+        }
+
+        with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
+             patch("maki.plugins.web_search.web_search.requests.get", return_value=mock_resp), \
+             patch("maki.plugins.web_search.web_search.time.sleep"):
+            results = self.ws.fetch_reddit_hot(["netsec"], max_per_sub=1)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["snippet"], "New sandbox escape write-up")
+        self.assertNotIn("upvotes", results[0]["snippet"].lower())
+
+
 if __name__ == "__main__":
     unittest.main()

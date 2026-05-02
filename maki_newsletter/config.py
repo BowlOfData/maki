@@ -102,6 +102,16 @@ MAX_REDDIT_PER_SUB = 5
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 
 # ---------------------------------------------------------------------------
+# Altervista WordPress — newsletter publishing
+# ---------------------------------------------------------------------------
+
+ALTERVISTA_SITE_URL              = os.environ.get("ALTERVISTA_SITE_URL", "").rstrip("/")
+ALTERVISTA_USERNAME              = os.environ.get("ALTERVISTA_USERNAME", "")
+ALTERVISTA_APP_PASSWORD          = os.environ.get("ALTERVISTA_APP_PASSWORD", "")
+# Optional: pin the parent Newsletter page ID to skip auto-discovery
+ALTERVISTA_NEWSLETTER_PAGE_ID    = os.environ.get("ALTERVISTA_NEWSLETTER_PAGE_ID", "")
+
+# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 

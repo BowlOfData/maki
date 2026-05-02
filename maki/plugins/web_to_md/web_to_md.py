@@ -106,13 +106,17 @@ class WebToMd:
             return self._err(url, output_file, f"Invalid URL format: {exc}")
 
         result: Dict[str, Any] = {
-            "success": False, "url": url, "output_file": output_file,
+            "success": False, "url": url, "final_url": url,
+            "output_file": output_file,
             "content": "", "error": None, "status_code": None,
         }
 
         try:
             response = self._fetch_with_retry(url)
             result["status_code"] = response.status_code
+            # Capture the canonical URL after any redirects
+            if response.url and response.url != url:
+                result["final_url"] = response.url.rstrip("/")
 
             if response.status_code != 200:
                 result["error"] = f"HTTP {response.status_code}: Failed to fetch URL"

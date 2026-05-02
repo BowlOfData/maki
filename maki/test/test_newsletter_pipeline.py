@@ -80,6 +80,134 @@ class TestNewsletterPipeline(unittest.TestCase):
             self.assertEqual(len(downloaded), 1)
             self.assertGreater(os.path.getsize(downloaded[0]["local_path"]), 300)
 
+    def test_stage_summarize_replaces_low_signal_cached_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            article_path = os.path.join(tmpdir, "article.md")
+            summary_path = article_path.replace(".md", "_summary.txt")
+
+            with open(article_path, "w", encoding="utf-8") as fh:
+                fh.write("# Article\n\nKernel maintainers shipped a new isolation mechanism for containers.")
+            with open(summary_path, "w", encoding="utf-8") as fh:
+                fh.write("r/netsec · 20 upvotes")
+
+            agent = SimpleNamespace(
+                execute_task=lambda task: (
+                    "Linux maintainers introduced a new container isolation mechanism. "
+                    "It matters because it reduces the blast radius of kernel-level escapes."
+                )
+            )
+            pipeline = newsletter_pipeline.NewsletterPipeline.__new__(
+                newsletter_pipeline.NewsletterPipeline
+            )
+            pipeline.manager = SimpleNamespace(get_agent=lambda name: agent)
+
+            summaries = pipeline.stage_summarize([{
+                "title": "New Linux container isolation work",
+                "url": "https://example.com/article",
+                "snippet": "A new kernel isolation feature landed for container workloads.",
+                "local_path": article_path,
+            }])
+
+            self.assertEqual(len(summaries), 1)
+            self.assertNotIn("upvotes", summaries[0]["summary"].lower())
+            self.assertIn("container isolation mechanism", summaries[0]["summary"].lower())
+
+            with open(summary_path, encoding="utf-8") as fh:
+                saved = fh.read()
+            self.assertEqual(saved, summaries[0]["summary"])
+
+    def test_stage_summarize_falls_back_when_model_returns_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            article_path = os.path.join(tmpdir, "article.md")
+            with open(article_path, "w", encoding="utf-8") as fh:
+                fh.write("# Article\n\nDetailed markdown content for summarization.")
+
+            agent = SimpleNamespace(execute_task=lambda task: "r/netsec · 20 upvotes")
+            pipeline = newsletter_pipeline.NewsletterPipeline.__new__(
+                newsletter_pipeline.NewsletterPipeline
+            )
+            pipeline.manager = SimpleNamespace(get_agent=lambda name: agent)
+
+            article = {
+                "title": "Rust networking tool adds eBPF tracing",
+                "url": "https://example.com/rust-ebpf",
+                "snippet": "A Rust networking observability tool added eBPF tracing for live packet analysis.",
+                "local_path": article_path,
+            }
+            summaries = pipeline.stage_summarize([article])
+
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(
+                summaries[0]["summary"],
+                "A Rust networking observability tool added eBPF tracing for live packet analysis. "
+                "Rust networking tool adds eBPF tracing."
+            )
+            self.assertNotIn("this matters because", summaries[0]["summary"].lower())
+
+    def test_stage_summarize_discards_incomplete_third_fragment(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            article_path = os.path.join(tmpdir, "article.md")
+            with open(article_path, "w", encoding="utf-8") as fh:
+                fh.write("# Article\n\nDetailed markdown content for summarization.")
+
+            agent = SimpleNamespace(
+                execute_task=lambda task: (
+                    "A new TypeScript release improves inference for template-heavy codebases. "
+                    "It matters because teams can remove custom workarounds and simplify internal tooling. "
+                    "And this trailing fragment"
+                )
+            )
+            pipeline = newsletter_pipeline.NewsletterPipeline.__new__(
+                newsletter_pipeline.NewsletterPipeline
+            )
+            pipeline.manager = SimpleNamespace(get_agent=lambda name: agent)
+
+            article = {
+                "title": "TypeScript improves inference",
+                "url": "https://example.com/typescript",
+                "snippet": "TypeScript improved inference in advanced generic patterns.",
+                "local_path": article_path,
+                "source": "TypeScript Blog",
+            }
+            summaries = pipeline.stage_summarize([article])
+
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(
+                summaries[0]["summary"],
+                "A new TypeScript release improves inference for template-heavy codebases. "
+                "It matters because teams can remove custom workarounds and simplify internal tooling."
+            )
+
+    def test_stage_summarize_uses_title_for_second_sentence_when_needed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            article_path = os.path.join(tmpdir, "article.md")
+            with open(article_path, "w", encoding="utf-8") as fh:
+                fh.write("# Article\n\nDetailed markdown content for summarization.")
+
+            agent = SimpleNamespace(
+                execute_task=lambda task: "Improved database replication landed for edge clusters"
+            )
+            pipeline = newsletter_pipeline.NewsletterPipeline.__new__(
+                newsletter_pipeline.NewsletterPipeline
+            )
+            pipeline.manager = SimpleNamespace(get_agent=lambda name: agent)
+
+            article = {
+                "title": "Database vendor ships edge replication update",
+                "url": "https://example.com/edge-db",
+                "snippet": "Improved database replication landed for edge clusters.",
+                "local_path": article_path,
+            }
+            summaries = pipeline.stage_summarize([article])
+
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(
+                summaries[0]["summary"],
+                "Improved database replication landed for edge clusters. "
+                "Database vendor ships edge replication update."
+            )
+            self.assertNotIn("this matters because", summaries[0]["summary"].lower())
+
     @staticmethod
     def _write_download_result(output_path: str, content: str):
         with open(output_path, "w", encoding="utf-8") as fh:
