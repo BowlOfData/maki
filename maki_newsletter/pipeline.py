@@ -107,6 +107,21 @@ def _truncate(content: str, max_chars: int = MAX_ARTICLE_CHARS) -> str:
     return content[:max_chars] if len(content) > max_chars else content
 
 
+def _iso_week_parts(dt: datetime) -> tuple[int, int]:
+    """Return the ISO week number and ISO week-year for *dt*."""
+    iso = dt.isocalendar()
+    return iso[1], iso[0]
+
+
+def _summaries_filename_parts(path: str) -> Optional[tuple[int, int]]:
+    """Parse `summaries_WW_YYYY.json` and return `(week_num, iso_year)`."""
+    match = re.fullmatch(r"summaries_(\d{2})_(\d{4})\.json", os.path.basename(path))
+    if not match:
+        return None
+    week_num, iso_year = match.groups()
+    return int(week_num), int(iso_year)
+
+
 # ---------------------------------------------------------------------------
 # NewsletterPipeline
 # ---------------------------------------------------------------------------
@@ -299,7 +314,7 @@ class NewsletterPipeline:
         downloaded: List[Dict[str, Any]] = []
         now = datetime.now(timezone.utc)
         month_name = now.strftime("%B").lower()     # e.g. "april"
-        week_num = now.isocalendar()[1]             # e.g. 14
+        week_num, iso_year = _iso_week_parts(now)   # e.g. 14, 2026
         articles_abs = os.path.abspath(
             os.path.join(ARTICLES_DIR, month_name, str(week_num))
         )
@@ -308,7 +323,7 @@ class NewsletterPipeline:
         # Store for later stages
         self._articles_week_dir = articles_abs
         self._week_num = week_num
-        self._year = now.year
+        self._year = iso_year
 
         for article in candidates:
             url = article.get("url", "")
@@ -319,15 +334,32 @@ class NewsletterPipeline:
             output_path = os.path.join(articles_abs, filename)
 
             if os.path.exists(output_path):
-                logger.debug("Already exists, skipping download: %s", filename)
-                downloaded.append(
-                    {
-                        **article,
-                        "local_path": output_path,
-                        "filename": filename,
-                    }
-                )
-                continue
+                try:
+                    with open(output_path, encoding="utf-8") as fh:
+                        existing_content = fh.read()
+                    if len(existing_content) < 300:
+                        logger.warning(
+                            "Removing stale short article cache before re-download: %s (%d chars)",
+                            filename,
+                            len(existing_content),
+                        )
+                        os.remove(output_path)
+                    else:
+                        logger.debug("Already exists, skipping download: %s", filename)
+                        downloaded.append(
+                            {
+                                **article,
+                                "local_path": output_path,
+                                "filename": filename,
+                            }
+                        )
+                        continue
+                except OSError as exc:
+                    logger.warning(
+                        "Could not validate cached article %s: %s — re-downloading",
+                        filename,
+                        exc,
+                    )
 
             result = self.web_to_md.fetch_and_convert_to_md(url, output_path)
 
@@ -335,6 +367,11 @@ class NewsletterPipeline:
                 content_len = len(result.get("content", ""))
                 if content_len < 300:
                     logger.debug("Skipping %s — content too short (%d chars)", url, content_len)
+                    try:
+                        if os.path.exists(output_path):
+                            os.remove(output_path)
+                    except OSError as exc:
+                        logger.warning("Could not remove short article cache %s: %s", output_path, exc)
                     continue
                 downloaded.append(
                     {
@@ -656,8 +693,9 @@ class NewsletterPipeline:
         """
         logger.info("Stage 6: writing evaluation file …")
 
-        week_num = getattr(self, "_week_num", datetime.now(timezone.utc).isocalendar()[1])
-        year = getattr(self, "_year", datetime.now(timezone.utc).year)
+        current_week_num, current_iso_year = _iso_week_parts(datetime.now(timezone.utc))
+        week_num = getattr(self, "_week_num", current_week_num)
+        year = getattr(self, "_year", current_iso_year)
         articles_week_dir = getattr(
             self, "_articles_week_dir",
             os.path.abspath(ARTICLES_DIR),
@@ -838,8 +876,9 @@ class NewsletterPipeline:
         agent = self.manager.get_agent("writer_agent")
 
         now = datetime.now(timezone.utc)
-        week_num = getattr(self, "_week_num", now.isocalendar()[1])
-        year = getattr(self, "_year", now.year)
+        current_week_num, current_iso_year = _iso_week_parts(now)
+        week_num = getattr(self, "_week_num", current_week_num)
+        year = getattr(self, "_year", current_iso_year)
 
         # Ask the writer agent for an editorial introduction
         intro_task = (
@@ -1035,8 +1074,7 @@ class NewsletterPipeline:
 
         # Filter out URLs manually removed this week so they are not re-downloaded
         now = datetime.now(timezone.utc)
-        current_week = now.isocalendar()[1]
-        current_year = now.year
+        current_week, current_year = _iso_week_parts(now)
         removed_urls = self._load_url_set(self._removed_urls_path(current_week, current_year))
         if removed_urls:
             before = len(candidates)
@@ -1080,14 +1118,28 @@ class NewsletterPipeline:
 
         output_abs = os.path.abspath(OUTPUT_DIR)
         pattern = os.path.join(output_abs, "summaries_*.json")
-        candidates = sorted(glob(pattern), key=os.path.getmtime, reverse=True)
+        candidates = glob(pattern)
         if not candidates:
             raise RuntimeError(
                 f"No summaries JSON found in {output_abs}. "
                 "Run the pipeline first: python -m maki_newsletter.main"
             )
 
-        json_path = candidates[0]
+        dated_candidates = [
+            (parts, path)
+            for path in candidates
+            for parts in [_summaries_filename_parts(path)]
+            if parts is not None
+        ]
+        if dated_candidates:
+            dated_candidates.sort(key=lambda item: item[0], reverse=True)
+            json_path = dated_candidates[0][1]
+        else:
+            logger.warning(
+                "Could not parse summaries filenames by week/year; falling back to modification time"
+            )
+            json_path = max(candidates, key=os.path.getmtime)
+
         logger.info("Loading summaries from %s", json_path)
         with open(json_path, encoding="utf-8") as fh:
             all_summaries = json.load(fh)
@@ -1106,8 +1158,7 @@ class NewsletterPipeline:
             self._year = int(parts[1])
         except (IndexError, ValueError):
             now = datetime.now(timezone.utc)
-            self._week_num = now.isocalendar()[1]
-            self._year = now.year
+            self._week_num, self._year = _iso_week_parts(now)
 
         # Restore _articles_week_dir from the first article that has a valid local_path
         if not getattr(self, "_articles_week_dir", None):
