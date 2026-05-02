@@ -433,6 +433,7 @@ class NewsletterPipeline:
         self._articles_week_dir = articles_abs
         self._week_num = week_num
         self._year = iso_year
+        downloaded_canonical_urls: set[str] = set()
 
         for article in candidates:
             url = article.get("url", "")
@@ -455,6 +456,7 @@ class NewsletterPipeline:
                         os.remove(output_path)
                     else:
                         logger.debug("Already exists, skipping download: %s", filename)
+                        downloaded_canonical_urls.add(url.rstrip("/"))
                         downloaded.append(
                             {
                                 **article,
