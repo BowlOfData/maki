@@ -3,6 +3,12 @@ Configuration for the Maki Newsletter application.
 Edit this file to change the topics, sources, LLM model, and output settings.
 """
 
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # RSS feed sources — queried directly, no search engine required
 # ---------------------------------------------------------------------------
@@ -54,7 +60,7 @@ OLLAMA_HOST = "http://localhost:11434"
 MAX_ARTICLE_CHARS = 10000
 
 # Max words in each article summary
-SUMMARY_MAX_WORDS = 300
+SUMMARY_MAX_WORDS = 100
 
 # ---------------------------------------------------------------------------
 # Trend cross-checking
@@ -87,6 +93,13 @@ REDDIT_SUBREDDITS = [
 
 # Maximum Reddit posts to fetch per subreddit
 MAX_REDDIT_PER_SUB = 5
+
+# ---------------------------------------------------------------------------
+# Pexels — cover image for the newsletter
+# ---------------------------------------------------------------------------
+
+# Get a free API key at https://www.pexels.com/api/
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 
 # ---------------------------------------------------------------------------
 # Output

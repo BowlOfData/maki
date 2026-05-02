@@ -25,6 +25,7 @@ setup(
         "paramiko>=2.11.0",
         "httpx>=0.23.0",
         "PySide6>=6.7.0",
+        "python-dotenv>=1.0.0",
     ],
     extras_require={
         "dev": [

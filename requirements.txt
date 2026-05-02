@@ -6,3 +6,4 @@ feedparser >= 6.0
 readability-lxml >= 0.8
 html2text >= 2020.1.16
 pytrends >= 4.9.0
+python-dotenv >= 1.0.0

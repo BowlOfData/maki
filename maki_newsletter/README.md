@@ -117,43 +117,6 @@ maki_newsletter/
 
 ---
 
-## Configuration
-
-All settings are in `maki_newsletter/config.py`.
-
-### RSS feeds
-
-```python
-RSS_FEEDS = {
-    "TechCrunch":   "https://techcrunch.com/feed/",
-    "Wired":        "https://www.wired.com/feed/rss",
-    "Ars Technica": "https://feeds.arstechnica.com/arstechnica/index",
-    "TechRadar":    "https://www.techradar.com/rss",
-    "Gizmodo":      "https://gizmodo.com/rss",
-    "HackerNews":   "https://news.ycombinator.com/rss",
-}
-```
-
-Add or remove feeds by editing this dict. Any RSS/Atom URL works.
-
-### Topic queries
-
-```python
-SEARCH_QUERIES = [
-    "artificial intelligence latest research 2026",
-    "cyber security vulnerabilities",
-    ...
-]
-```
-
-Used to search the HackerNews Algolia API. Edit to match your interests.
-
-### LLM settings
-
-```python
-LLM_MODEL   = "gemma4:26b"           # any model available in Ollama
-OLLAMA_HOST = "http://localhost:11434"
-```
 
 ### Volume controls
 
@@ -174,21 +137,4 @@ Only articles published **during the current ISO calendar week** (Monday 00:00 U
 through Sunday) are included. Articles from previous weeks are discarded before
 any LLM processing.
 
----
 
-## Troubleshooting
-
-**No candidates found**
-Verify network access and that at least one RSS feed URL is reachable.
-
-**LLM 404 error**
-The configured model is not available in Ollama. Run `ollama list` to see
-installed models and update `LLM_MODEL` in `config.py`.
-
-**All articles discarded (content too short)**
-The article page returned a paywall or redirect. This is expected for some
-sources — the pipeline continues with the remaining articles.
-
-**No summaries JSON found (generate.py)**
-The main pipeline has not been run yet, or the `output/` directory was cleared.
-Run `python -m maki_newsletter.main` first.

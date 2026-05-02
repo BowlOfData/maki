@@ -21,7 +21,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_METHODS = ["search_rss", "search_hackernews", "fetch_google_trends", "fetch_reddit_hot"]
+ALLOWED_METHODS = ["search_rss", "search_hackernews", "fetch_google_trends", "fetch_reddit_hot", "fetch_pexels_image"]
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +421,41 @@ class WebSearch:
                     )
                     return None
         return None
+
+    def fetch_pexels_image(self, query: str, api_key: str) -> Optional[str]:
+        """
+        Search Pexels for a landscape photo matching *query* and return its URL.
+
+        Args:
+            query:   Search terms (e.g. "artificial intelligence cybersecurity").
+            api_key: Pexels API key (free at https://www.pexels.com/api/).
+
+        Returns:
+            The direct image URL (large size, landscape orientation), or None
+            if the key is missing, the request fails, or no photos are found.
+        """
+        if not api_key:
+            self.logger.warning("fetch_pexels_image: PEXELS_API_KEY not set — skipping image")
+            return None
+
+        try:
+            resp = requests.get(
+                "https://api.pexels.com/v1/search",
+                headers={"Authorization": api_key},
+                params={"query": query, "per_page": 1, "orientation": "landscape"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            photos = resp.json().get("photos", [])
+            if not photos:
+                self.logger.warning("fetch_pexels_image: no results for query '%s'", query)
+                return None
+            url = photos[0]["src"]["large"]
+            self.logger.info("fetch_pexels_image: image found for '%s' → %s", query, url)
+            return url
+        except Exception as exc:
+            self.logger.warning("fetch_pexels_image: request failed: %s", exc)
+            return None
 
     def fetch_reddit_hot(
         self,

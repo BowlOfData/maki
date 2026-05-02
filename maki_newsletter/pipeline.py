@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -43,6 +44,7 @@ from .config import (
     MAX_REDDIT_PER_SUB,
     OLLAMA_HOST,
     OUTPUT_DIR,
+    PEXELS_API_KEY,
     REDDIT_SUBREDDITS,
     RSS_FEEDS,
     SEARCH_QUERIES,
@@ -162,7 +164,8 @@ class NewsletterPipeline:
             instructions=(
                 f"You write concise technical summaries of no more than {SUMMARY_MAX_WORDS} words. "
                 "Focus on key insights, technologies mentioned, and practical impact. "
-                "Return only the summary text — no titles, headings, or preamble."
+                "Return only the summary text — no titles, headings, or preamble. "
+                "Do NOT use dashes as punctuation (-- or ---); use commas or semicolons instead."
             ),
         )
         self.manager.add_agent(
@@ -584,7 +587,7 @@ class NewsletterPipeline:
             task = (
                 f"Write a technical summary of no more than {SUMMARY_MAX_WORDS} words "
                 "for the following article. Focus on what is new, what technology is involved, "
-                "and why it matters to software engineers.\n\n"
+                "and why it matters to software engineers and tech enthusiasts and professionals.\n\n"
                 f"Title: {article.get('title', '')}\n\n"
                 f"Content:\n{content}"
             )
@@ -595,6 +598,9 @@ class NewsletterPipeline:
             except Exception as exc:
                 logger.warning("summarizer_agent failed for %s: %s", article.get("url"), exc)
                 summary = article.get("snippet", "No summary available.")
+
+            summary = re.sub(r"\s*---+\s*", "; ", summary)
+            summary = re.sub(r"\s*--\s*", ", ", summary)
 
             if summary_path:
                 try:
@@ -690,17 +696,15 @@ class NewsletterPipeline:
             title = a.get("title", f"Article {rank}")
             url = a.get("url", "")
             source = a.get("source", urlparse(url).netloc if url else "")
-            published = a.get("published", "")
             score = a.get("quality_score", "?")
             summary = a.get("summary", "")
-            pub_str = f" | **Published:** {published}" if published else ""
             matched = _matched_trends(a)
             trend_str = (
                 f"\n**Trending topics matched:** {', '.join(matched)}" if matched else ""
             )
             return [
                 f"### {rank}. {title}",
-                f"**Source:** {source}{pub_str} | **Score:** {score}/10",
+                f"**Source:** {source} | **Score:** {score}/10",
                 f"**URL:** {url}{trend_str}",
                 "",
                 summary,
@@ -797,32 +801,44 @@ class NewsletterPipeline:
                 "Here are the top stories from the past week."
             )
 
+        # Derive a Pexels search query from the most common technologies
+        tech_counter: Counter = Counter()
+        for a in summaries:
+            for t in a.get("technologies", []):
+                if t:
+                    tech_counter[t.lower()] += 1
+        pexels_query = " ".join(t for t, _ in tech_counter.most_common(3)) or "technology innovation"
+        cover_image_url = self.web_search.fetch_pexels_image(pexels_query, PEXELS_API_KEY)
+
         # Assemble Markdown
+        intro_block = [
+            "## Introduction",
+            "",
+            introduction,
+            "",
+        ]
+        if cover_image_url:
+            intro_block += [f"![Weekly Tech Highlight]({cover_image_url})", ""]
+        intro_block += ["---", ""]
+
         lines: List[str] = [
             f"# Bowl of Data - Tech Newsletter — Week {week_num}, {year}",
             f"*Generated on {now.strftime('%Y-%m-%d')}*",
             "",
             "---",
             "",
-            "## Introduction",
-            "",
-            introduction,
-            "",
-            "---",
-            "",
+            *intro_block,
         ]
 
         for rank, article in enumerate(summaries, start=1):
             title = article.get("title", f"Article {rank}")
             url = article.get("url", "")
             source = article.get("source", urlparse(url).netloc if url else "")
-            published = article.get("published", "")
             summary = article.get("summary", "")
 
-            pub_str = f" | **Published:** {published}" if published else ""
             lines += [
                 f"## {rank}. {title}",
-                f"**Source:** {source}{pub_str}  ",
+                f"**Source:** {source}  ",
                 f"**URL:** {url}",
                 "",
                 summary,
