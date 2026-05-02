@@ -567,23 +567,37 @@ class NewsletterPipeline:
             local_path = article.get("local_path", "")
             summary_path = local_path.replace(".md", "_summary.txt") if local_path else ""
 
+            # Load cached summary only if non-empty; delete stale empty cache files
             if summary_path and os.path.exists(summary_path):
                 try:
                     with open(summary_path, encoding="utf-8") as fh:
-                        summary = fh.read().strip()
-                    logger.debug("Loaded cached summary: %s", summary_path)
-                    summaries.append({**article, "summary": summary})
-                    continue
+                        cached = fh.read().strip()
+                    if cached:
+                        logger.debug("Loaded cached summary: %s", summary_path)
+                        summaries.append({**article, "summary": cached})
+                        continue
+                    else:
+                        logger.warning("Empty cached summary %s — re-summarising", summary_path)
+                        os.remove(summary_path)
                 except OSError as exc:
                     logger.warning("Could not load cached summary %s: %s — re-summarising", summary_path, exc)
 
+            # Read article content; fall back to snippet
+            raw = ""
             try:
                 raw = open(local_path, encoding="utf-8").read()
             except OSError as exc:
                 logger.warning("Cannot read %s: %s", local_path, exc)
-                raw = article.get("snippet", "")
 
-            content = _truncate(raw)
+            content = _truncate(raw) or article.get("snippet", "")
+
+            # Skip LLM if there is nothing to summarise
+            if not content.strip():
+                logger.warning("No content available for %s — skipping", article.get("url"))
+                snippet_fallback = article.get("snippet", "").strip()
+                summaries.append({**article, "summary": snippet_fallback or article.get("title", "")})
+                continue
+
             task = (
                 f"Write a technical summary of no more than {SUMMARY_MAX_WORDS} words "
                 "for the following article. Focus on what is new, what technology is involved, "
@@ -597,12 +611,17 @@ class NewsletterPipeline:
                 summary = agent.execute_task(task).strip()
             except Exception as exc:
                 logger.warning("summarizer_agent failed for %s: %s", article.get("url"), exc)
-                summary = article.get("snippet", "No summary available.")
 
             summary = re.sub(r"\s*---+\s*", "; ", summary)
             summary = re.sub(r"\s*--\s*", ", ", summary)
 
-            if summary_path:
+            # If LLM returned nothing, fall back to snippet then title
+            if not summary:
+                logger.warning("Empty summary from LLM for %s — using fallback", article.get("url"))
+                summary = article.get("snippet", "").strip() or article.get("title", "")
+
+            # Only cache non-empty summaries
+            if summary and summary_path:
                 try:
                     with open(summary_path, "w", encoding="utf-8") as fh:
                         fh.write(summary)
@@ -646,21 +665,49 @@ class NewsletterPipeline:
         now = datetime.now(timezone.utc)
 
         # ---------- merge with existing week data ----------
+        output_abs = os.path.abspath(OUTPUT_DIR)
         json_filename = f"summaries_{week_num:02d}_{year}.json"
-        json_path = os.path.join(os.path.abspath(OUTPUT_DIR), json_filename)
+        json_path = os.path.join(output_abs, json_filename)
         eval_filename = f"evaluate_{week_num}.md"
         eval_path = os.path.join(articles_week_dir, eval_filename)
 
+        removed_path = self._removed_urls_path(week_num, year)
+        checkpoint_path = self._checkpoint_path(week_num, year)
+
+        # Load persistent removed set and last-write checkpoint
+        removed_urls = self._load_url_set(removed_path)
+        checkpoint_urls = self._load_url_set(checkpoint_path)
+
         existing: List[Dict[str, Any]] = []
+        existing_loaded = False
         if os.path.exists(json_path):
             try:
                 with open(json_path, encoding="utf-8") as fh:
                     existing = json.load(fh)
+                existing_loaded = True
                 logger.info("Loaded %d existing articles from %s", len(existing), json_path)
             except (OSError, json.JSONDecodeError) as exc:
                 logger.warning("Could not load existing summaries %s: %s — starting fresh", json_path, exc)
 
+        # Detect articles removed by the user since the last pipeline write.
+        # Only run when existing JSON was successfully loaded; otherwise a missing
+        # summaries file would falsely mark all checkpoint URLs as removed.
+        if existing_loaded and checkpoint_urls:
+            existing_urls = {a.get("url", "") for a in existing}
+            newly_removed = checkpoint_urls - existing_urls - removed_urls
+            if newly_removed:
+                logger.info("Detected %d manually removed article(s) — deleting files", len(newly_removed))
+                for url in newly_removed:
+                    self._delete_article_files(url)
+                removed_urls |= newly_removed
+
+        # Filter current-run summaries: skip any URL already marked as removed
+        summaries = [a for a in summaries if a.get("url", "") not in removed_urls]
+
         if existing:
+            # Also filter existing against removed_urls so a re-run can never
+            # resurrect a removed article via the existing list
+            existing = [a for a in existing if a.get("url", "") not in removed_urls]
             seen_urls = {a.get("url", "") for a in existing}
             new_articles = [a for a in summaries if a.get("url", "") not in seen_urls]
             if new_articles:
@@ -668,6 +715,15 @@ class NewsletterPipeline:
             else:
                 logger.info("No new articles to add — evaluation already up to date")
             summaries = existing + new_articles
+
+        # Re-summarise any article that is still missing a summary after the merge
+        # (can happen when existing articles from a previous failed run are merged in)
+        unsummarised = [a for a in summaries if not (a.get("summary") or "").strip()]
+        if unsummarised:
+            logger.info("Re-summarising %d article(s) with missing summaries …", len(unsummarised))
+            refilled = self.stage_summarize(unsummarised)
+            refilled_by_url = {a.get("url", ""): a for a in refilled}
+            summaries = [refilled_by_url.get(a.get("url", ""), a) for a in summaries]
 
         # Pre-compute lowercase trend keywords for fast matching
         kw_lower = [kw.lower() for kw in (trending_keywords or [])]
@@ -757,10 +813,14 @@ class NewsletterPipeline:
         logger.info("Evaluation file written to %s", eval_path)
 
         # ---------- persist summaries JSON for generate.py ----------
-        os.makedirs(os.path.abspath(OUTPUT_DIR), exist_ok=True)
+        os.makedirs(output_abs, exist_ok=True)
         with open(json_path, "w", encoding="utf-8") as fh:
             json.dump(summaries, fh, indent=2, ensure_ascii=False)
         logger.info("Summaries JSON written to %s", json_path)
+
+        # ---------- update checkpoint and removed tracking files ----------
+        self._save_url_set(checkpoint_path, {a.get("url", "") for a in summaries})
+        self._save_url_set(removed_path, removed_urls)
 
         logger.info("Stage 6 complete.")
         return eval_path
@@ -807,7 +867,7 @@ class NewsletterPipeline:
             for t in a.get("technologies", []):
                 if t:
                     tech_counter[t.lower()] += 1
-        pexels_query = " ".join(t for t, _ in tech_counter.most_common(3)) or "technology innovation"
+        pexels_query = " ".join(t for t, _ in tech_counter.most_common(5)) or "technology innovation"
         cover_image_url = self.web_search.fetch_pexels_image(pexels_query, PEXELS_API_KEY)
 
         # Assemble Markdown
@@ -864,6 +924,45 @@ class NewsletterPipeline:
         self._cleanup_excluded_articles(summaries)
 
         return output_path
+
+    def _removed_urls_path(self, week_num: int, year: int) -> str:
+        return os.path.join(os.path.abspath(OUTPUT_DIR), f"removed_{week_num:02d}_{year}.json")
+
+    def _checkpoint_path(self, week_num: int, year: int) -> str:
+        return os.path.join(os.path.abspath(OUTPUT_DIR), f"checkpoint_{week_num:02d}_{year}.json")
+
+    def _load_url_set(self, path: str) -> set:
+        """Load a JSON list of URLs from *path* into a set; return empty set on any error."""
+        if not os.path.exists(path):
+            return set()
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return set(json.load(fh))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Could not load URL set %s: %s", path, exc)
+            return set()
+
+    def _save_url_set(self, path: str, urls: set) -> None:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(sorted(urls), fh, indent=2, ensure_ascii=False)
+        except OSError as exc:
+            logger.warning("Could not save URL set %s: %s", path, exc)
+
+    def _delete_article_files(self, url: str) -> None:
+        """Delete the article file and all sidecars for *url* from the current week dir."""
+        articles_week_dir = getattr(self, "_articles_week_dir", None)
+        if not articles_week_dir:
+            return
+        base = os.path.join(articles_week_dir, _slug(url))
+        for fpath in (base + ".md", base + "_meta.json", base + "_summary.txt"):
+            if os.path.exists(fpath):
+                try:
+                    os.remove(fpath)
+                    logger.debug("Deleted removed article file: %s", fpath)
+                except OSError as exc:
+                    logger.warning("Could not delete %s: %s", fpath, exc)
 
     def _cleanup_excluded_articles(self, included: List[Dict[str, Any]]) -> None:
         """
@@ -933,6 +1032,17 @@ class NewsletterPipeline:
             if a["url"] not in seen_urls:
                 seen_urls.add(a["url"])
                 candidates.append(a)
+
+        # Filter out URLs manually removed this week so they are not re-downloaded
+        now = datetime.now(timezone.utc)
+        current_week = now.isocalendar()[1]
+        current_year = now.year
+        removed_urls = self._load_url_set(self._removed_urls_path(current_week, current_year))
+        if removed_urls:
+            before = len(candidates)
+            candidates = [a for a in candidates if a["url"] not in removed_urls]
+            logger.info("Filtered %d removed article(s) from candidate pool", before - len(candidates))
+
         logger.info("Combined candidate pool: %d articles", len(candidates))
 
         if not candidates:
@@ -998,6 +1108,53 @@ class NewsletterPipeline:
             now = datetime.now(timezone.utc)
             self._week_num = now.isocalendar()[1]
             self._year = now.year
+
+        # Restore _articles_week_dir from the first article that has a valid local_path
+        if not getattr(self, "_articles_week_dir", None):
+            for a in all_summaries:
+                lp = a.get("local_path", "")
+                if lp:
+                    candidate = os.path.dirname(os.path.abspath(lp))
+                    if os.path.isdir(candidate):
+                        self._articles_week_dir = candidate
+                        break
+
+        # Detect articles removed from the JSON since the last pipeline write,
+        # delete their files and update the tracking files
+        week_num = self._week_num
+        year = self._year
+        removed_path = self._removed_urls_path(week_num, year)
+        checkpoint_path = self._checkpoint_path(week_num, year)
+        removed_urls = self._load_url_set(removed_path)
+        checkpoint_urls = self._load_url_set(checkpoint_path)
+        current_urls = {a["url"] for a in all_summaries if a.get("url")}
+
+        if checkpoint_urls:
+            newly_removed = checkpoint_urls - current_urls - removed_urls
+            if newly_removed:
+                logger.info(
+                    "Detected %d article(s) removed from summaries JSON — deleting files",
+                    len(newly_removed),
+                )
+                for url in newly_removed:
+                    self._delete_article_files(url)
+                removed_urls |= newly_removed
+                self._save_url_set(removed_path, removed_urls)
+
+        # Fill in missing or empty summaries
+        missing = [a for a in all_summaries if not (a.get("summary") or "").strip()]
+        if missing:
+            logger.info("Re-summarising %d article(s) with missing summaries …", len(missing))
+            filled = self.stage_summarize(missing)
+            filled_by_url = {a.get("url", ""): a for a in filled}
+            all_summaries = [filled_by_url.get(a.get("url", ""), a) for a in all_summaries]
+
+        # Persist the final state (pruned + re-summarised) so subsequent runs are consistent
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump(all_summaries, fh, indent=2, ensure_ascii=False)
+
+        # Update checkpoint to reflect the current article set
+        self._save_url_set(checkpoint_path, current_urls)
 
         logger.info("Generating newsletter from all %d articles in %s", len(all_summaries), json_path)
         return self.stage_write(all_summaries)
