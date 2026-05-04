@@ -21,7 +21,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_METHODS = ["search_rss", "search_hackernews", "fetch_google_trends", "fetch_reddit_hot", "fetch_pexels_image"]
+ALLOWED_METHODS = ["search_rss", "search_hackernews", "fetch_google_trends", "fetch_reddit_hot", "fetch_pexels_image", "fetch_github_trending", "fetch_lobsters"]
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +456,128 @@ class WebSearch:
         except Exception as exc:
             self.logger.warning("fetch_pexels_image: request failed: %s", exc)
             return None
+
+    def fetch_github_trending(self, max_results: int = 10) -> List[Dict[str, Any]]:
+        """
+        Fetch recently created GitHub repositories gaining the most stars.
+
+        Uses the public GitHub Search API (no authentication required).
+        A rolling 7-day window is used instead of the ISO week boundary so that
+        early-week runs (Monday morning) still return meaningful results.
+        Repositories with at least 10 stars are returned, sorted by star count.
+
+        Returns:
+            List of article dicts with keys:
+            ``title``, ``url``, ``snippet``, ``source``, ``published``, ``topics``.
+        """
+        now = _now_utc()
+        since_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+        query = f"created:>{since_date} stars:>10"
+        api_url = (
+            "https://api.github.com/search/repositories"
+            f"?q={urlquote(query)}"
+            f"&sort=stars&order=desc&per_page={max_results}"
+        )
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; MakiNewsletter/1.0)",
+            "Accept": "application/vnd.github.v3+json",
+        }
+
+        results: List[Dict[str, Any]] = []
+        try:
+            resp = requests.get(api_url, headers=headers, timeout=15)
+            resp.raise_for_status()
+            for item in resp.json().get("items", []):
+                url = item.get("html_url", "")
+                if not url:
+                    continue
+                description = item.get("description", "") or ""
+                topics = item.get("topics", [])
+                stars = item.get("stargazers_count", 0)
+                snippet_parts = [description] if description else []
+                if topics:
+                    snippet_parts.append(f"Topics: {', '.join(topics[:5])}")
+                if stars:
+                    snippet_parts.append(f"({stars} stars this week)")
+                results.append({
+                    "title": item.get("full_name", url),
+                    "url": url,
+                    "snippet": "  ".join(snippet_parts)[:400],
+                    "source": "GitHub Trending",
+                    "published": item.get("created_at", ""),
+                    "topics": topics,
+                })
+        except Exception as exc:
+            self.logger.warning("fetch_github_trending: request failed: %s", exc)
+
+        self.logger.info("fetch_github_trending: %d repos found", len(results))
+        return results
+
+    def fetch_lobsters(self, max_results: int = 10) -> List[Dict[str, Any]]:
+        """
+        Fetch hot stories from Lobste.rs RSS feed, filtered to the current ISO week.
+
+        Lobste.rs is a curated link-aggregator for software developers — all
+        content is already tech-relevant so no keyword filtering is applied.
+
+        Returns:
+            List of article dicts with keys:
+            ``title``, ``url``, ``snippet``, ``source``, ``published``.
+        """
+        try:
+            import feedparser
+        except ImportError:
+            self.logger.error(
+                "feedparser is not installed. Run: pip install 'feedparser>=6.0'"
+            )
+            return []
+
+        now = _now_utc()
+        week_start = _week_start_utc(now)
+
+        try:
+            resp = requests.get(
+                "https://lobste.rs/rss",
+                timeout=15,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; MakiNewsletter/1.0)"},
+            )
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.text)
+        except Exception as exc:
+            self.logger.warning("fetch_lobsters: request failed: %s", exc)
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for entry in feed.entries:
+            if len(results) >= max_results:
+                break
+
+            url = entry.get("link", "")
+            if not url or _is_media_url(url):
+                continue
+
+            dt = _struct_time_to_datetime(
+                entry.get("published_parsed") or entry.get("updated_parsed")
+            )
+            if dt is None:
+                raw_date = entry.get("published", "") or entry.get("updated", "")
+                dt = _parse_published(raw_date)
+
+            if dt is not None and not (week_start <= dt <= now):
+                continue
+
+            published_str = entry.get("published", "") or entry.get("updated", "")
+            summary = entry.get("summary", "")
+            results.append({
+                "title": entry.get("title", ""),
+                "url": url,
+                "snippet": summary[:400].strip() if summary else "",
+                "source": "Lobste.rs",
+                "published": published_str,
+            })
+
+        self.logger.info("fetch_lobsters: %d articles found", len(results))
+        return results
 
     def fetch_reddit_hot(
         self,

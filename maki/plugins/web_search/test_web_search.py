@@ -348,5 +348,188 @@ class TestFetchRedditHot(unittest.TestCase):
         self.assertNotIn("upvotes", results[0]["snippet"].lower())
 
 
+class TestFetchGithubTrending(unittest.TestCase):
+
+    def setUp(self):
+        self.ws = WebSearch()
+
+    def _mock_github_response(self, items):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"items": items}
+        return mock_resp
+
+    def test_returns_list_on_http_error(self):
+        with patch("maki.plugins.web_search.web_search.requests.get", side_effect=Exception("timeout")):
+            results = self.ws.fetch_github_trending()
+        self.assertIsInstance(results, list)
+        self.assertEqual(results, [])
+
+    def test_result_structure(self):
+        item = {
+            "html_url": "https://github.com/example/repo",
+            "full_name": "example/repo",
+            "description": "A great project",
+            "topics": ["python", "ai"],
+            "stargazers_count": 42,
+            "created_at": "2026-05-01T12:00:00Z",
+        }
+        with patch("maki.plugins.web_search.web_search.requests.get",
+                   return_value=self._mock_github_response([item])):
+            results = self.ws.fetch_github_trending()
+
+        self.assertEqual(len(results), 1)
+        for key in ("title", "url", "snippet", "source", "published", "topics"):
+            self.assertIn(key, results[0])
+        self.assertEqual(results[0]["source"], "GitHub Trending")
+        self.assertEqual(results[0]["url"], "https://github.com/example/repo")
+        self.assertEqual(results[0]["topics"], ["python", "ai"])
+
+    def test_skips_items_without_url(self):
+        items = [
+            {"html_url": "", "full_name": "no/url", "description": "", "topics": [], "stargazers_count": 5, "created_at": ""},
+            {"html_url": "https://github.com/real/repo", "full_name": "real/repo", "description": "ok", "topics": [], "stargazers_count": 20, "created_at": ""},
+        ]
+        with patch("maki.plugins.web_search.web_search.requests.get",
+                   return_value=self._mock_github_response(items)):
+            results = self.ws.fetch_github_trending()
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["url"], "https://github.com/real/repo")
+
+    def test_snippet_includes_description_and_topics(self):
+        item = {
+            "html_url": "https://github.com/x/y",
+            "full_name": "x/y",
+            "description": "Awesome tool",
+            "topics": ["rust", "cli"],
+            "stargazers_count": 100,
+            "created_at": "",
+        }
+        with patch("maki.plugins.web_search.web_search.requests.get",
+                   return_value=self._mock_github_response([item])):
+            results = self.ws.fetch_github_trending()
+
+        self.assertIn("Awesome tool", results[0]["snippet"])
+        self.assertIn("rust", results[0]["snippet"])
+
+    def test_query_uses_rolling_7_day_window(self):
+        """The API URL must use a rolling 7-day window, not the ISO week start."""
+        captured = []
+
+        def fake_get(url, **kwargs):
+            captured.append(url)
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json.return_value = {"items": []}
+            return mock_resp
+
+        fixed_now = datetime(2026, 5, 4, 6, 0, 0, tzinfo=timezone.utc)  # Monday 06:00
+        with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
+             patch("maki.plugins.web_search.web_search.requests.get", side_effect=fake_get):
+            self.ws.fetch_github_trending()
+
+        self.assertEqual(len(captured), 1)
+        # Rolling window: 7 days before 2026-05-04 → 2026-04-27
+        self.assertIn("2026-04-27", captured[0])
+        # ISO week start for 2026-05-04 (Monday) would be 2026-05-04 — must NOT be present
+        self.assertNotIn("created%3A%3E2026-05-04", captured[0])
+
+
+class TestFetchLobsters(unittest.TestCase):
+
+    def setUp(self):
+        self.ws = WebSearch()
+        self.today_rfc = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+        self.last_week_rfc = (datetime.now(timezone.utc) - timedelta(days=8)).strftime(
+            "%a, %d %b %Y %H:%M:%S +0000"
+        )
+
+    def _mock_rss_response(self, entries):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        items = ""
+        for e in entries:
+            items += (
+                f"<item>"
+                f"<title>{e.get('title', '')}</title>"
+                f"<link>{e.get('link', '')}</link>"
+                f"<pubDate>{e.get('pubDate', '')}</pubDate>"
+                f"<description>{e.get('description', '')}</description>"
+                f"</item>"
+            )
+        mock_resp.text = (
+            f'<?xml version="1.0"?>'
+            f"<rss version=\"2.0\"><channel><title>Lobsters</title>{items}</channel></rss>"
+        )
+        return mock_resp
+
+    def test_returns_empty_on_http_error(self):
+        with patch("maki.plugins.web_search.web_search.requests.get", side_effect=Exception("timeout")):
+            results = self.ws.fetch_lobsters()
+        self.assertEqual(results, [])
+
+    def test_returns_empty_on_feedparser_import_error(self):
+        import builtins
+        real_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "feedparser":
+                raise ImportError
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            results = self.ws.fetch_lobsters()
+        self.assertEqual(results, [])
+
+    def test_result_structure(self):
+        entries = [{"title": "Cool article", "link": "https://example.com/cool", "pubDate": self.today_rfc, "description": "A summary"}]
+        with patch("maki.plugins.web_search.web_search.requests.get",
+                   return_value=self._mock_rss_response(entries)):
+            results = self.ws.fetch_lobsters()
+
+        if results:
+            for key in ("title", "url", "snippet", "source", "published"):
+                self.assertIn(key, results[0])
+            self.assertEqual(results[0]["source"], "Lobste.rs")
+
+    def test_filters_old_articles(self):
+        entries = [
+            {"title": "Old",     "link": "https://example.com/old",  "pubDate": self.last_week_rfc, "description": ""},
+            {"title": "Current", "link": "https://example.com/new",  "pubDate": self.today_rfc,     "description": ""},
+        ]
+        with patch("maki.plugins.web_search.web_search.requests.get",
+                   return_value=self._mock_rss_response(entries)):
+            results = self.ws.fetch_lobsters()
+
+        urls = [r["url"] for r in results]
+        self.assertNotIn("https://example.com/old", urls)
+        self.assertIn("https://example.com/new", urls)
+
+    def test_skips_media_urls(self):
+        entries = [
+            {"title": "Image",   "link": "https://example.com/photo.jpg", "pubDate": self.today_rfc, "description": ""},
+            {"title": "Article", "link": "https://example.com/post",       "pubDate": self.today_rfc, "description": "text"},
+        ]
+        with patch("maki.plugins.web_search.web_search.requests.get",
+                   return_value=self._mock_rss_response(entries)):
+            results = self.ws.fetch_lobsters()
+
+        urls = [r["url"] for r in results]
+        self.assertNotIn("https://example.com/photo.jpg", urls)
+        self.assertIn("https://example.com/post", urls)
+
+    def test_respects_max_results(self):
+        entries = [
+            {"title": f"Article {i}", "link": f"https://example.com/{i}", "pubDate": self.today_rfc, "description": ""}
+            for i in range(20)
+        ]
+        with patch("maki.plugins.web_search.web_search.requests.get",
+                   return_value=self._mock_rss_response(entries)):
+            results = self.ws.fetch_lobsters(max_results=5)
+
+        self.assertLessEqual(len(results), 5)
+
+
 if __name__ == "__main__":
     unittest.main()

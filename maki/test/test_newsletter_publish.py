@@ -1,7 +1,6 @@
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from maki_newsletter import publish as newsletter_publish
@@ -9,53 +8,29 @@ from maki_newsletter import publish as newsletter_publish
 
 class TestNewsletterPublish(unittest.TestCase):
 
-    def test_trim_resume_to_word_limit_preserves_complete_sentences(self):
-        text = (
-            f"{'alpha ' * 260}."
-            f" {'beta ' * 260}."
-            " gamma tail."
-        )
+    def test_build_page_html_includes_page_title(self):
+        html = newsletter_publish._build_page_html([], 18, 2026)
 
-        trimmed = newsletter_publish._trim_resume_to_word_limit(text, max_words=500)
+        self.assertIn("Bowl of Data - Tech Newsletter &mdash; Week 18, 2026", html)
 
-        self.assertLessEqual(len(trimmed.split()), 500)
-        self.assertTrue(trimmed.endswith("."))
-        self.assertNotIn("gamma tail", trimmed)
+    def test_build_page_html_prefers_long_resume_from_summaries(self):
+        article = {
+            "title": "Edge database update",
+            "url": "https://example.com/edge-db",
+            "source": "Example Source",
+            "summary": "Short summary sentence one. Short summary sentence two.",
+            "long_resume": "Stored long resume from the pipeline. It contains the details publish.py should reuse.",
+            "main_topic": "Databases",
+            "technologies": ["Databases", "Replication"],
+        }
 
-    def test_build_professional_resume_uses_agent_output(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            md_path = Path(tmpdir) / "article.md"
-            md_path.write_text(
-                "# Edge database update\n\n"
-                "The article explains a new replication release for edge clusters.\n\n"
-                "It covers failover behavior, consistency tradeoffs, and deployment constraints.",
-                encoding="utf-8",
-            )
+        with patch.object(newsletter_publish, "_find_article_md", return_value=None):
+            html = newsletter_publish._build_page_html([article], 18, 2026)
 
-            captured = {}
+        self.assertIn("Stored long resume from the pipeline.", html)
+        self.assertNotIn("TL;DR only", html)
 
-            def _execute(task: str) -> str:
-                captured["task"] = task
-                return (
-                    "The vendor released a new replication update for edge database clusters.\n\n"
-                    "The article explains how the release changes failover behavior, consistency tradeoffs, "
-                    "and rollout constraints for distributed deployments."
-                )
-
-            with patch.object(
-                newsletter_publish,
-                "_get_resume_agent",
-                return_value=SimpleNamespace(execute_task=_execute),
-            ):
-                resume = newsletter_publish._build_professional_resume(md_path)
-
-            self.assertIn("no more than 500 words", captured["task"])
-            self.assertIn("2 to 4 short paragraphs", captured["task"])
-            self.assertIn("Edge database update", captured["task"])
-            self.assertIn("replication update", resume.lower())
-            self.assertNotIn("bullet points", resume.lower())
-
-    def test_build_professional_resume_falls_back_to_article_text(self):
+    def test_build_page_html_falls_back_to_md_when_long_resume_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             md_path = Path(tmpdir) / "article.md"
             md_path.write_text(
@@ -65,15 +40,21 @@ class TestNewsletterPublish(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(
-                newsletter_publish,
-                "_get_resume_agent",
-                return_value=SimpleNamespace(execute_task=lambda task: ""),
-            ):
-                resume = newsletter_publish._build_professional_resume(md_path)
+            article = {
+                "title": "Kernel release",
+                "url": "https://example.com/kernel",
+                "source": "Example Source",
+                "summary": "Short summary sentence one. Short summary sentence two.",
+                "long_resume": "",
+                "main_topic": "Operating Systems",
+                "technologies": ["Linux"],
+            }
 
-            self.assertIn("scheduler changes", resume.lower())
-            self.assertIn("performance benchmarks", resume.lower())
+            with patch.object(newsletter_publish, "_find_article_md", return_value=md_path):
+                html = newsletter_publish._build_page_html([article], 18, 2026)
+
+            self.assertIn("scheduler changes", html)
+            self.assertIn("performance benchmarks", html)
 
 
 if __name__ == "__main__":

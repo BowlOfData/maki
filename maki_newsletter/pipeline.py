@@ -39,7 +39,9 @@ from .config import (
     LLM_MODEL,
     MAX_ARTICLE_CHARS,
     MAX_CANDIDATES,
+    MAX_GITHUB_REPOS,
     MAX_HN_PER_QUERY,
+    MAX_LOBSTERS_ARTICLES,
     MAX_PER_FEED,
     MAX_REDDIT_PER_SUB,
     OLLAMA_HOST,
@@ -49,6 +51,7 @@ from .config import (
     RSS_FEEDS,
     SEARCH_QUERIES,
     SUMMARY_MAX_WORDS,
+    SUMMARY_MIN_WORDS,
     TOP_N,
     TREND_SEED_KEYWORDS,
     TREND_TIMEFRAME,
@@ -157,6 +160,37 @@ def _is_low_signal_summary(text: str) -> bool:
     return False
 
 
+def _summary_word_count(text: str) -> int:
+    return len(_clean_summary_text(text).split())
+
+
+def _is_summary_uniform(text: str) -> bool:
+    """Return True when *text* is exactly 2 complete sentences within the allowed word range."""
+    cleaned = _clean_summary_text(text)
+    if not cleaned or _is_low_signal_summary(cleaned):
+        return False
+    sentences = _extract_complete_sentences(cleaned)
+    if len(sentences) != 2:
+        return False
+    if " ".join(sentence.strip() for sentence in sentences) != cleaned:
+        return False
+    return SUMMARY_MIN_WORDS <= _summary_word_count(cleaned) <= SUMMARY_MAX_WORDS
+
+
+_LONG_RESUME_MIN_WORDS = 120
+_LONG_RESUME_MAX_WORDS = 180
+_LONG_RESUME_PARAGRAPHS = 3
+
+
+def _is_long_resume_valid(text: str) -> bool:
+    """Return True when *text* has exactly 3 non-empty paragraphs within the allowed word range."""
+    paragraphs = [p for p in (text or "").split("\n\n") if p.strip()]
+    if len(paragraphs) != _LONG_RESUME_PARAGRAPHS:
+        return False
+    word_count = len(text.split())
+    return _LONG_RESUME_MIN_WORDS <= word_count <= _LONG_RESUME_MAX_WORDS
+
+
 def _fallback_summary(article: Dict[str, Any]) -> str:
     """Return the best non-empty non-metadata fallback text for *article*."""
     snippet = _clean_summary_text(article.get("snippet", ""))
@@ -218,6 +252,11 @@ def _normalize_two_sentence_summary(text: str, article: Dict[str, Any]) -> str:
         sentences.append(_article_derived_second_sentence(article, sentences[0]))
 
     return " ".join(sentences[:2])
+
+
+def _summary_fallback_from_article(article: Dict[str, Any]) -> str:
+    """Build a last-resort two-sentence summary from article metadata."""
+    return _normalize_two_sentence_summary(_fallback_summary(article), article)
 
 
 def _summaries_filename_parts(path: str) -> Optional[tuple[int, int]]:
@@ -300,6 +339,19 @@ class NewsletterPipeline:
                 "across multiple articles."
             ),
         )
+        self.manager.add_agent(
+            name="long_resume_agent",
+            role="technical writer",
+            instructions=(
+                f"You write structured technical article resumes in exactly {_LONG_RESUME_PARAGRAPHS} paragraphs "
+                f"totaling {_LONG_RESUME_MIN_WORDS}–{_LONG_RESUME_MAX_WORDS} words. "
+                "Paragraph 1: what the article introduces and its broader context. "
+                "Paragraph 2: key technical details, mechanisms, and design decisions. "
+                "Paragraph 3: operational implications, rollout considerations, and practical impact. "
+                "Use plain prose only — no headings, bullets, or markdown. "
+                "Separate paragraphs with a blank line."
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Stage 1 — Search (dedicated function)
@@ -373,18 +425,21 @@ class NewsletterPipeline:
           - trending_keywords (List[str]): flat list of rising query strings from
             Google Trends + Reddit post titles, used to boost article ranking
         """
-        logger.info("Stage 1b: fetching trend signals from Google Trends and Reddit …")
+        logger.info(
+            "Stage 1b: fetching trend signals from Google Trends, Reddit, GitHub, and Lobste.rs …"
+        )
 
-        # Run both fetches; failures are logged internally and return empty results
+        # All fetches are fire-and-forget; failures are logged internally
         google_trends = self.web_search.fetch_google_trends(
             TREND_SEED_KEYWORDS, timeframe=TREND_TIMEFRAME
         )
         reddit_articles = self.web_search.fetch_reddit_hot(
             REDDIT_SUBREDDITS, max_per_sub=MAX_REDDIT_PER_SUB
         )
+        github_repos = self.web_search.fetch_github_trending(max_results=MAX_GITHUB_REPOS)
+        lobsters_articles = self.web_search.fetch_lobsters(max_results=MAX_LOBSTERS_ARTICLES)
 
-        # Flatten Google Trends rising queries into a single keyword list
-        # and log each seed's results so they are visible in the run output.
+        # Flatten Google Trends rising queries
         trending_keywords: list = []
         for seed, queries in google_trends.items():
             if queries:
@@ -395,18 +450,39 @@ class NewsletterPipeline:
                 if q and q not in trending_keywords:
                     trending_keywords.append(q)
 
-        # Also extract keywords from Reddit post titles (first 6 words each)
+        # Extract keywords from Reddit post titles (first 6 words each)
         for post in reddit_articles:
             title_words = post.get("title", "").split()[:6]
             phrase = " ".join(title_words)
             if phrase and phrase not in trending_keywords:
                 trending_keywords.append(phrase)
 
+        # Extract keywords from GitHub repos: topics first, then title phrase
+        for repo in github_repos:
+            for topic in repo.get("topics", []):
+                if topic and topic not in trending_keywords:
+                    trending_keywords.append(topic)
+            title_words = repo.get("title", "").split()[:6]
+            phrase = " ".join(title_words)
+            if phrase and phrase not in trending_keywords:
+                trending_keywords.append(phrase)
+
+        # Extract keywords from Lobste.rs article titles
+        for post in lobsters_articles:
+            title_words = post.get("title", "").split()[:6]
+            phrase = " ".join(title_words)
+            if phrase and phrase not in trending_keywords:
+                trending_keywords.append(phrase)
+
+        trend_articles = reddit_articles + github_repos + lobsters_articles
+
         logger.info(
-            "Stage 1b complete: %d trending keywords, %d Reddit articles",
-            len(trending_keywords), len(reddit_articles),
+            "Stage 1b complete: %d trending keywords, %d trend articles "
+            "(%d reddit, %d github, %d lobsters)",
+            len(trending_keywords), len(trend_articles),
+            len(reddit_articles), len(github_repos), len(lobsters_articles),
         )
-        return reddit_articles, trending_keywords
+        return trend_articles, trending_keywords
 
     # ------------------------------------------------------------------
     # Stage 2 — Download (dedicated function)
@@ -457,13 +533,13 @@ class NewsletterPipeline:
                     else:
                         logger.debug("Already exists, skipping download: %s", filename)
                         downloaded_canonical_urls.add(url.rstrip("/"))
-                        downloaded.append(
-                            {
-                                **article,
-                                "local_path": output_path,
-                                "filename": filename,
-                            }
-                        )
+                        cached_entry = {
+                            **article,
+                            "local_path": output_path,
+                            "filename": filename,
+                        }
+                        downloaded.append(cached_entry)
+                        self._append_to_manifest(cached_entry)
                         continue
                 except OSError as exc:
                     logger.warning(
@@ -499,14 +575,14 @@ class NewsletterPipeline:
                 if canonical_url != url:
                     logger.info("Resolved canonical URL: %s → %s", url, canonical_url)
 
-                downloaded.append(
-                    {
-                        **article,
-                        "url":        canonical_url,
-                        "local_path": output_path,
-                        "filename":   filename,
-                    }
-                )
+                new_entry = {
+                    **article,
+                    "url":        canonical_url,
+                    "local_path": output_path,
+                    "filename":   filename,
+                }
+                downloaded.append(new_entry)
+                self._append_to_manifest(new_entry)
                 logger.debug("Downloaded: %s → %s", canonical_url, filename)
             else:
                 logger.warning("Failed to download %s: %s", url, result.get("error"))
@@ -720,81 +796,198 @@ class NewsletterPipeline:
         self, top10: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Use summarizer_agent to produce a ≤200-word summary for each top article.
-        Returns the list with a 'summary' key added.
+        Use summarizer_agent to produce a 2-sentence summary ({SUMMARY_MIN_WORDS}–{SUMMARY_MAX_WORDS}
+        words) and long_resume_agent for a 3-paragraph long-form resume per article.
+        Returns the list with 'summary' and 'long_resume' keys added.
         """
         logger.info("Stage 5: summarising %d articles …", len(top10))
-        agent = self.manager.get_agent("summarizer_agent")
+        summary_agent = self.manager.get_agent("summarizer_agent")
+        long_resume_agent = self.manager.get_agent("long_resume_agent")
         summaries: List[Dict[str, Any]] = []
 
         for article in top10:
             local_path = article.get("local_path", "")
             summary_path = local_path.replace(".md", "_summary.txt") if local_path else ""
+            long_resume_path = local_path.replace(".md", "_long_resume.txt") if local_path else ""
 
-            # Load cached summary only if non-empty; delete stale empty cache files
+            # Read article content once — reused for both short summary and long resume
+            raw = ""
+            try:
+                if local_path:
+                    raw = open(local_path, encoding="utf-8").read()
+            except OSError as exc:
+                logger.warning("Cannot read %s: %s", local_path, exc)
+            content = _truncate(raw) or article.get("snippet", "")
+
+            # ----------------------------------------------------------------
+            # Short summary (2 sentences, SUMMARY_MIN_WORDS..SUMMARY_MAX_WORDS)
+            # ----------------------------------------------------------------
+            summary = ""
+
+            # 1. File-cached summary: must be non-low-signal AND uniform to be used
             if summary_path and os.path.exists(summary_path):
                 try:
                     with open(summary_path, encoding="utf-8") as fh:
                         cached = _clean_summary_text(fh.read())
-                    if cached and not _is_low_signal_summary(cached):
-                        logger.debug("Loaded cached summary: %s", summary_path)
-                        summaries.append({**article, "summary": _normalize_two_sentence_summary(cached, article)})
-                        continue
+                    if cached and _is_summary_uniform(cached):
+                        summary = cached
                     else:
                         logger.warning("Invalid cached summary %s — re-summarising", summary_path)
                         os.remove(summary_path)
                 except OSError as exc:
-                    logger.warning("Could not load cached summary %s: %s — re-summarising", summary_path, exc)
+                    logger.warning(
+                        "Could not load cached summary %s: %s — re-summarising", summary_path, exc
+                    )
 
-            # Read article content; fall back to snippet
-            raw = ""
-            try:
-                raw = open(local_path, encoding="utf-8").read()
-            except OSError as exc:
-                logger.warning("Cannot read %s: %s", local_path, exc)
+            # 2. Article-dict cached summary (e.g. from previous pipeline run): same rules
+            if not summary:
+                article_cached = _clean_summary_text(article.get("summary") or "")
+                if article_cached and _is_summary_uniform(article_cached):
+                    summary = article_cached
 
-            content = _truncate(raw) or article.get("snippet", "")
+            # 3. Generate from LLM when no valid cached summary is available
+            if not summary:
+                if not content.strip():
+                    logger.warning("No content available for %s — using fallback", article.get("url"))
+                    summary = _summary_fallback_from_article(article)
+                else:
+                    short_task = (
+                        f"Write a concise technical summary of EXACTLY 2 sentences and between "
+                        f"{SUMMARY_MIN_WORDS} and {SUMMARY_MAX_WORDS} words total "
+                        "for the following article. "
+                        "Sentence 1: state the main new development, release, finding, or claim. "
+                        "Sentence 2: explain why it matters in practice to engineers, operators, "
+                        "or technical teams. "
+                        "Return only the 2-sentence summary — no headings, bullets, or preamble.\n\n"
+                        f"Title: {article.get('title', '')}\n\n"
+                        f"Content:\n{content}"
+                    )
+                    llm_result = ""
+                    try:
+                        llm_result = _clean_summary_text(summary_agent.execute_task(short_task))
+                    except Exception as exc:
+                        logger.warning("summarizer_agent failed for %s: %s", article.get("url"), exc)
 
-            # Skip LLM if there is nothing to summarise
-            if not content.strip():
-                logger.warning("No content available for %s — skipping", article.get("url"))
-                summaries.append({**article, "summary": _normalize_two_sentence_summary(_fallback_summary(article), article)})
-                continue
+                    llm_result = re.sub(r"\s*---+\s*", "; ", llm_result)
+                    llm_result = re.sub(r"\s*--\s*", ", ", llm_result)
+                    llm_result = _clean_summary_text(llm_result)
 
-            task = (
-                f"Write a technical summary of no more than {SUMMARY_MAX_WORDS} words "
-                "for the following article. Focus on what is new, what technology is involved, "
-                "and why it matters to software engineers and tech enthusiasts and professionals.\n\n"
-                f"Title: {article.get('title', '')}\n\n"
-                f"Content:\n{content}"
-            )
+                    if _is_low_signal_summary(llm_result):
+                        logger.warning(
+                            "Low-signal summary from LLM for %s — using fallback", article.get("url")
+                        )
+                        summary = _summary_fallback_from_article(article)
+                    else:
+                        summary = llm_result
+                        if not _is_summary_uniform(summary):
+                            retry_task = (
+                                "Your previous short summary did not match the newsletter format. "
+                                f"Rewrite it in EXACTLY 2 sentences and keep it between "
+                                f"{SUMMARY_MIN_WORDS} and {SUMMARY_MAX_WORDS} words total.\n\n"
+                                "Requirements:\n- Keep the two sentences similar in length.\n"
+                                "- Sentence 1: state the main new development, release, finding, "
+                                "or claim.\n"
+                                "- Sentence 2: explain why it matters in practice to engineers, "
+                                "operators, or technical teams.\n"
+                                "- Use only facts and themes present in the article.\n"
+                                "- No headings, bullets, preamble, or filler.\n\n"
+                                f"Title: {article.get('title', '')}\n\nArticle:\n{content}"
+                            )
+                            try:
+                                retry_result = _clean_summary_text(
+                                    summary_agent.execute_task(retry_task)
+                                )
+                                retry_result = re.sub(r"\s*---+\s*", "; ", retry_result)
+                                retry_result = re.sub(r"\s*--\s*", ", ", retry_result)
+                                retry_result = _clean_summary_text(retry_result)
+                                if not _is_low_signal_summary(retry_result):
+                                    summary = retry_result
+                            except Exception as exc:
+                                logger.warning(
+                                    "summarizer_agent retry failed for %s: %s",
+                                    article.get("url"), exc,
+                                )
 
-            summary = ""
-            try:
-                summary = _clean_summary_text(agent.execute_task(task))
-            except Exception as exc:
-                logger.warning("summarizer_agent failed for %s: %s", article.get("url"), exc)
+                        if not _is_summary_uniform(summary):
+                            logger.warning(
+                                "Short summary still invalid for %s after retry — using fallback",
+                                article.get("url"),
+                            )
+                            summary = _summary_fallback_from_article(article)
 
-            summary = re.sub(r"\s*---+\s*", "; ", summary)
-            summary = re.sub(r"\s*--\s*", ", ", summary)
-            summary = _clean_summary_text(summary)
+                # Save summary to file (only if generated, not loaded from cache)
+                if summary and summary_path:
+                    try:
+                        with open(summary_path, "w", encoding="utf-8") as fh:
+                            fh.write(summary)
+                    except OSError as exc:
+                        logger.warning("Could not save summary %s: %s", summary_path, exc)
 
-            # If LLM returned nothing useful, fall back to snippet then title
-            if _is_low_signal_summary(summary):
-                logger.warning("Low-signal summary from LLM for %s — using fallback", article.get("url"))
-                summary = _fallback_summary(article)
+            # ----------------------------------------------------------------
+            # Long resume (3 paragraphs, _LONG_RESUME_MIN_WORDS.._LONG_RESUME_MAX_WORDS words)
+            # ----------------------------------------------------------------
+            long_resume = ""
 
-            summary = _normalize_two_sentence_summary(summary, article)
-
-            # Only cache non-empty summaries
-            if summary and summary_path:
+            # Load cached long resume if available
+            if long_resume_path and os.path.exists(long_resume_path):
                 try:
-                    with open(summary_path, "w", encoding="utf-8") as fh:
-                        fh.write(summary)
+                    with open(long_resume_path, encoding="utf-8") as fh:
+                        long_resume = fh.read().strip()
                 except OSError as exc:
-                    logger.warning("Could not save summary %s: %s", summary_path, exc)
+                    logger.warning(
+                        "Could not load cached long resume %s: %s", long_resume_path, exc
+                    )
+                    long_resume = ""
 
-            summaries.append({**article, "summary": summary})
+            if not long_resume:
+                if content.strip():
+                    resume_task = (
+                        f"Write a structured long-form resume for this article in exactly "
+                        f"{_LONG_RESUME_PARAGRAPHS} paragraphs totaling between "
+                        f"{_LONG_RESUME_MIN_WORDS} and {_LONG_RESUME_MAX_WORDS} words. "
+                        "Paragraph 1 (40-60 words): Describe what the article introduces or "
+                        "announces and the broader context. "
+                        "Paragraph 2 (40-60 words): Explain the key technical details, mechanisms, "
+                        "and design decisions. "
+                        "Paragraph 3 (40-60 words): Explain operational implications, rollout "
+                        "considerations, and practical impact for engineering teams. "
+                        "Use plain prose only — no headings, bullets, or markdown. "
+                        "Separate paragraphs with a blank line.\n\n"
+                        f"Title: {article.get('title', '')}\n\n"
+                        f"Content:\n{content}"
+                    )
+                    try:
+                        resume_result = long_resume_agent.execute_task(resume_task).strip()
+                        if _is_long_resume_valid(resume_result):
+                            long_resume = resume_result
+                        else:
+                            try:
+                                resume_result = long_resume_agent.execute_task(resume_task).strip()
+                                if _is_long_resume_valid(resume_result):
+                                    long_resume = resume_result
+                            except Exception as exc:
+                                logger.warning(
+                                    "long_resume_agent retry failed for %s: %s",
+                                    article.get("url"), exc,
+                                )
+                    except Exception as exc:
+                        logger.warning(
+                            "long_resume_agent failed for %s: %s", article.get("url"), exc
+                        )
+
+                # Fallback to article content if LLM could not produce a valid resume
+                if not long_resume:
+                    long_resume = content
+
+                # Save long resume to file
+                if long_resume and long_resume_path:
+                    try:
+                        with open(long_resume_path, "w", encoding="utf-8") as fh:
+                            fh.write(long_resume)
+                    except OSError as exc:
+                        logger.warning("Could not save long resume %s: %s", long_resume_path, exc)
+
+            summaries.append({**article, "summary": summary, "long_resume": long_resume})
 
         logger.info("Stage 5 complete: %d summaries written", len(summaries))
         return summaries
@@ -885,10 +1078,16 @@ class NewsletterPipeline:
 
         # Re-summarise any article that is still missing a summary after the merge
         # (can happen when existing articles from a previous failed run are merged in)
-        unsummarised = [a for a in summaries if not (a.get("summary") or "").strip()]
-        if unsummarised:
-            logger.info("Re-summarising %d article(s) with missing summaries …", len(unsummarised))
-            refilled = self.stage_summarize(unsummarised)
+        missing_render_fields = [
+            a for a in summaries
+            if not (a.get("summary") or "").strip() or not (a.get("long_resume") or "").strip()
+        ]
+        if missing_render_fields:
+            logger.info(
+                "Re-summarising %d article(s) with missing summary or long resume …",
+                len(missing_render_fields),
+            )
+            refilled = self.stage_summarize(missing_render_fields)
             refilled_by_url = {a.get("url", ""): a for a in refilled}
             summaries = [refilled_by_url.get(a.get("url", ""), a) for a in summaries]
 
@@ -1061,13 +1260,14 @@ class NewsletterPipeline:
         for rank, article in enumerate(summaries, start=1):
             title = article.get("title", f"Article {rank}")
             url = article.get("url", "")
+            display_url = article.get("altervista_url", "") or url
             source = article.get("source", urlparse(url).netloc if url else "")
             summary = article.get("summary", "")
 
             lines += [
                 f"## {rank}. {title}",
                 f"**Source:** {source}  ",
-                f"**URL:** {url}",
+                f"**URL:** {display_url}",
                 "",
                 summary,
                 "",
@@ -1092,6 +1292,38 @@ class NewsletterPipeline:
         self._cleanup_excluded_articles(summaries)
 
         return output_path
+
+    def _manifest_path(self) -> str:
+        """Return the path to the incremental download manifest for the current week."""
+        articles_week_dir = getattr(self, "_articles_week_dir", None)
+        week_num = getattr(self, "_week_num", None)
+        year = getattr(self, "_year", None)
+        if not articles_week_dir or week_num is None or year is None:
+            raise RuntimeError("_manifest_path called before stage_download has initialised week state")
+        return os.path.join(articles_week_dir, f"manifest_{week_num:02d}_{year}.json")
+
+    def _append_to_manifest(self, article: Dict[str, Any]) -> None:
+        """Incrementally append *article* to the manifest, deduplicating by URL."""
+        try:
+            path = self._manifest_path()
+        except RuntimeError:
+            return
+        existing: List[Dict[str, Any]] = []
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    existing = json.load(fh)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Could not load manifest %s: %s — starting fresh", path, exc)
+        url = article.get("url", "")
+        if url and any(a.get("url") == url for a in existing):
+            return
+        existing.append(article)
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(existing, fh, indent=2, ensure_ascii=False)
+        except OSError as exc:
+            logger.warning("Could not write manifest %s: %s", path, exc)
 
     def _removed_urls_path(self, week_num: int, year: int) -> str:
         return os.path.join(os.path.abspath(OUTPUT_DIR), f"removed_{week_num:02d}_{year}.json")
@@ -1124,7 +1356,7 @@ class NewsletterPipeline:
         if not articles_week_dir:
             return
         base = os.path.join(articles_week_dir, _slug(url))
-        for fpath in (base + ".md", base + "_meta.json", base + "_summary.txt"):
+        for fpath in (base + ".md", base + "_meta.json", base + "_summary.txt", base + "_long_resume.txt"):
             if os.path.exists(fpath):
                 try:
                     os.remove(fpath)
@@ -1152,6 +1384,7 @@ class NewsletterPipeline:
                 keep.add(os.path.abspath(lp))
                 keep.add(os.path.abspath(lp.replace(".md", "_meta.json")))
                 keep.add(os.path.abspath(lp.replace(".md", "_summary.txt")))
+                keep.add(os.path.abspath(lp.replace(".md", "_long_resume.txt")))
 
         # Always keep the evaluation file
         if week_num is not None:
@@ -1173,6 +1406,76 @@ class NewsletterPipeline:
     # ------------------------------------------------------------------
     # Orchestrator
     # ------------------------------------------------------------------
+
+    def run_from_stage3(self, refetch_trends: bool = False) -> str:
+        """
+        Resume the pipeline from stage 3 using the incremental manifest written
+        by stage_download during a previous run.
+
+        Stages 1 (search) and 2 (download) are skipped — all articles must
+        already be downloaded.  Stage 3 (read) → 4 (rank) → 5 (summarize) →
+        6 (evaluate) run against the current week's manifest.
+
+        Args:
+            refetch_trends: When True, re-fetch trend signals so the ranker
+                            can use fresh keywords.  Adds network calls but
+                            produces a more up-to-date ranking.
+
+        Returns the absolute path of the evaluation Markdown file.
+        """
+        logger.info("=" * 60)
+        logger.info("Newsletter pipeline — resuming from stage 3")
+        logger.info("=" * 60)
+
+        now = datetime.now(timezone.utc)
+        week_num, year = _iso_week_parts(now)
+        month_name = now.strftime("%B").lower()
+        articles_abs = os.path.abspath(
+            os.path.join(ARTICLES_DIR, month_name, str(week_num))
+        )
+
+        # Restore state so later stages write files to the correct locations
+        self._articles_week_dir = articles_abs
+        self._week_num = week_num
+        self._year = year
+
+        manifest_path = self._manifest_path()
+        if not os.path.exists(manifest_path):
+            raise RuntimeError(
+                f"No manifest found at {manifest_path}. "
+                "Run the full pipeline first: python -m maki_newsletter.main"
+            )
+
+        try:
+            with open(manifest_path, encoding="utf-8") as fh:
+                downloaded = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Could not load manifest {manifest_path}: {exc}") from exc
+
+        if not downloaded:
+            raise RuntimeError(f"Manifest {manifest_path} is empty — nothing to process.")
+
+        logger.info("Loaded %d articles from manifest %s", len(downloaded), manifest_path)
+
+        # Optionally re-fetch trend signals for a fresher ranking signal
+        trending_keywords: List[str] = []
+        if refetch_trends:
+            _, trending_keywords = self.stage_trends()
+
+        enriched = self.stage_read(downloaded)
+        if not enriched:
+            raise RuntimeError("Stage 3 returned no enriched articles.")
+
+        top10 = self.stage_rank(enriched, trending_keywords=trending_keywords)
+        summaries = self.stage_summarize(top10)
+        eval_path = self.stage_evaluate(summaries, trending_keywords=trending_keywords)
+
+        logger.info("=" * 60)
+        logger.info("Resume complete → %s", eval_path)
+        logger.info("Review the evaluation file, then run:")
+        logger.info("  python -m maki_newsletter.generate")
+        logger.info("=" * 60)
+        return eval_path
 
     def run(self) -> str:
         """
@@ -1321,10 +1624,16 @@ class NewsletterPipeline:
                 removed_urls |= newly_removed
                 self._save_url_set(removed_path, removed_urls)
 
-        # Fill in missing or empty summaries
-        missing = [a for a in all_summaries if not (a.get("summary") or "").strip()]
+        # Fill in missing or empty short summaries and long resumes
+        missing = [
+            a for a in all_summaries
+            if not (a.get("summary") or "").strip() or not (a.get("long_resume") or "").strip()
+        ]
         if missing:
-            logger.info("Re-summarising %d article(s) with missing summaries …", len(missing))
+            logger.info(
+                "Re-summarising %d article(s) with missing summary or long resume …",
+                len(missing),
+            )
             filled = self.stage_summarize(missing)
             filled_by_url = {a.get("url", ""): a for a in filled}
             all_summaries = [filled_by_url.get(a.get("url", ""), a) for a in all_summaries]

@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_METHODS = ["classify_image", "classify_image_async"]
+_ALLOWED_METHODS = ["classify_image", "classify_image_async", "classify_image_async_coro"]
 
 
 class ImageClassifier:
@@ -51,7 +51,7 @@ class ImageClassifier:
             Dict with keys: success (bool), label (str), image_path (str), error (str|None)
         """
         if self._maki is None:
-            return {"success": False, "image_path": image_path, "error": "No maki instance configured"}
+            return {"success": False, "label": fallback_label, "image_path": image_path, "error": "No maki instance configured"}
 
         try:
             image_b64 = self._encode(image_path)
@@ -74,7 +74,7 @@ class ImageClassifier:
         fallback_label: str = "unknown",
     ) -> Dict[str, Any]:
         """Sync wrapper around the async coroutine — for use from non-async code."""
-        return asyncio.get_event_loop().run_until_complete(
+        return asyncio.run(
             self._classify_async(image_path, prompt, system, valid_labels, fallback_label)
         )
 
@@ -98,7 +98,7 @@ class ImageClassifier:
         fallback_label: str,
     ) -> Dict[str, Any]:
         if self._maki is None:
-            return {"success": False, "image_path": image_path, "error": "No maki instance configured"}
+            return {"success": False, "label": fallback_label, "image_path": image_path, "error": "No maki instance configured"}
         try:
             image_b64 = await asyncio.to_thread(self._encode, image_path)
             response = await self._maki.async_chat(prompt, images=[image_b64], system=system)

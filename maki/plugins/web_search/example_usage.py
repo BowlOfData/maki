@@ -4,38 +4,66 @@ Example usage of the WebSearch plugin with the Maki framework.
 
 from maki.plugins.web_search.web_search import WebSearch
 
-# Initialise the plugin (no Maki LLM instance required for search)
 ws = WebSearch()
 
 if __name__ == "__main__":
     print("WebSearch plugin — example usage")
     print("=" * 40)
 
-    # Example 1: DuckDuckGo news search
-    print("\nExample 1: DuckDuckGo news — 'AI research'")
-    articles = ws.search_news("AI research", max_results=5, time_filter="w")
+    # Example 1: RSS feeds filtered by keyword
+    print("\nExample 1: RSS feeds — AI articles from this week")
+    RSS_FEEDS = {
+        "Ars Technica": "https://feeds.arstechnica.com/arstechnica/index",
+        "Wired":        "https://www.wired.com/feed/rss",
+    }
+    articles = ws.search_rss(RSS_FEEDS, max_per_feed=3, keywords=["artificial intelligence", "AI"])
     for a in articles:
         print(f"  [{a['source']}] {a['title']}")
         print(f"    {a['url']}")
 
-    # Example 2: Site-scoped search
-    print("\nExample 2: Site-scoped — TechCrunch AI news")
-    articles = ws.search_news("AI site:techcrunch.com", max_results=3, time_filter="w")
-    for a in articles:
-        print(f"  {a['title']}")
-        print(f"    {a['url']}")
-
-    # Example 3: Multi-query deduplicated search
-    print("\nExample 3: Multi-query search")
-    articles = ws.search_articles(
-        queries=["cybersecurity vulnerabilities", "open source releases"],
-        max_per_query=3,
-    )
-    print(f"  {len(articles)} unique articles found")
-
-    # Example 4: HackerNews search
-    print("\nExample 4: HackerNews — 'machine learning'")
+    # Example 2: HackerNews search
+    print("\nExample 2: HackerNews — 'machine learning'")
     articles = ws.search_hackernews("machine learning", max_results=5)
     for a in articles:
         print(f"  {a['title']}")
         print(f"    {a['url']}")
+
+    # Example 3: GitHub Trending repositories (last 7 days)
+    print("\nExample 3: GitHub Trending")
+    repos = ws.fetch_github_trending(max_results=5)
+    for r in repos:
+        print(f"  {r['title']}  ({r['snippet'][:60]}…)")
+        print(f"    {r['url']}")
+
+    # Example 4: Lobste.rs hot stories
+    print("\nExample 4: Lobste.rs hot stories")
+    stories = ws.fetch_lobsters(max_results=5)
+    for s in stories:
+        print(f"  {s['title']}")
+        print(f"    {s['url']}")
+
+    # Example 5: Reddit hot posts
+    print("\nExample 5: Reddit — r/MachineLearning and r/netsec")
+    posts = ws.fetch_reddit_hot(["MachineLearning", "netsec"], max_per_sub=3)
+    for p in posts:
+        print(f"  [{p['source']}] {p['title']}")
+        print(f"    {p['url']}")
+
+    # Example 6: Google Trends rising queries
+    print("\nExample 6: Google Trends — rising queries")
+    trends = ws.fetch_google_trends(
+        seed_keywords=["artificial intelligence", "cybersecurity"],
+        timeframe="now 7-d",
+    )
+    for seed, queries in trends.items():
+        print(f"  {seed}: {', '.join(queries[:5]) or '(no results)'}")
+
+    # Example 7: Pexels cover image (requires PEXELS_API_KEY env var)
+    import os
+    api_key = os.environ.get("PEXELS_API_KEY", "")
+    if api_key:
+        print("\nExample 7: Pexels cover image")
+        url = ws.fetch_pexels_image("artificial intelligence technology", api_key)
+        print(f"  Image URL: {url}")
+    else:
+        print("\nExample 7: Pexels — set PEXELS_API_KEY to test")

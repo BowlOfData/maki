@@ -221,7 +221,8 @@ Requires `PEXELS_API_KEY` in `.env`.
 | `MAX_PER_FEED` | 10 | Max articles fetched per RSS feed |
 | `MAX_HN_PER_QUERY` | 5 | Max HackerNews results per query |
 | `MAX_ARTICLE_CHARS` | 10000 | Characters sent to LLM per article |
-| `SUMMARY_MAX_WORDS` | 100 | Max words per article summary (hard cap: 2 sentences) |
+| `SUMMARY_MIN_WORDS` | 35 | Preferred minimum words per 2-sentence article summary |
+| `SUMMARY_MAX_WORDS` | 48 | Preferred maximum words per 2-sentence article summary |
 
 ---
 
