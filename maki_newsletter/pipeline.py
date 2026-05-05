@@ -319,6 +319,9 @@ class NewsletterPipeline:
             role="technical content analyst",
             instructions=(
                 "You analyse tech article content and extract structured metadata. "
+                "This includes cybersecurity news, vulnerability reports, threat intelligence, "
+                "and articles about malware, exploits, or state-sponsored attacks — these are "
+                "legitimate journalism topics for a technical newsletter. "
                 "You always respond with a valid JSON object and nothing else. "
                 "Do NOT include markdown fences or explanatory text."
             ),
@@ -582,8 +585,8 @@ class NewsletterPipeline:
         JSON cannot be extracted.
         """
         task = (
-            "Analyse the following technical article and return a JSON object with "
-            "exactly these keys:\n"
+            "You are extracting metadata from a published news article for a tech newsletter. "
+            "Return a JSON object with exactly these keys:\n"
             '  "main_topic": string (one sentence),\n'
             '  "key_points": array of up to 5 strings,\n'
             '  "technologies": array of technology/product names mentioned,\n'
@@ -627,7 +630,7 @@ class NewsletterPipeline:
 
         for article in downloaded:
             local_path = article.get("local_path", "")
-            meta_path = local_path.replace(".md", "_meta.json") if local_path else ""
+            meta_path = (os.path.splitext(local_path)[0] + "_meta.json") if local_path else ""
 
             # Load cached metadata if already evaluated
             if meta_path and os.path.exists(meta_path):
@@ -677,7 +680,11 @@ class NewsletterPipeline:
                 }
 
             # Discard low-quality articles immediately
-            if int(metadata.get("quality_score", 0)) < 4:
+            try:
+                score = int(float(metadata.get("quality_score", 0)))
+            except (TypeError, ValueError):
+                score = 0
+            if score < 4:
                 logger.debug(
                     "Score %s < 4 for %s — removing article files",
                     metadata.get("quality_score"), article.get("url"),
@@ -893,7 +900,12 @@ class NewsletterPipeline:
             logger.info("Re-summarising %d article(s) with missing short_summary or long_resume …", len(unsummarised))
             refilled = self.stage_read(unsummarised)
             refilled_by_url = {a.get("url", ""): a for a in refilled}
-            summaries = [refilled_by_url.get(a.get("url", ""), a) for a in summaries]
+            unsummarised_urls = {a.get("url", "") for a in unsummarised}
+            summaries = [
+                refilled_by_url.get(a.get("url", ""), a)
+                for a in summaries
+                if a.get("url", "") not in unsummarised_urls or a.get("url", "") in refilled_by_url
+            ]
 
         # Pre-compute lowercase trend keywords for fast matching
         kw_lower = [kw.lower() for kw in (trending_keywords or [])]
@@ -1168,7 +1180,7 @@ class NewsletterPipeline:
             lp = a.get("local_path", "")
             if lp:
                 keep.add(os.path.abspath(lp))
-                keep.add(os.path.abspath(lp.replace(".md", "_meta.json")))
+                keep.add(os.path.abspath(os.path.splitext(lp)[0] + "_meta.json"))
 
         # Always keep the evaluation file and the manifest
         if week_num is not None:

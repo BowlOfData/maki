@@ -54,6 +54,7 @@ MAX_HN_PER_QUERY = 2
 # ---------------------------------------------------------------------------
 
 LLM_MODEL = "gemma4:26b"
+#LLM_MODEL = "qwen3.6:27b"
 OLLAMA_HOST = "http://localhost:11434"
 
 # Characters sent to the LLM per article (prevents context overflow)
