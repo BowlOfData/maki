@@ -570,6 +570,50 @@ class NewsletterPipeline:
     # Stage 3 — Read (LLM agent)
     # ------------------------------------------------------------------
 
+    def _call_reader_agent(
+        self,
+        agent: Any,
+        article: Dict[str, Any],
+        content: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call reader_agent with *content* and return the parsed metadata dict.
+        Returns None when the response is empty, an exception is raised, or
+        JSON cannot be extracted.
+        """
+        task = (
+            "Analyse the following technical article and return a JSON object with "
+            "exactly these keys:\n"
+            '  "main_topic": string (one sentence),\n'
+            '  "key_points": array of up to 5 strings,\n'
+            '  "technologies": array of technology/product names mentioned,\n'
+            '  "quality_score": integer 0-10 (technical depth and relevance),\n'
+            '  "short_summary": string (two sentences),\n'
+            f'  "long_resume": string (max {MAX_RESUME_WORDS} words, complete sentences).\n\n'
+            "Article content:\n"
+            f"{content}"
+        )
+        raw_response = ""
+        try:
+            raw_response = agent.execute_task(task)
+        except Exception as exc:
+            logger.warning("reader_agent exception for %s: %s", article.get("url"), exc)
+            return None
+
+        if not raw_response.strip():
+            logger.debug("reader_agent returned empty response for %s", article.get("url"))
+            return None
+
+        metadata = _extract_json(raw_response)
+        if not isinstance(metadata, dict):
+            logger.warning(
+                "Could not parse JSON from LLM response for %s",
+                article.get("url"),
+            )
+            logger.warning("LLM response was: %.500s", raw_response)
+            return None
+        return metadata
+
     def stage_read(
         self, downloaded: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -603,36 +647,34 @@ class NewsletterPipeline:
                 logger.warning("Cannot read %s: %s", local_path, exc)
                 continue
 
-            content = _truncate(raw)
-            task = (
-                "Analyse the following technical article and return a JSON object with "
-                "exactly these keys:\n"
-                '  "main_topic": string (one sentence),\n'
-                '  "key_points": array of up to 5 strings,\n'
-                '  "technologies": array of technology/product names mentioned,\n'
-                '  "quality_score": integer 0-10 (technical depth and relevance),\n'
-                '  "short_summary": string (two sentences),\n'
-                f'  "long_resume": string (max {MAX_RESUME_WORDS} words, complete sentences).\n\n'
-                "Article content:\n"
-                f"{content}"
-            )
+            metadata = self._call_reader_agent(agent, article, _truncate(raw))
 
-            raw_response = ""
-            try:
-                raw_response = agent.execute_task(task)
-                metadata = _extract_json(raw_response)
-            except Exception as exc:
-                logger.warning("reader_agent failed for %s: %s", article.get("url"), exc)
-                logger.warning("LLM response was: %.500s", raw_response)
-                metadata = None
+            # Retry with half the content when the LLM returns empty or unparseable output
+            if metadata is None:
+                logger.info(
+                    "Retrying %s with reduced content (%d chars) …",
+                    article.get("url"), MAX_ARTICLE_CHARS // 2,
+                )
+                metadata = self._call_reader_agent(
+                    agent, article, _truncate(raw, MAX_ARTICLE_CHARS // 2)
+                )
 
-            if not isinstance(metadata, dict):
+            # Fall back to article metadata when LLM consistently fails rather
+            # than dropping the article — it will land in the "Needs Review" bucket
+            if metadata is None:
                 logger.warning(
-                    "Could not parse JSON from LLM response for %s — skipping",
+                    "reader_agent failed for %s after retry — using fallback metadata",
                     article.get("url"),
                 )
-                logger.warning("LLM response was: %.500s", raw_response)
-                continue
+                short = _normalize_two_sentence_summary(article.get("snippet", ""), article)
+                metadata = {
+                    "main_topic": article.get("title", ""),
+                    "key_points": [],
+                    "technologies": [],
+                    "quality_score": 5,
+                    "short_summary": short or _fallback_summary(article),
+                    "long_resume": "",
+                }
 
             # Discard low-quality articles immediately
             if int(metadata.get("quality_score", 0)) < 4:
