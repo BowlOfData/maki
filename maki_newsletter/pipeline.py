@@ -1119,9 +1119,13 @@ class NewsletterPipeline:
                 keep.add(os.path.abspath(lp))
                 keep.add(os.path.abspath(lp.replace(".md", "_meta.json")))
 
-        # Always keep the evaluation file
+        # Always keep the evaluation file and the manifest (needed for run_from_stage3)
         if week_num is not None:
             keep.add(os.path.abspath(os.path.join(articles_week_dir, f"evaluate_{week_num}.md")))
+            try:
+                keep.add(os.path.abspath(self._manifest_path()))
+            except RuntimeError:
+                pass
 
         removed = 0
         for fname in os.listdir(articles_week_dir):
@@ -1137,8 +1141,126 @@ class NewsletterPipeline:
         logger.info("Cleanup: removed %d excluded article file(s) from %s", removed, articles_week_dir)
 
     # ------------------------------------------------------------------
-    # Orchestrator
+    # Manifest helpers
     # ------------------------------------------------------------------
+
+    def _manifest_path(self) -> str:
+        articles_week_dir = getattr(self, "_articles_week_dir", None)
+        week_num = getattr(self, "_week_num", None)
+        year = getattr(self, "_year", None)
+        if not articles_week_dir or week_num is None or year is None:
+            raise RuntimeError(
+                "_manifest_path called before stage_download has initialised week state"
+            )
+        return os.path.join(articles_week_dir, f"manifest_{week_num:02d}_{year}.json")
+
+    def _append_to_manifest(self, article: Dict[str, Any]) -> None:
+        try:
+            path = self._manifest_path()
+        except RuntimeError:
+            return
+        existing: List[Dict[str, Any]] = []
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    existing = json.load(fh)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Could not load manifest %s: %s — starting fresh", path, exc)
+        url = article.get("url", "")
+        if url and any(a.get("url") == url for a in existing):
+            return
+        existing.append(article)
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(existing, fh, indent=2, ensure_ascii=False)
+        except OSError as exc:
+            logger.warning("Could not write manifest %s: %s", path, exc)
+
+    # ------------------------------------------------------------------
+    # Orchestrators
+    # ------------------------------------------------------------------
+
+    def run_from_stage3(self, refetch_trends: bool = False) -> str:
+        """
+        Resume the pipeline from stage 3 (read → rank → evaluate) using the
+        manifest written by a previous stage_download run.
+
+        This skips the slow trend-fetch, search, and download stages and goes
+        straight to LLM analysis, using the already-downloaded article files.
+        Useful when stage_download succeeded but a later stage failed, or when
+        you want to re-rank/re-summarise without re-downloading.
+
+        Raises RuntimeError if no manifest is found for the current ISO week.
+        Returns the absolute path of the evaluation Markdown file.
+        """
+        logger.info("=" * 60)
+        logger.info("Newsletter pipeline — resuming from stage 3")
+        logger.info("=" * 60)
+
+        now = datetime.now(timezone.utc)
+        week_num, year = _iso_week_parts(now)
+        month_name = now.strftime("%B").lower()
+        articles_abs = os.path.abspath(
+            os.path.join(ARTICLES_DIR, month_name, str(week_num))
+        )
+
+        self._articles_week_dir = articles_abs
+        self._week_num = week_num
+        self._year = year
+
+        manifest_path = self._manifest_path()
+        if not os.path.exists(manifest_path):
+            raise RuntimeError(
+                f"No manifest found at {manifest_path}. "
+                "Run the full pipeline first: python -m maki_newsletter.main"
+            )
+
+        try:
+            with open(manifest_path, encoding="utf-8") as fh:
+                downloaded = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Could not load manifest {manifest_path}: {exc}") from exc
+
+        if not downloaded:
+            raise RuntimeError(f"Manifest {manifest_path} is empty — nothing to process.")
+
+        # Drop any entry whose article file has been deleted since the manifest was written
+        available = [
+            a for a in downloaded
+            if os.path.exists(a.get("local_path", ""))
+        ]
+        if not available:
+            raise RuntimeError(
+                f"Manifest has {len(downloaded)} article(s) but none of their "
+                "files exist — re-run the full pipeline."
+            )
+        if len(available) < len(downloaded):
+            logger.warning(
+                "Skipping %d article(s) from manifest whose files are missing",
+                len(downloaded) - len(available),
+            )
+
+        logger.info(
+            "Loaded %d article(s) from manifest %s", len(available), manifest_path
+        )
+
+        trending_keywords: List[str] = []
+        if refetch_trends:
+            _, trending_keywords = self.stage_trends()
+
+        enriched = self.stage_read(available)
+        if not enriched:
+            raise RuntimeError("Stage 3 returned no enriched articles.")
+
+        top10 = self.stage_rank(enriched, trending_keywords=trending_keywords)
+        eval_path = self.stage_evaluate(top10, trending_keywords=trending_keywords)
+
+        logger.info("=" * 60)
+        logger.info("Resume complete → %s", eval_path)
+        logger.info("Review the evaluation file, then run:")
+        logger.info("  python -m maki_newsletter.generate")
+        logger.info("=" * 60)
+        return eval_path
 
     def run(self) -> str:
         """
