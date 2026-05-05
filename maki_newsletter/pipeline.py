@@ -69,7 +69,6 @@ def _slug(url: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
     return slug[:80] or "article"
 
-
 def _repair_truncated_object(text: str) -> str:
     """
     Drop any trailing incomplete field from a truncated JSON object and close it.
@@ -123,7 +122,7 @@ def _extract_json(text: str) -> Any:
     except json.JSONDecodeError:
         pass
 
-    for start_char, end_char in [("[", "]"), ("{", "}")]:
+    for start_char, end_char in [("{", "}"), ("[", "]")]:
         idx = cleaned.find(start_char)
         if idx == -1:
             continue
@@ -487,21 +486,24 @@ class NewsletterPipeline:
 
             if os.path.exists(output_path):
                 try:
-                    with open(output_path, encoding="utf-8") as fh:
-                        existing_content = fh.read()
-                    if len(existing_content) < 300:
+                    existing_size = os.path.getsize(output_path)
+                    if existing_size < 300:
                         logger.warning(
-                            "Removing stale short article cache before re-download: %s (%d chars)",
+                            "Removing stale short article cache before re-download: %s (%d bytes)",
                             filename,
-                            len(existing_content),
+                            existing_size,
                         )
                         os.remove(output_path)
                     else:
                         logger.debug("Already exists, skipping download: %s", filename)
                         downloaded_canonical_urls.add(url.rstrip("/"))
-                        entry = {**article, "local_path": output_path, "filename": filename}
-                        downloaded.append(entry)
-                        self._append_to_manifest(entry)
+                        downloaded.append(
+                            {
+                                **article,
+                                "local_path": output_path,
+                                "filename": filename,
+                            }
+                        )
                         continue
                 except OSError as exc:
                     logger.warning(
@@ -537,20 +539,29 @@ class NewsletterPipeline:
                 if canonical_url != url:
                     logger.info("Resolved canonical URL: %s → %s", url, canonical_url)
 
-                entry = {
-                    **article,
-                    "url":        canonical_url,
-                    "local_path": output_path,
-                    "filename":   filename,
-                }
-                downloaded.append(entry)
-                self._append_to_manifest(entry)
+                downloaded.append(
+                    {
+                        **article,
+                        "url":        canonical_url,
+                        "local_path": output_path,
+                        "filename":   filename,
+                    }
+                )
                 logger.debug("Downloaded: %s → %s", canonical_url, filename)
             else:
                 logger.warning("Failed to download %s: %s", url, result.get("error"))
 
             # Polite delay to reduce rate-limit pressure
             time.sleep(1.5)
+
+        # Write a single manifest so run_from_stage3 can resume without re-downloading
+        manifest_path = self._manifest_path()
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as fh:
+                json.dump(downloaded, fh, indent=2, ensure_ascii=False)
+            logger.info("Manifest written to %s", manifest_path)
+        except OSError as exc:
+            logger.warning("Could not write manifest %s: %s", manifest_path, exc)
 
         logger.info("Stage 2 complete: %d articles downloaded", len(downloaded))
         return downloaded
@@ -586,7 +597,8 @@ class NewsletterPipeline:
                     logger.warning("Could not load cached metadata %s: %s — re-evaluating", meta_path, exc)
 
             try:
-                raw = open(local_path, encoding="utf-8").read()
+                with open(local_path, encoding="utf-8") as fh:
+                    raw = fh.read()
             except OSError as exc:
                 logger.warning("Cannot read %s: %s", local_path, exc)
                 continue
@@ -599,32 +611,27 @@ class NewsletterPipeline:
                 '  "key_points": array of up to 5 strings,\n'
                 '  "technologies": array of technology/product names mentioned,\n'
                 '  "quality_score": integer 0-10 (technical depth and relevance),\n'
-                '  "short_summary": string (two sentence),\n'
-                f'  "long_resume": string (max {MAX_RESUME_WORDS} words).\n\n'
+                '  "short_summary": string (two sentences),\n'
+                f'  "long_resume": string (max {MAX_RESUME_WORDS} words, complete sentences).\n\n'
                 "Article content:\n"
                 f"{content}"
             )
 
+            raw_response = ""
             try:
                 raw_response = agent.execute_task(task)
                 metadata = _extract_json(raw_response)
             except Exception as exc:
                 logger.warning("reader_agent failed for %s: %s", article.get("url"), exc)
+                logger.warning("LLM response was: %.500s", raw_response)
                 metadata = None
 
             if not isinstance(metadata, dict):
                 logger.warning(
-                    "Could not parse JSON from LLM response for %s — removing article files",
+                    "Could not parse JSON from LLM response for %s — skipping",
                     article.get("url"),
                 )
-                logger.warning("LLM response was: %s", raw_response)
-                for path in (local_path, meta_path):
-                    if path and os.path.exists(path):
-                        try:
-                            os.remove(path)
-                            logger.debug("Removed: %s", path)
-                        except OSError as exc:
-                            logger.warning("Could not remove %s: %s", path, exc)
+                logger.warning("LLM response was: %.500s", raw_response)
                 continue
 
             # Discard low-quality articles immediately
@@ -633,12 +640,7 @@ class NewsletterPipeline:
                     "Score %s < 4 for %s — removing article files",
                     metadata.get("quality_score"), article.get("url"),
                 )
-                for path in (local_path, meta_path):
-                    if path and os.path.exists(path):
-                        try:
-                            os.remove(path)
-                        except OSError as exc:
-                            logger.warning("Could not remove %s: %s", path, exc)
+                self._delete_article_files(article.get("url", ""))
                 continue
 
             # Only cache when both summary fields are present; truncated LLM
@@ -1060,6 +1062,13 @@ class NewsletterPipeline:
 
         return output_path
 
+    def _manifest_path(self) -> str:
+        """Return the absolute path of the download manifest for the current week."""
+        week_num = getattr(self, "_week_num", 0)
+        year = getattr(self, "_year", 0)
+        articles_week_dir = getattr(self, "_articles_week_dir", os.path.abspath(ARTICLES_DIR))
+        return os.path.join(articles_week_dir, f"manifest_{week_num:02d}_{year}.json")
+
     def _removed_urls_path(self, week_num: int, year: int) -> str:
         return os.path.join(os.path.abspath(OUTPUT_DIR), f"removed_{week_num:02d}_{year}.json")
 
@@ -1119,13 +1128,10 @@ class NewsletterPipeline:
                 keep.add(os.path.abspath(lp))
                 keep.add(os.path.abspath(lp.replace(".md", "_meta.json")))
 
-        # Always keep the evaluation file and the manifest (needed for run_from_stage3)
+        # Always keep the evaluation file and the manifest
         if week_num is not None:
             keep.add(os.path.abspath(os.path.join(articles_week_dir, f"evaluate_{week_num}.md")))
-            try:
-                keep.add(os.path.abspath(self._manifest_path()))
-            except RuntimeError:
-                pass
+        keep.add(os.path.abspath(self._manifest_path()))
 
         removed = 0
         for fname in os.listdir(articles_week_dir):
@@ -1141,126 +1147,8 @@ class NewsletterPipeline:
         logger.info("Cleanup: removed %d excluded article file(s) from %s", removed, articles_week_dir)
 
     # ------------------------------------------------------------------
-    # Manifest helpers
+    # Orchestrator
     # ------------------------------------------------------------------
-
-    def _manifest_path(self) -> str:
-        articles_week_dir = getattr(self, "_articles_week_dir", None)
-        week_num = getattr(self, "_week_num", None)
-        year = getattr(self, "_year", None)
-        if not articles_week_dir or week_num is None or year is None:
-            raise RuntimeError(
-                "_manifest_path called before stage_download has initialised week state"
-            )
-        return os.path.join(articles_week_dir, f"manifest_{week_num:02d}_{year}.json")
-
-    def _append_to_manifest(self, article: Dict[str, Any]) -> None:
-        try:
-            path = self._manifest_path()
-        except RuntimeError:
-            return
-        existing: List[Dict[str, Any]] = []
-        if os.path.exists(path):
-            try:
-                with open(path, encoding="utf-8") as fh:
-                    existing = json.load(fh)
-            except (OSError, json.JSONDecodeError) as exc:
-                logger.warning("Could not load manifest %s: %s — starting fresh", path, exc)
-        url = article.get("url", "")
-        if url and any(a.get("url") == url for a in existing):
-            return
-        existing.append(article)
-        try:
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump(existing, fh, indent=2, ensure_ascii=False)
-        except OSError as exc:
-            logger.warning("Could not write manifest %s: %s", path, exc)
-
-    # ------------------------------------------------------------------
-    # Orchestrators
-    # ------------------------------------------------------------------
-
-    def run_from_stage3(self, refetch_trends: bool = False) -> str:
-        """
-        Resume the pipeline from stage 3 (read → rank → evaluate) using the
-        manifest written by a previous stage_download run.
-
-        This skips the slow trend-fetch, search, and download stages and goes
-        straight to LLM analysis, using the already-downloaded article files.
-        Useful when stage_download succeeded but a later stage failed, or when
-        you want to re-rank/re-summarise without re-downloading.
-
-        Raises RuntimeError if no manifest is found for the current ISO week.
-        Returns the absolute path of the evaluation Markdown file.
-        """
-        logger.info("=" * 60)
-        logger.info("Newsletter pipeline — resuming from stage 3")
-        logger.info("=" * 60)
-
-        now = datetime.now(timezone.utc)
-        week_num, year = _iso_week_parts(now)
-        month_name = now.strftime("%B").lower()
-        articles_abs = os.path.abspath(
-            os.path.join(ARTICLES_DIR, month_name, str(week_num))
-        )
-
-        self._articles_week_dir = articles_abs
-        self._week_num = week_num
-        self._year = year
-
-        manifest_path = self._manifest_path()
-        if not os.path.exists(manifest_path):
-            raise RuntimeError(
-                f"No manifest found at {manifest_path}. "
-                "Run the full pipeline first: python -m maki_newsletter.main"
-            )
-
-        try:
-            with open(manifest_path, encoding="utf-8") as fh:
-                downloaded = json.load(fh)
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"Could not load manifest {manifest_path}: {exc}") from exc
-
-        if not downloaded:
-            raise RuntimeError(f"Manifest {manifest_path} is empty — nothing to process.")
-
-        # Drop any entry whose article file has been deleted since the manifest was written
-        available = [
-            a for a in downloaded
-            if os.path.exists(a.get("local_path", ""))
-        ]
-        if not available:
-            raise RuntimeError(
-                f"Manifest has {len(downloaded)} article(s) but none of their "
-                "files exist — re-run the full pipeline."
-            )
-        if len(available) < len(downloaded):
-            logger.warning(
-                "Skipping %d article(s) from manifest whose files are missing",
-                len(downloaded) - len(available),
-            )
-
-        logger.info(
-            "Loaded %d article(s) from manifest %s", len(available), manifest_path
-        )
-
-        trending_keywords: List[str] = []
-        if refetch_trends:
-            _, trending_keywords = self.stage_trends()
-
-        enriched = self.stage_read(available)
-        if not enriched:
-            raise RuntimeError("Stage 3 returned no enriched articles.")
-
-        top10 = self.stage_rank(enriched, trending_keywords=trending_keywords)
-        eval_path = self.stage_evaluate(top10, trending_keywords=trending_keywords)
-
-        logger.info("=" * 60)
-        logger.info("Resume complete → %s", eval_path)
-        logger.info("Review the evaluation file, then run:")
-        logger.info("  python -m maki_newsletter.generate")
-        logger.info("=" * 60)
-        return eval_path
 
     def run(self) -> str:
         """
@@ -1428,3 +1316,61 @@ class NewsletterPipeline:
 
         logger.info("Generating newsletter from all %d articles in %s", len(all_summaries), json_path)
         return self.stage_write(all_summaries)
+
+    def run_from_stage3(self, refetch_trends: bool = False) -> str:
+        """
+        Resume the pipeline from stage 3 (read → rank → evaluate) using the
+        manifest written by stage_download at the end of the previous run.
+
+        Targets the current ISO week — articles must already be present in the
+        articles directory for that week.
+
+        Returns the absolute path of the evaluation Markdown file.
+        """
+        now = datetime.now(timezone.utc)
+        month_name = now.strftime("%B").lower()
+        week_num, iso_year = _iso_week_parts(now)
+        articles_abs = os.path.abspath(
+            os.path.join(ARTICLES_DIR, month_name, str(week_num))
+        )
+        self._articles_week_dir = articles_abs
+        self._week_num = week_num
+        self._year = iso_year
+
+        manifest_path = self._manifest_path()
+        if not os.path.exists(manifest_path):
+            raise RuntimeError(
+                f"No manifest found at {manifest_path}. "
+                "Run the full pipeline first: python -m maki_newsletter.main"
+            )
+
+        try:
+            with open(manifest_path, encoding="utf-8") as fh:
+                downloaded = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Could not read manifest {manifest_path}: {exc}") from exc
+
+        # Filter to articles whose local file still exists on disk
+        valid = [a for a in downloaded if os.path.exists(a.get("local_path", ""))]
+        if not valid:
+            raise RuntimeError(
+                f"No article files found for week {week_num}/{iso_year}. "
+                "Re-run the full pipeline."
+            )
+        if len(valid) < len(downloaded):
+            logger.warning(
+                "Manifest lists %d articles but only %d files exist on disk — proceeding",
+                len(downloaded), len(valid),
+            )
+
+        trending_keywords: List[str] = []
+        if refetch_trends:
+            _, trending_keywords = self.stage_trends()
+
+        logger.info("Resuming from stage 3 with %d articles …", len(valid))
+        enriched = self.stage_read(valid)
+        if not enriched:
+            raise RuntimeError("Stage 3 returned no enriched articles.")
+
+        top10 = self.stage_rank(enriched, trending_keywords=trending_keywords)
+        return self.stage_evaluate(top10, trending_keywords=trending_keywords)
