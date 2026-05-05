@@ -444,7 +444,7 @@ def _build_page_html(articles: list[dict], week: int, year: int) -> str:
         title   = (a.get("title") or "").strip()
         url     = (a.get("url") or "").strip()
         source  = (a.get("source") or "").strip()
-        summary = (a.get("summary") or "").strip()
+        summary = (a.get("short_summary") or "").strip()
         topic   = (a.get("main_topic") or "").strip()
         tags    = [t.strip() for t in (a.get("technologies") or []) if t and t.strip()]
         anchor  = _slugify(title) if title else f"article-{i}"

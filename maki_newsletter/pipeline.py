@@ -1039,7 +1039,7 @@ class NewsletterPipeline:
         if not articles_week_dir:
             return
         base = os.path.join(articles_week_dir, _slug(url))
-        for fpath in (base + ".md", base + "_meta.json"):
+        for fpath in (base + ".md", base + "_meta.json", base + "_summary.txt", base + "_long_resume.txt"):
             if os.path.exists(fpath):
                 try:
                     os.remove(fpath)
