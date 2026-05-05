@@ -38,16 +38,16 @@ SEARCH_QUERIES = [
 ]
 
 # Maximum article candidates before ranking
-MAX_CANDIDATES = 20
+MAX_CANDIDATES = 2
 
 # Number of articles in the final newsletter
-TOP_N = 20
+TOP_N = 2
 
 # Max articles fetched per RSS feed
-MAX_PER_FEED = 5
+MAX_PER_FEED = 2
 
 # Max HackerNews results per query
-MAX_HN_PER_QUERY = 5
+MAX_HN_PER_QUERY = 2
 
 # ---------------------------------------------------------------------------
 # LLM
@@ -57,7 +57,7 @@ LLM_MODEL = "gemma4:26b"
 OLLAMA_HOST = "http://localhost:11434"
 
 # Characters sent to the LLM per article (prevents context overflow)
-MAX_ARTICLE_CHARS = 20000
+MAX_ARTICLE_CHARS = 10000
 
 # Preferred word range for each short article summary. The pipeline still keeps
 # summaries to exactly 2 sentences, but this tighter range helps article blurbs
