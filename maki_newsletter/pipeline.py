@@ -70,26 +70,63 @@ def _slug(url: str) -> str:
     return slug[:80] or "article"
 
 
+def _repair_truncated_object(text: str) -> str:
+    """
+    Drop any trailing incomplete field from a truncated JSON object and close it.
+
+    Walks the string tracking string context and brace depth. If the input is
+    cut off before the closing ``}`` (e.g. the LLM hit a token limit mid-value),
+    the function truncates at the last top-level comma and appends ``}`` so that
+    all complete fields are preserved.  Returns an empty string when repair is
+    not possible.
+    """
+    in_string = False
+    escape_next = False
+    depth = 0
+    last_field_comma = -1
+
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0:
+                return text[: i + 1]  # object closed normally — already valid
+        elif ch == "," and depth == 1:
+            last_field_comma = i
+
+    if depth > 0 and last_field_comma > 0:
+        return text[:last_field_comma] + "}"
+    return ""
+
+
 def _extract_json(text: str) -> Any:
     """
     Robustly extract the first JSON value (object or array) from an LLM response.
     Returns the parsed value, or None on failure.
     """
-    # Strip markdown code fences
     cleaned = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE).strip()
 
-    # Try the whole cleaned string first
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
 
-    # Find the first [ or { and attempt progressively longer substrings
     for start_char, end_char in [("[", "]"), ("{", "}")]:
         idx = cleaned.find(start_char)
         if idx == -1:
             continue
-        # Walk backwards from end to find the matching closer
         end_idx = cleaned.rfind(end_char)
         if end_idx == -1 or end_idx <= idx:
             continue
@@ -97,6 +134,22 @@ def _extract_json(text: str) -> Any:
             return json.loads(cleaned[idx: end_idx + 1])
         except json.JSONDecodeError:
             pass
+
+    # Last resort: the response was truncated mid-value (e.g. token-limit cutoff).
+    # Drop the incomplete last field and close the object so we keep everything else.
+    idx = cleaned.find("{")
+    if idx != -1:
+        repaired = _repair_truncated_object(cleaned[idx:])
+        if repaired:
+            try:
+                result = json.loads(repaired)
+                logger.warning(
+                    "_extract_json: response was truncated — recovered partial JSON "
+                    "(dropped last incomplete field)"
+                )
+                return result
+            except json.JSONDecodeError:
+                pass
 
     logger.warning("_extract_json: could not parse JSON from LLM response")
     return None
@@ -446,13 +499,9 @@ class NewsletterPipeline:
                     else:
                         logger.debug("Already exists, skipping download: %s", filename)
                         downloaded_canonical_urls.add(url.rstrip("/"))
-                        downloaded.append(
-                            {
-                                **article,
-                                "local_path": output_path,
-                                "filename": filename,
-                            }
-                        )
+                        entry = {**article, "local_path": output_path, "filename": filename}
+                        downloaded.append(entry)
+                        self._append_to_manifest(entry)
                         continue
                 except OSError as exc:
                     logger.warning(
@@ -488,14 +537,14 @@ class NewsletterPipeline:
                 if canonical_url != url:
                     logger.info("Resolved canonical URL: %s → %s", url, canonical_url)
 
-                downloaded.append(
-                    {
-                        **article,
-                        "url":        canonical_url,
-                        "local_path": output_path,
-                        "filename":   filename,
-                    }
-                )
+                entry = {
+                    **article,
+                    "url":        canonical_url,
+                    "local_path": output_path,
+                    "filename":   filename,
+                }
+                downloaded.append(entry)
+                self._append_to_manifest(entry)
                 logger.debug("Downloaded: %s → %s", canonical_url, filename)
             else:
                 logger.warning("Failed to download %s: %s", url, result.get("error"))
@@ -568,6 +617,7 @@ class NewsletterPipeline:
                     "Could not parse JSON from LLM response for %s — removing article files",
                     article.get("url"),
                 )
+                logger.warning("LLM response was: %s", raw_response)
                 for path in (local_path, meta_path):
                     if path and os.path.exists(path):
                         try:
@@ -591,8 +641,10 @@ class NewsletterPipeline:
                             logger.warning("Could not remove %s: %s", path, exc)
                 continue
 
-            # Persist metadata so subsequent runs skip the LLM call
-            if meta_path:
+            # Only cache when both summary fields are present; truncated LLM
+            # responses may have recovered partial JSON — leave the cache empty
+            # so the next run retries the LLM for the missing fields.
+            if meta_path and (metadata.get("short_summary") or "").strip() and (metadata.get("long_resume") or "").strip():
                 try:
                     with open(meta_path, "w", encoding="utf-8") as fh:
                         json.dump(metadata, fh, indent=2, ensure_ascii=False)
