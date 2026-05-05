@@ -451,7 +451,7 @@ def _build_page_html(articles: list[dict], week: int, year: int) -> str:
 
         # --- Card open ----------------------------------------------------------
         lines += [
-            f'<div id="{anchor}" style="background:{c["card_bg"]};'
+            f'<div style="background:{c["card_bg"]};'
             f'border:1px solid {c["card_border"]};border-radius:10px;'
             f'box-shadow:{c["card_shadow"]};margin-bottom:1.75em;overflow:hidden;">',
         ]
@@ -466,7 +466,7 @@ def _build_page_html(articles: list[dict], week: int, year: int) -> str:
         lines += [
             f'<div style="border-top:4px solid {c["accent_light"]};'
             f'padding:1.2em 1.5em 1em;">',
-            f'<h2 style="margin:0 0 0.5em;font-size:1.25em;line-height:1.35;'
+            f'<h2 id="{anchor}" style="margin:0 0 0.5em;font-size:1.25em;line-height:1.35;'
             f'color:{c["text"]};font-weight:700;">',
             f'  {title_html}',
             f'</h2>',
