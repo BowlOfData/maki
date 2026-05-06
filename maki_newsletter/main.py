@@ -63,6 +63,7 @@ def main() -> None:
         print(
             f"\nEvaluation file written:\n  {eval_path}\n\n"
             "Review the file, then generate the final newsletter:\n"
+            "  python -m maki_newsletter.publish\n"
             "  python -m maki_newsletter.generate\n"
         )
     except RuntimeError as exc:

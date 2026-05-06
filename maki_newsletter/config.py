@@ -133,6 +133,15 @@ ALTERVISTA_APP_PASSWORD          = os.environ.get("ALTERVISTA_APP_PASSWORD", "")
 ALTERVISTA_NEWSLETTER_PAGE_ID    = os.environ.get("ALTERVISTA_NEWSLETTER_PAGE_ID", "")
 
 # ---------------------------------------------------------------------------
+# Bowl of Data website (Netlify)
+# ---------------------------------------------------------------------------
+
+# Set this in .env to enable Netlify anchor URL backfill in summaries JSON and
+# news_*.md after running `python -m maki_newsletter.generate`.
+# Example: NETLIFY_SITE_URL=https://bowlofdata.netlify.app
+NETLIFY_SITE_URL = os.environ.get("NETLIFY_SITE_URL", "").rstrip("/")
+
+# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 
