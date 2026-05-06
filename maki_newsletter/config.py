@@ -21,6 +21,7 @@ RSS_FEEDS = {
     "Gizmodo":      "https://gizmodo.com/rss",
     "HackerNews":   "https://news.ycombinator.com/rss",
     "CoinDesk":     "https://www.coindesk.com/arc/outboundfeeds/rss",
+    "Fortune":      "https://fortune.com/feed/",
 }
 
 # ---------------------------------------------------------------------------
