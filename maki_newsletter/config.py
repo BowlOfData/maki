@@ -39,16 +39,16 @@ SEARCH_QUERIES = [
 ]
 
 # Maximum article candidates before ranking
-MAX_CANDIDATES = 2
+MAX_CANDIDATES = 50
 
 # Number of articles in the final newsletter
-TOP_N = 2
+TOP_N = 50
 
 # Max articles fetched per RSS feed
-MAX_PER_FEED = 2
+MAX_PER_FEED = 10
 
 # Max HackerNews results per query
-MAX_HN_PER_QUERY = 2
+MAX_HN_PER_QUERY = 5
 
 # ---------------------------------------------------------------------------
 # LLM

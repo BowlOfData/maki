@@ -782,8 +782,10 @@ class NewsletterPipeline:
                 indexes = clean_indexes
 
             if isinstance(indexes, list) and indexes:
+                seen_idx: set = set()
                 for idx in indexes[: TOP_N]:
-                    if 0 <= idx < len(enriched):
+                    if 0 <= idx < len(enriched) and idx not in seen_idx:
+                        seen_idx.add(idx)
                         top10.append(enriched[idx])
         except Exception as exc:
             logger.warning("ranker_agent failed: %s — using quality_score fallback", exc)
@@ -882,8 +884,24 @@ class NewsletterPipeline:
             # Also filter existing against removed_urls so a re-run can never
             # resurrect a removed article via the existing list
             existing = [a for a in existing if a.get("url", "") not in removed_urls]
-            seen_urls = {a.get("url", "") for a in existing}
-            new_articles = [a for a in summaries if a.get("url", "") not in seen_urls]
+            # Deduplicate existing in case the file already contains dupes
+            seen_urls: set = set()
+            deduped_existing: List[Dict[str, Any]] = []
+            for a in existing:
+                url = a.get("url", "")
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    deduped_existing.append(a)
+            existing = deduped_existing
+            # Collect only articles whose URL has not been seen yet;
+            # update seen_urls during iteration so duplicate entries in
+            # summaries are also caught.
+            new_articles: List[Dict[str, Any]] = []
+            for a in summaries:
+                url = a.get("url", "")
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    new_articles.append(a)
             if new_articles:
                 logger.info("Enriching evaluation with %d new article(s)", len(new_articles))
             else:
