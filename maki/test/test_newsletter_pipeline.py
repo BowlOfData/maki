@@ -43,7 +43,7 @@ class TestNewsletterPipeline(unittest.TestCase):
             pipeline = newsletter_pipeline.NewsletterPipeline.__new__(
                 newsletter_pipeline.NewsletterPipeline
             )
-            pipeline.stage_write = lambda summaries: summaries[0]["url"]
+            pipeline.stage_write = lambda summaries, **kwargs: summaries[0]["url"]
             pipeline.stage_read = lambda articles: articles
             pipeline._load_url_set = lambda path: set()
             pipeline._save_url_set = lambda path, urls: None
@@ -138,7 +138,7 @@ class TestNewsletterPipeline(unittest.TestCase):
                 return [{**items[0], "long_resume": "Paragraph one.\n\nParagraph two.\n\nParagraph three."}]
 
             pipeline.stage_read = _stage_read
-            pipeline.stage_write = lambda summaries: summaries[0]["long_resume"]
+            pipeline.stage_write = lambda summaries, **kwargs: summaries[0]["long_resume"]
             pipeline._load_url_set = lambda path: set()
             pipeline._save_url_set = lambda path, urls: None
             pipeline._delete_article_files = lambda url: None
