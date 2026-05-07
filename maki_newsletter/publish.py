@@ -545,6 +545,15 @@ def _build_page_html(
 
         lines += ['<hr style="margin:2em 0;">', '']
 
+    # ---- News section title ----
+    lines += [
+        f'<h2 style="margin:1.5em 0 0.5em;font-size:1.4em;color:{c["text"]};font-weight:700;">'
+        f'This Week in Tech</h2>',
+        f'<p style="color:{c["meta_fg"]};font-size:0.88em;margin-bottom:1em;">'
+        f'Top stories curated from across the web this week.</p>',
+        "",
+    ]
+
     # ---- Article cards ----
     for i, a in enumerate(articles, 1):
         title   = (a.get("title") or "").strip()

@@ -57,5 +57,65 @@ class TestNewsletterPublish(unittest.TestCase):
             self.assertIn("performance benchmarks", html)
 
 
+class TestModelReleasesSection(unittest.TestCase):
+
+    _RELEASE = {
+        "model_name": "GPT-5.5 Instant",
+        "provider": "OpenAI",
+        "release_date": "2026-05-05",
+        "summary": "A new default model focused on smarter reasoning.",
+        "key_features": ["Smarter reasoning", "Increased clarity"],
+        "url": "https://openai.com/news/",
+    }
+
+    def _html(self, releases):
+        with patch.object(newsletter_publish, "_find_article_md", return_value=None):
+            return newsletter_publish._build_page_html([], 19, 2026, model_releases=releases)
+
+    def test_model_releases_section_present(self):
+        html = self._html([self._RELEASE])
+        self.assertIn("AI Model Releases", html)
+
+    def test_model_releases_count_in_header(self):
+        html = self._html([self._RELEASE])
+        self.assertIn("1 model release", html)
+
+    def test_model_releases_plural_count(self):
+        html = self._html([self._RELEASE, self._RELEASE])
+        self.assertIn("2 model releases", html)
+
+    def test_model_release_anchor_matches_slugified_name(self):
+        html = self._html([self._RELEASE])
+        slug = newsletter_publish._slugify("GPT-5.5 Instant")
+        self.assertIn(f'id="{slug}"', html)
+
+    def test_model_release_provider_badge(self):
+        html = self._html([self._RELEASE])
+        self.assertIn("OpenAI", html)
+
+    def test_model_release_summary(self):
+        html = self._html([self._RELEASE])
+        self.assertIn("smarter reasoning", html)
+
+    def test_model_release_key_features(self):
+        html = self._html([self._RELEASE])
+        self.assertIn("Smarter reasoning", html)
+        self.assertIn("Increased clarity", html)
+
+    def test_model_release_read_link(self):
+        html = self._html([self._RELEASE])
+        self.assertIn("https://openai.com/news/", html)
+        self.assertIn("Read announcement", html)
+
+    def test_no_model_releases_section_when_empty(self):
+        html = self._html([])
+        self.assertNotIn("AI Model Releases", html)
+
+    def test_model_release_date_recent_hidden(self):
+        release = dict(self._RELEASE, release_date="recent")
+        html = self._html([release])
+        self.assertNotIn("recent", html)
+
+
 if __name__ == "__main__":
     unittest.main()
