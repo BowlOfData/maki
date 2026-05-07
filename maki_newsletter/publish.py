@@ -213,6 +213,26 @@ def _save_meta(week: int, year: int, meta: dict) -> None:
     )
 
 
+def _model_releases_path(week: int, year: int) -> Path:
+    return OUTPUT_PATH / f"model_releases_{week:02d}_{year}.json"
+
+
+def _load_model_releases(week: int, year: int) -> list[dict]:
+    path = _model_releases_path(week, year)
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _save_model_releases(week: int, year: int, data: list[dict]) -> None:
+    _model_releases_path(week, year).write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 def _find_latest_week() -> tuple[int, int]:
     files = sorted(OUTPUT_PATH.glob("summaries_*.json"))
     if not files:
@@ -426,8 +446,15 @@ _C = {
 }
 
 
-def _build_page_html(articles: list[dict], week: int, year: int) -> str:
+def _build_page_html(
+    articles: list[dict],
+    week: int,
+    year: int,
+    model_releases: list[dict] | None = None,
+) -> str:
     c = _C
+    releases = model_releases or []
+    releases_note = f" &middot; {len(releases)} model release{'s' if len(releases) != 1 else ''}" if releases else ""
     lines: list[str] = [
         f'<h1 style="margin:0 0 0.45em;font-size:2em;line-height:1.2;'
         f'color:{c["text"]};font-weight:800;">'
@@ -435,11 +462,90 @@ def _build_page_html(articles: list[dict], week: int, year: int) -> str:
         "",
         f'<p style="color:{c["meta_fg"]};font-size:0.88em;margin-bottom:1.75em;'
         f'letter-spacing:0.03em;">',
-        f'  Week {week:02d} &middot; {year} &middot; {len(articles)} articles',
+        f'  Week {week:02d} &middot; {year} &middot; {len(articles)} articles{releases_note}',
         '</p>',
         "",
     ]
 
+    # ---- Model releases section ----
+    if releases:
+        lines += [
+            f'<h2 style="margin:1.5em 0 0.5em;font-size:1.4em;color:{c["text"]};font-weight:700;">'
+            f'AI Model Releases</h2>',
+            f'<p style="color:{c["meta_fg"]};font-size:0.88em;margin-bottom:1em;">'
+            f'New models and updates from major AI providers this week.</p>',
+            "",
+        ]
+        for rel in releases:
+            name    = (rel.get("model_name") or "").strip()
+            src_url = (rel.get("url") or "").strip()
+            provider = (rel.get("provider") or "").strip()
+            date    = (rel.get("release_date") or "").strip()
+            summary_r = (rel.get("summary") or "").strip()
+            features  = [f.strip() for f in (rel.get("key_features") or []) if f and f.strip()]
+            anchor  = _slugify(name) if name else ""
+
+            name_html = (
+                f'<a href="{src_url}" target="_blank" rel="noopener"'
+                f' style="color:{c["text"]};text-decoration:none;">'
+                f'{html_module.escape(name)}</a>'
+                if src_url else html_module.escape(name)
+            )
+            lines += [
+                f'<div id="{anchor}" style="background:{c["card_bg"]};'
+                f'border:1px solid {c["card_border"]};border-radius:10px;'
+                f'box-shadow:{c["card_shadow"]};margin-bottom:1.25em;overflow:hidden;">',
+                f'<div style="border-top:4px solid {c["accent_light"]};padding:1em 1.5em 0.75em;">',
+                f'<h3 style="margin:0 0 0.3em;font-size:1.1em;font-weight:700;color:{c["text"]};">'
+                f'{name_html}</h3>',
+            ]
+            meta_parts = []
+            if provider:
+                meta_parts.append(
+                    f'<span style="background:{c["source_bg"]};color:{c["source_fg"]};'
+                    f'border-radius:4px;padding:2px 9px;font-size:0.78em;font-weight:600;">'
+                    f'{html_module.escape(provider)}</span>'
+                )
+            if date and date != "recent":
+                meta_parts.append(
+                    f'<span style="color:{c["meta_fg"]};font-size:0.82em;">'
+                    f'{html_module.escape(date)}</span>'
+                )
+            if meta_parts:
+                lines.append(f'<p style="margin:0;">{" &nbsp;".join(meta_parts)}</p>')
+            lines.append('</div>')  # close card header
+
+            lines.append(
+                f'<div style="padding:0.5em 1.5em 0.75em;border-top:1px solid {c["card_border"]};">'
+            )
+            if summary_r:
+                lines.append(
+                    f'<p style="margin:0.5em 0;line-height:1.7;color:{c["text"]};font-size:0.95em;">'
+                    f'{html_module.escape(summary_r)}</p>'
+                )
+            if features:
+                lines.append(f'<ul style="margin:0.5em 0 0.5em 1.2em;padding:0;color:{c["text"]};font-size:0.92em;">')
+                for feat in features:
+                    lines.append(f'<li style="margin-bottom:0.25em;">{html_module.escape(feat)}</li>')
+                lines.append('</ul>')
+            lines.append('</div>')  # close card body
+
+            if src_url:
+                lines += [
+                    f'<div style="background:#efefef;border-top:1px solid {c["card_border"]};'
+                    f'padding:0.6em 1.5em;">',
+                    f'<a href="{src_url}" target="_blank" rel="noopener"'
+                    f' style="background:{c["btn_bg"]};color:{c["btn_fg"]};'
+                    f'border-radius:6px;padding:0.35em 1em;font-weight:700;'
+                    f'font-size:0.82em;text-decoration:none;">Read announcement &rarr;</a>',
+                    '</div>',
+                ]
+
+            lines += ['</div>', '']  # close card
+
+        lines += ['<hr style="margin:2em 0;">', '']
+
+    # ---- Article cards ----
     for i, a in enumerate(articles, 1):
         title   = (a.get("title") or "").strip()
         url     = (a.get("url") or "").strip()
@@ -570,9 +676,13 @@ def publish(week: int, year: int, dry_run: bool = False) -> None:
     articles = _load_summaries(week, year)
     print(f"  {len(articles)} articles")
 
+    releases = _load_model_releases(week, year)
+    if releases:
+        print(f"  {len(releases)} model releases")
+
     page_title   = f"Newsletter — Week {week:02d} · {year}"
     page_slug    = f"newsletter-week-{week:02d}-{year}"
-    page_content = _build_page_html(articles, week, year)
+    page_content = _build_page_html(articles, week, year, model_releases=releases)
     meta         = _load_meta(week, year)
     existing_id: Optional[int] = meta.get("page_id")
 
@@ -581,6 +691,11 @@ def publish(week: int, year: int, dry_run: bool = False) -> None:
         print(f"  Title  : {page_title}")
         print(f"  Slug   : {page_slug}")
         print(f"  Length : {len(page_content)} chars")
+        if releases:
+            print(f"\n  Model releases ({len(releases)}):")
+            for rel in releases:
+                name = (rel.get("model_name") or "").strip()
+                print(f"    #{_slugify(name)}  {name}")
         print("\n  Articles:")
         for i, a in enumerate(articles, 1):
             title  = (a.get("title") or "").strip()
@@ -633,6 +748,15 @@ def publish(week: int, year: int, dry_run: bool = False) -> None:
 
     _save_summaries(week, year, articles)
     print(f"  Back-filled altervista_url for {len(articles)} articles")
+
+    if releases:
+        for rel in releases:
+            name = (rel.get("model_name") or "").strip()
+            if name:
+                rel["altervista_url"] = f"{page_url}#{_slugify(name)}"
+        _save_model_releases(week, year, releases)
+        print(f"  Back-filled altervista_url for {len(releases)} model releases")
+
     print(f"\nDone. Page live at: {page_url}")
 
 

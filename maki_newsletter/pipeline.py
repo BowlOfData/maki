@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 from maki.agents.agent_manager import AgentManager
 from maki.makiLLama import MakiLLama
+from maki.objects import GenerationConfig
 from maki.plugins.file_reader.file_reader import FileReader
 from maki.plugins.file_writer.file_writer import FileWriter
 from maki.plugins.web_to_md.web_to_md import WebToMd
@@ -88,14 +89,19 @@ def _slugify(text: str) -> str:
 
 def _repair_truncated_object(text: str) -> str:
     """
-    Drop any trailing incomplete field from a truncated JSON object and close it.
+    Drop any trailing incomplete element from a truncated JSON object or array
+    and close it.
 
-    Walks the string tracking string context and brace depth. If the input is
-    cut off before the closing ``}`` (e.g. the LLM hit a token limit mid-value),
-    the function truncates at the last top-level comma and appends ``}`` so that
-    all complete fields are preserved.  Returns an empty string when repair is
-    not possible.
+    Walks the string tracking string context and brace/bracket depth. If the
+    input is cut off before the closing delimiter (e.g. the LLM hit a token
+    limit mid-value), the function truncates at the last top-level comma and
+    appends the correct closing character so that all complete fields/elements
+    are preserved.  Returns an empty string when repair is not possible.
     """
+    stripped = text.lstrip()
+    outer_open = stripped[0] if stripped else ""
+    outer_close = "]" if outer_open == "[" else "}"
+
     in_string = False
     escape_next = False
     depth = 0
@@ -118,21 +124,29 @@ def _repair_truncated_object(text: str) -> str:
         elif ch in "}]":
             depth -= 1
             if depth == 0:
-                return text[: i + 1]  # object closed normally — already valid
+                return text[: i + 1]  # closed normally — already valid
         elif ch == "," and depth == 1:
             last_field_comma = i
 
     if depth > 0 and last_field_comma > 0:
-        return text[:last_field_comma] + "}"
+        return text[:last_field_comma] + outer_close
+    # Truncated before any complete element — return empty container
+    if depth > 0 and outer_open == "[":
+        return "[]"
     return ""
 
 
-def _extract_json(text: str) -> Any:
+def _extract_json(text: str, source: str = "") -> Any:
     """
     Robustly extract the first JSON value (object or array) from an LLM response.
     Returns the parsed value, or None on failure.
     """
     cleaned = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+    src = f" [{source}]" if source else ""
+
+    if not cleaned:
+        logger.warning("_extract_json: LLM returned an empty response%s", src)
+        return None
 
     try:
         return json.loads(cleaned)
@@ -152,9 +166,11 @@ def _extract_json(text: str) -> Any:
             pass
 
     # Last resort: the response was truncated mid-value (e.g. token-limit cutoff).
-    # Drop the incomplete last field and close the object so we keep everything else.
-    idx = cleaned.find("{")
-    if idx != -1:
+    # Drop the incomplete last field and close the container so we keep everything else.
+    for start_char in ("[", "{"):
+        idx = cleaned.find(start_char)
+        if idx == -1:
+            continue
         repaired = _repair_truncated_object(cleaned[idx:])
         if repaired:
             try:
@@ -167,7 +183,12 @@ def _extract_json(text: str) -> Any:
             except json.JSONDecodeError:
                 pass
 
-    logger.warning("_extract_json: could not parse JSON from LLM response")
+    logger.warning(
+        "_extract_json: could not parse JSON from LLM response%s\n"
+        "--- raw response (first 500 chars) ---\n%s\n------",
+        src,
+        cleaned[:500],
+    )
     return None
 
 
@@ -311,6 +332,11 @@ class NewsletterPipeline:
     def __init__(self) -> None:
         logger.info("Initialising LLM backend: %s @ %s", LLM_MODEL, OLLAMA_HOST)
         self.llm = MakiLLama(model=LLM_MODEL, base_url=OLLAMA_HOST)
+        self._releases_llm = MakiLLama(
+            model=LLM_MODEL,
+            base_url=OLLAMA_HOST,
+            config=GenerationConfig(max_tokens=4096),
+        )
 
         # AgentManager creates and holds all LLM agents
         self.manager = AgentManager(self.llm)
@@ -371,6 +397,7 @@ class NewsletterPipeline:
                 "You always respond with a valid JSON array and nothing else. "
                 "Do NOT include markdown fences or explanatory text."
             ),
+            maki_instance=self._releases_llm,
         )
 
     # ------------------------------------------------------------------
@@ -635,7 +662,7 @@ class NewsletterPipeline:
             logger.debug("reader_agent returned empty response for %s", article.get("url"))
             return None
 
-        metadata = _extract_json(raw_response)
+        metadata = _extract_json(raw_response, source=article.get("url", ""))
         if not isinstance(metadata, dict):
             logger.warning(
                 "Could not parse JSON from LLM response for %s",
@@ -916,7 +943,7 @@ class NewsletterPipeline:
         top10: List[Dict[str, Any]] = []
         try:
             raw_response = agent.execute_task(task)
-            indexes = _extract_json(raw_response)
+            indexes = _extract_json(raw_response, source="stage_rank")
 
             if isinstance(indexes, list):
                 # Some models return list of dicts; extract the index field
@@ -1272,19 +1299,15 @@ class NewsletterPipeline:
                 for item in items:
                     name = item.get("model_name", "")
                     date = item.get("release_date", "")
-                    summary = item.get("summary", "")
-                    features = item.get("key_features", [])
-                    rel_url = item.get("url", "")
-                    header = f"**[{name}]({rel_url})**" if rel_url else f"**{name}**"
+                    link_url = (
+                        item.get("netlify_url")
+                        or item.get("altervista_url")
+                        or item.get("url", "")
+                    )
+                    header = f"**[{name}]({link_url})**" if link_url else f"**{name}**"
                     if date and date != "recent":
                         header += f" — *{date}*"
                     lines.append(header)
-                    lines.append("")
-                    if summary:
-                        lines.append(summary)
-                        lines.append("")
-                    for feat in features:
-                        lines.append(f"- {feat}")
                     lines.append("")
             lines += ["---", ""]
 
@@ -1389,7 +1412,13 @@ class NewsletterPipeline:
 
             try:
                 raw = agent.execute_task(task)
-                parsed = _extract_json(raw)
+                if not raw or not raw.strip():
+                    logger.debug(
+                        "llm_releases: agent returned empty for %s / %s — treating as no releases",
+                        provider, url,
+                    )
+                    continue
+                parsed = _extract_json(raw, source=f"{provider}/{url}")
                 if not isinstance(parsed, list):
                     continue
                 for item in parsed:
@@ -1694,6 +1723,15 @@ class NewsletterPipeline:
             except (OSError, json.JSONDecodeError) as exc:
                 logger.warning("Could not load model releases %s: %s", mr_path, exc)
 
+        # Backfill Netlify anchor URLs for model releases
+        model_releases = self._backfill_netlify_releases(model_releases)
+        if model_releases:
+            try:
+                with open(mr_path, "w", encoding="utf-8") as fh:
+                    json.dump(model_releases, fh, indent=2, ensure_ascii=False)
+            except OSError as exc:
+                logger.warning("Could not persist model releases with netlify_url: %s", exc)
+
         logger.info("Generating newsletter from all %d articles in %s", len(all_summaries), json_path)
         return self.stage_write(all_summaries, model_releases=model_releases)
 
@@ -1734,6 +1772,24 @@ class NewsletterPipeline:
             "Backfilled netlify_url for %d article(s) → %s", count, page_url
         )
         return summaries
+
+    def _backfill_netlify_releases(
+        self, releases: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Stamp ``netlify_url`` on every model release using the same page URL
+        and slug logic as ``_backfill_netlify_urls`` for articles."""
+        if not NETLIFY_SITE_URL:
+            return releases
+        week_num = getattr(self, "_week_num", None)
+        year = getattr(self, "_year", None)
+        if not week_num or not year:
+            return releases
+        page_url = f"{NETLIFY_SITE_URL}/week/{week_num:02d}_{year}.html"
+        for rel in releases:
+            name = (rel.get("model_name") or "").strip()
+            if name:
+                rel["netlify_url"] = f"{page_url}#{_slugify(name)}"
+        return releases
 
     def run_from_stage3(self, refetch_trends: bool = False) -> str:
         """

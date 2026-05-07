@@ -712,7 +712,14 @@ class WebSearch:
                         resp.status_code, provider, url,
                     )
                     continue
-                text = _strip_html(resp.text)[:max_chars]
+                text = _strip_html(resp.text)
+                # If the page has heavy loading-state noise (SPA skeletons), skip
+                # forward to the first date-like token so the model sees real content.
+                if text.count("Loading") > 5:
+                    m = re.search(r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}|\b20\d{2}-\d{2}-\d{2}\b', text)
+                    if m:
+                        text = text[m.start():]
+                text = text[:max_chars]
                 results.append({"provider": provider, "url": url, "content": text})
                 self.logger.info(
                     "fetch_model_releases: fetched %s (%d chars)", provider, len(text)
