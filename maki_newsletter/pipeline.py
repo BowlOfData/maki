@@ -23,7 +23,7 @@ import os
 import re
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -40,8 +40,10 @@ from .config import (
     MAX_ARTICLE_CHARS,
     MAX_CANDIDATES,
     MAX_HN_PER_QUERY,
+    MAX_MODEL_RELEASE_CHARS,
     MAX_PER_FEED,
     MAX_REDDIT_PER_SUB,
+    MODEL_RELEASE_SOURCES,
     NETLIFY_SITE_URL,
     OLLAMA_HOST,
     OUTPUT_DIR,
@@ -357,6 +359,17 @@ class NewsletterPipeline:
                 "You assemble polished technical newsletters. "
                 "You write clear, engaging introductions that synthesise themes "
                 "across multiple articles."
+            ),
+        )
+        self.manager.add_agent(
+            name="model_releases_agent",
+            role="AI model release tracker",
+            instructions=(
+                "You extract AI model release information from provider announcement pages. "
+                "You identify model names, release dates, key improvements, and write a short "
+                "narrative summary of each release suitable for a technical newsletter. "
+                "You always respond with a valid JSON array and nothing else. "
+                "Do NOT include markdown fences or explanatory text."
             ),
         )
 
@@ -1174,7 +1187,11 @@ class NewsletterPipeline:
     # Stage 7 — Write (LLM agent + file_writer)
     # ------------------------------------------------------------------
 
-    def stage_write(self, summaries: List[Dict[str, Any]]) -> str:
+    def stage_write(
+        self,
+        summaries: List[Dict[str, Any]],
+        model_releases: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """
         Assemble and write the final newsletter Markdown file.
         Returns the absolute path of the output file.
@@ -1236,6 +1253,41 @@ class NewsletterPipeline:
             *intro_block,
         ]
 
+        # Build model releases section when data is available
+        if model_releases:
+            lines += [
+                "## New Model Releases",
+                "",
+                "A roundup of AI model releases and updates from major providers this week.",
+                "",
+            ]
+            # Group by provider
+            by_provider: Dict[str, List[Dict]] = {}
+            for rel in model_releases:
+                prov = rel.get("provider", "Unknown")
+                by_provider.setdefault(prov, []).append(rel)
+            for provider, items in by_provider.items():
+                lines.append(f"### {provider}")
+                lines.append("")
+                for item in items:
+                    name = item.get("model_name", "")
+                    date = item.get("release_date", "")
+                    summary = item.get("summary", "")
+                    features = item.get("key_features", [])
+                    rel_url = item.get("url", "")
+                    header = f"**[{name}]({rel_url})**" if rel_url else f"**{name}**"
+                    if date and date != "recent":
+                        header += f" — *{date}*"
+                    lines.append(header)
+                    lines.append("")
+                    if summary:
+                        lines.append(summary)
+                        lines.append("")
+                    for feat in features:
+                        lines.append(f"- {feat}")
+                    lines.append("")
+            lines += ["---", ""]
+
         for rank, article in enumerate(summaries, start=1):
             title = article.get("title", f"Article {rank}")
             url = article.get("url", "")
@@ -1270,6 +1322,100 @@ class NewsletterPipeline:
         self._cleanup_excluded_articles(summaries)
 
         return output_path
+
+    # ------------------------------------------------------------------
+    # Stage: Model Releases (dedicated function + LLM agent)
+    # ------------------------------------------------------------------
+
+    def _model_releases_path(self, week_num: int, year: int) -> str:
+        return os.path.join(os.path.abspath(OUTPUT_DIR), f"model_releases_{week_num:02d}_{year}.json")
+
+    def stage_model_releases(self) -> List[Dict[str, Any]]:
+        """
+        Fetch each AI provider's announcement page and extract model releases
+        published during the current ISO calendar week (Monday–Sunday UTC).
+
+        Returns a list of release dicts, each containing:
+          provider, model_name, release_date, summary, key_features (list), url.
+        """
+        now = datetime.now(timezone.utc)
+        week_start: datetime = now - timedelta(
+            days=now.weekday(),
+            hours=now.hour,
+            minutes=now.minute,
+            seconds=now.second,
+            microseconds=now.microsecond,
+        )
+        week_end: datetime = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        week_start_str = week_start.strftime("%Y-%m-%d")
+        week_end_str = week_end.strftime("%Y-%m-%d")
+
+        logger.info(
+            "Stage model_releases: scanning %d provider pages for week %s – %s …",
+            len(MODEL_RELEASE_SOURCES), week_start_str, week_end_str,
+        )
+        agent = self.manager.get_agent("model_releases_agent")
+
+        pages = self.web_search.fetch_model_releases(
+            MODEL_RELEASE_SOURCES, max_chars=MAX_MODEL_RELEASE_CHARS
+        )
+
+        releases: List[Dict[str, Any]] = []
+        for page in pages:
+            provider = page["provider"]
+            url = page["url"]
+            content = page.get("content", "")
+            if not content:
+                continue
+
+            task = (
+                f"Provider: {provider}\nSource URL: {url}\n"
+                f"Current week: {week_start_str} to {week_end_str} (Monday–Sunday UTC)\n\n"
+                f"Page content (truncated):\n{content}\n\n"
+                f"Extract only AI model releases or updates that were announced between "
+                f"{week_start_str} and {week_end_str} (the current week). "
+                "Ignore any releases from previous weeks.\n"
+                "For each matching release return a JSON object with these fields:\n"
+                '  "model_name": string — the model name and version\n'
+                '  "release_date": string — YYYY-MM-DD if determinable from the page, '
+                'otherwise "recent"\n'
+                '  "summary": string — 2-3 sentences describing what this model is, what '
+                'it improves over its predecessor, and its main target use cases\n'
+                '  "key_features": array of 3-5 short strings describing key improvements\n'
+                '  "url": string — direct link to the announcement, or the source URL\n\n'
+                "Return a JSON array of release objects. "
+                "If no releases fall within the current week, return []."
+            )
+
+            try:
+                raw = agent.execute_task(task)
+                parsed = _extract_json(raw)
+                if not isinstance(parsed, list):
+                    continue
+                for item in parsed:
+                    if not isinstance(item, dict) or not item.get("model_name"):
+                        continue
+                    # Post-filter: reject dates that parse but fall outside the week
+                    rel_date = item.get("release_date", "")
+                    if rel_date and rel_date != "recent":
+                        try:
+                            rd = date.fromisoformat(rel_date)
+                            if not (week_start.date() <= rd <= week_end.date()):
+                                logger.debug(
+                                    "Dropping %s/%s: date %s outside current week",
+                                    provider, item["model_name"], rel_date,
+                                )
+                                continue
+                        except ValueError:
+                            pass  # unparseable date — keep the item
+                    item.setdefault("provider", provider)
+                    item.setdefault("url", url)
+                    releases.append(item)
+            except Exception as exc:
+                logger.warning("model_releases_agent failed for %s: %s", provider, exc)
+
+        logger.info("Stage model_releases complete: %d releases found this week", len(releases))
+        return releases
 
     def _manifest_path(self) -> str:
         """Return the absolute path of the download manifest for the current week."""
@@ -1371,6 +1517,15 @@ class NewsletterPipeline:
         logger.info("=" * 60)
         logger.info("Newsletter pipeline started")
         logger.info("=" * 60)
+
+        # Scan provider pages for model releases (independent of article pipeline)
+        now_pre = datetime.now(timezone.utc)
+        pre_week, pre_year = _iso_week_parts(now_pre)
+        model_releases = self.stage_model_releases()
+        os.makedirs(os.path.abspath(OUTPUT_DIR), exist_ok=True)
+        with open(self._model_releases_path(pre_week, pre_year), "w", encoding="utf-8") as fh:
+            json.dump(model_releases, fh, indent=2, ensure_ascii=False)
+        logger.info("Model releases saved (%d entries)", len(model_releases))
 
         # Trends run FIRST so their keywords guide what gets searched and downloaded
         trend_articles, trending_keywords = self.stage_trends()
@@ -1528,8 +1683,19 @@ class NewsletterPipeline:
         # Update checkpoint to reflect the current article set
         self._save_url_set(checkpoint_path, current_urls)
 
+        # Load model releases produced during the pipeline run, if available
+        mr_path = self._model_releases_path(self._week_num, self._year)
+        model_releases: List[Dict[str, Any]] = []
+        if os.path.exists(mr_path):
+            try:
+                with open(mr_path, encoding="utf-8") as fh:
+                    model_releases = json.load(fh)
+                logger.info("Loaded %d model releases from %s", len(model_releases), mr_path)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Could not load model releases %s: %s", mr_path, exc)
+
         logger.info("Generating newsletter from all %d articles in %s", len(all_summaries), json_path)
-        return self.stage_write(all_summaries)
+        return self.stage_write(all_summaries, model_releases=model_releases)
 
     def _backfill_netlify_urls(
         self, summaries: List[Dict[str, Any]]

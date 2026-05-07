@@ -147,3 +147,28 @@ NETLIFY_SITE_URL = os.environ.get("NETLIFY_SITE_URL", "").rstrip("/")
 
 OUTPUT_DIR = "output"
 ARTICLES_DIR = "output/articles"
+
+# ---------------------------------------------------------------------------
+# Model release monitoring — AI provider announcement pages
+# ---------------------------------------------------------------------------
+
+MODEL_RELEASE_SOURCES = {
+    "Anthropic":        "https://www.anthropic.com/news",
+    "OpenAI":           "https://openai.com/news/",
+    "xAI (Grok)":       "https://x.ai/news",
+    "Google DeepMind":  "https://deepmind.google/discover/blog/",
+    "Google Gemini":    "https://ai.google.dev/gemini-api/docs/models/gemini",
+    "DeepSeek":         "https://api-docs.deepseek.com/updates",
+    "Qwen (Alibaba)":   "https://qwenlm.github.io/",
+    "Kimi (Moonshot)":  "https://kimi.moonshot.cn/",
+    "GLM (THUDM)":      "https://chatglm.cn/",
+    "Mistral":          "https://mistral.ai/news/",
+    "Meta (Llama)":     "https://github.com/meta-llama/llama-models/releases",
+    "Cohere":           "https://cohere.com/blog",
+    "Amazon (Nova)":    "https://aws.amazon.com/blogs/machine-learning/",
+    "Microsoft (Phi)":  "https://azure.microsoft.com/en-us/blog/topic/ai/",
+    "Hugging Face":     "https://huggingface.co/blog",
+}
+
+# Max characters of page content sent to the model_releases_agent per provider
+MAX_MODEL_RELEASE_CHARS = 8000

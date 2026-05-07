@@ -336,7 +336,7 @@ agent.unload_plugin("file_reader")
 | `directory_reader` | List and explore directory contents |
 | `web_to_md` | Fetch a URL and convert to Markdown |
 | `ftp_client` | Connect to and transfer files via FTP |
-| `web_search` | Fetch articles from RSS feeds and HackerNews |
+| `web_search` | Fetch articles from RSS feeds, HackerNews, Reddit, GitHub Trending, Lobsters, Google Trends, and AI provider announcement pages (`fetch_model_releases`) |
 
 ### Tool calling in agents
 
@@ -475,13 +475,21 @@ technical newsletter from RSS feeds and HackerNews.
 
 | Step | Command | Description |
 |------|---------|-------------|
-| 1 | `python -m maki_newsletter.main` | Search, download, rank, summarise, write evaluation file |
+| 1 | `python -m maki_newsletter.main` | Search, download, enrich, deduplicate, rank, summarise, write evaluation file |
 | 2 | Review `output/articles/<month>/<week>/evaluate_<week>.md` | Approve or discard articles |
 | 3 | `python -m maki_newsletter.generate` | Assemble and write `output/news_<WW>_<YYYY>.md` |
 
 Articles are scored 0–10 by the LLM. By default only scores ≥ 6 ("good match") are
 included in the final newsletter. Pass `--min-score 4` to also include articles that
 need review.
+
+**New pipeline stages:**
+
+- **AI model release tracking** (`stage_model_releases`): at the start of each run the pipeline scrapes the announcement pages of 15 major AI providers (Anthropic, OpenAI, Google DeepMind, Mistral, Meta, DeepSeek, and more) via `web_search.fetch_model_releases()`. An LLM agent extracts model names, release dates, and key features, filtering only releases from the current ISO week. Results are saved to `output/model_releases_<WW>_<YYYY>.json` and rendered as a **"New Model Releases"** section at the top of the newsletter.
+
+- **Topic deduplication** (`stage_dedup_topics`, Stage 3b): after enrichment, articles that cover the same topic are detected using shared technologies and Jaccard word-overlap on their titles and `main_topic` fields. A Union-Find algorithm groups duplicates; only the highest-scoring article from each group is kept, preventing repetitive content in the final newsletter.
+
+- **Netlify anchor URL backfill** (`_backfill_netlify_urls`): when `NETLIFY_SITE_URL` is set in `.env`, each article receives a `netlify_url` field pointing to its anchor on the rendered Bowl of Data website (`/week/<WW>_<YYYY>.html#<title-slug>`). The slug function is kept in sync with `BowlofData_website/build.py` so anchor IDs match exactly.
 
 See [`maki_newsletter/README.md`](maki_newsletter/README.md) for full setup and
 configuration instructions.

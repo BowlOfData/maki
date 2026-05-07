@@ -12,6 +12,7 @@ Dependencies:
 
 import calendar
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -21,7 +22,19 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_METHODS = ["search_rss", "search_hackernews", "fetch_google_trends", "fetch_reddit_hot", "fetch_pexels_image", "fetch_github_trending", "fetch_lobsters"]
+ALLOWED_METHODS = ["search_rss", "search_hackernews", "fetch_google_trends", "fetch_reddit_hot", "fetch_pexels_image", "fetch_github_trending", "fetch_lobsters", "fetch_model_releases"]
+
+
+def _strip_html(html: str) -> str:
+    """Strip HTML tags and normalize whitespace for LLM text extraction."""
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"&lt;", "<", text)
+    text = re.sub(r"&gt;", ">", text)
+    text = re.sub(r"&[a-zA-Z#0-9]+;", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -663,6 +676,52 @@ class WebSearch:
             "fetch_reddit_hot: %d total posts from %d subreddits",
             len(results), len(subreddits),
         )
+        return results
+
+    def fetch_model_releases(
+        self,
+        sources: Dict[str, str],
+        max_chars: int = 8000,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch each AI provider's news/announcement page and return its text content.
+
+        Args:
+            sources: Mapping of provider name → URL.
+            max_chars: Maximum characters of stripped text to return per provider.
+
+        Returns:
+            List of dicts with keys: provider, url, content.
+        """
+        _HEADERS = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        results: List[Dict[str, Any]] = []
+        for provider, url in sources.items():
+            try:
+                resp = requests.get(url, headers=_HEADERS, timeout=20)
+                if resp.status_code != 200:
+                    self.logger.warning(
+                        "fetch_model_releases: HTTP %d for %s (%s)",
+                        resp.status_code, provider, url,
+                    )
+                    continue
+                text = _strip_html(resp.text)[:max_chars]
+                results.append({"provider": provider, "url": url, "content": text})
+                self.logger.info(
+                    "fetch_model_releases: fetched %s (%d chars)", provider, len(text)
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "fetch_model_releases: failed for %s: %s", provider, exc
+                )
+            time.sleep(0.5)
         return results
 
 
