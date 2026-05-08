@@ -334,6 +334,7 @@ agent.unload_plugin("file_reader")
 | `file_reader` | Read files from the filesystem |
 | `file_writer` | Write files to the filesystem |
 | `directory_reader` | List and explore directory contents |
+| `json_reader` | Read a JSON array file and return selected fields as compact numbered text, suitable for LLM context |
 | `web_to_md` | Fetch a URL and convert to Markdown |
 | `ftp_client` | Connect to and transfer files via FTP |
 | `web_search` | Fetch articles from RSS feeds, HackerNews, Reddit, GitHub Trending, Lobsters, Google Trends, and AI provider announcement pages (`fetch_model_releases`) |
@@ -476,8 +477,9 @@ technical newsletter from RSS feeds and HackerNews.
 | Step | Command | Description |
 |------|---------|-------------|
 | 1 | `python -m maki_newsletter.main` | Search, download, enrich, deduplicate, rank, summarise, write evaluation file |
-| 2 | Review `output/articles/<month>/<week>/evaluate_<week>.md` | Approve or discard articles |
-| 3 | `python -m maki_newsletter.generate` | Assemble and write `output/news_<WW>_<YYYY>.md` |
+| 2 _(optional)_ | `python -m maki_newsletter.curate` | LLM agent reviews all articles and writes `output/curated_<WW>_<YYYY>.json` with the top `TOP_CURATED` picks as a review guide |
+| 3 | Review `output/evaluate_<week>.md` | Approve or discard articles, guided by the curated picks |
+| 4 | `python -m maki_newsletter.generate` | Assemble and write `output/news_<WW>_<YYYY>.md` |
 
 Articles are scored 0–10 by the LLM. By default only scores ≥ 6 ("good match") are
 included in the final newsletter. Pass `--min-score 4` to also include articles that

@@ -28,6 +28,7 @@ class GenerationConfig:
     seed: int = -1                # -1 = random
     stop: list[str] = field(default_factory=list)
     do_sample: bool = True        # HuggingFace: enable sampling (set False for greedy)
+    num_ctx: Optional[int] = None # Ollama only: total context window (input + output tokens)
 
     def __post_init__(self):
         if not isinstance(self.temperature, (int, float)):
@@ -47,6 +48,8 @@ class GenerationConfig:
             opts["seed"] = self.seed
         if self.stop:
             opts["stop"] = self.stop
+        if self.num_ctx is not None:
+            opts["num_ctx"] = self.num_ctx
         return opts
 
     def to_hf_kwargs(self) -> dict:

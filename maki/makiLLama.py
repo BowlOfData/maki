@@ -68,6 +68,7 @@ class MakiLLama(LLMBackend):
         system_prompt: Optional[str] = None,
         timeout: int = 120,
         rate_limit: Optional[int] = None,
+        think: Optional[bool] = None,
     ) -> None:
         self.model = model
         self.temperature = config.temperature if config else 0.7
@@ -76,6 +77,7 @@ class MakiLLama(LLMBackend):
         self.config = config or GenerationConfig()
         self.system_prompt = system_prompt
         self.timeout = timeout
+        self.think = think
         self._session = requests.Session()
         self._verify_connection()
 
@@ -181,18 +183,30 @@ class MakiLLama(LLMBackend):
         images: Optional[list[str]] = None,
     ) -> dict:
         cfg = config or self.config
-        return {
+        payload: dict = {
             "model": self.model,
             "messages": self._build_messages(prompt, history, system=system, images=images),
             "stream": stream,
             "options": cfg.to_ollama_options(),
         }
+        if self.think is not None:
+            payload["think"] = self.think
+        return payload
 
     def _parse_response(self, data: dict, elapsed: float) -> LLMResponse:
         prompt_tokens = data.get("prompt_eval_count", 0)
         completion_tokens = data.get("eval_count", 0)
+        content = data["message"]["content"]
+        # Thinking models (gemma4, qwen3, …) may leave content empty when the model
+        # exhausted its budget on the reasoning trace. Fall back to the thinking field
+        # so callers always receive something extractable.
+        if not content.strip():
+            thinking = data["message"].get("thinking", "")
+            if thinking:
+                log.debug("_parse_response: content empty, falling back to thinking field")
+                content = thinking
         return LLMResponse(
-            content=data["message"]["content"],
+            content=content,
             model=data.get("model", self.model),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,

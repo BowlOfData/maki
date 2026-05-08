@@ -295,12 +295,19 @@ class PluginHandler:
                 logger.warning(f"Plugin call failed: {str(e)}", exc_info=True)
                 tool_results.append({"error": str(e)})
 
-        # Strip TOOL: lines from the partial response, then ask for a final answer
+        # Strip TOOL: lines from the partial response, then ask for a final answer.
+        # Include the agent's role and instructions so the synthesis prompt retains context.
         clean_response = _TOOL_PATTERN.sub('', llm_response).strip()
-        follow_up = f"""
-        Task: {task}
-        Tool results: {json.dumps(tool_results, indent=2)}
-        Previous partial response: {clean_response}
-        Please provide your final answer incorporating the tool results.
-        """
+        role = getattr(self, 'role', '')
+        instructions = getattr(self, 'instructions', '')
+        agent_context = ""
+        if role or instructions:
+            agent_context = f"You are a {role}.\n{instructions}\n\n" if role else f"{instructions}\n\n"
+        follow_up = (
+            f"{agent_context}"
+            f"Task: {task}\n\n"
+            f"Tool results:\n{json.dumps(tool_results, indent=2)}\n\n"
+            f"Previous partial response: {clean_response}\n\n"
+            f"Please provide your final answer incorporating the tool results."
+        )
         return self.maki.request(follow_up).content
