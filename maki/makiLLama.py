@@ -22,6 +22,12 @@ from typing import Generator, Iterator, Optional
 from urllib.parse import urlparse
 
 from .backend import LLMBackend
+from .config import (
+    DEFAULT_MODEL,
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_TEMPERATURE,
+)
 from .utils import Utils
 from .objects import LLMResponse, Message, GenerationConfig, RateLimiter
 from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
@@ -58,20 +64,20 @@ class MakiLLama(LLMBackend):
         session.say("Now show me a real-world example.")
     """
 
-    OLLAMA_BASE_URL = "http://localhost:11434"
+    OLLAMA_BASE_URL = DEFAULT_OLLAMA_BASE_URL
 
     def __init__(
         self,
-        model: str = "gemma3",
+        model: str = DEFAULT_MODEL,
         base_url: str = OLLAMA_BASE_URL,
         config: Optional[GenerationConfig] = None,
         system_prompt: Optional[str] = None,
-        timeout: int = 120,
+        timeout: int = DEFAULT_REQUEST_TIMEOUT,
         rate_limit: Optional[int] = None,
         think: Optional[bool] = None,
     ) -> None:
         self.model = model
-        self.temperature = config.temperature if config else 0.7
+        self.temperature = config.temperature if config else DEFAULT_TEMPERATURE
         self._rate_limiter = RateLimiter(rate_limit) if rate_limit is not None else None
         self.base_url = base_url.rstrip("/")
         self.config = config or GenerationConfig()
@@ -459,5 +465,4 @@ def llama(variant: str = "llama3.2", system: Optional[str] = None, **kwargs) -> 
 def mistral(system: Optional[str] = None, **kwargs) -> MakiLLama:
     """Pre-configured wrapper for Mistral."""
     return MakiLLama(model="mistral", system_prompt=system, **kwargs)
-
 

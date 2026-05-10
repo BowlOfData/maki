@@ -18,16 +18,17 @@ from requests.adapters import HTTPAdapter
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
+from maki.config import (
+    DEFAULT_BROWSER_ACCEPT_LANGUAGE,
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_WEB_USER_AGENT,
+)
 from maki.plugins.file_writer.file_writer import FileWriter
 
 _BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": DEFAULT_WEB_USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": DEFAULT_BROWSER_ACCEPT_LANGUAGE,
     "Accept-Encoding": "gzip, deflate",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
@@ -180,7 +181,7 @@ class WebToMd:
         last_exc: Exception = RuntimeError("No attempts made")
         for attempt, delay in enumerate((*_RETRY_DELAYS, None), start=1):
             try:
-                response = session.get(url, timeout=25, allow_redirects=True)
+                response = session.get(url, timeout=DEFAULT_HTTP_TIMEOUT, allow_redirects=True)
                 return response
             except Exception as exc:
                 last_exc = exc

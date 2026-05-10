@@ -1,7 +1,6 @@
 # Web Search Plugin for Maki Framework
 
-Aggregates articles and trend signals from multiple sources without requiring
-API keys (except the optional Pexels image search).
+Focuses on article, community, and repository discovery from public web sources.
 
 ## Features
 
@@ -10,8 +9,6 @@ API keys (except the optional Pexels image search).
 - **GitHub Trending** — most-starred repositories created in the last 7 days
 - **Lobste.rs** — curated developer link-aggregator, current-week stories
 - **Reddit** — hot posts from chosen subreddits, no authentication needed
-- **Google Trends** — rising queries for seed keywords (`pytrends`)
-- **Pexels** — landscape cover image search (API key required)
 
 All date filtering uses the current ISO calendar week (Monday 00:00 UTC through now).
 Articles with an unparseable date are included by default (benefit of the doubt).
@@ -19,8 +16,7 @@ Articles with an unparseable date are included by default (benefit of the doubt)
 ## Installation
 
 ```bash
-pip install feedparser pytrends requests
-# Optional: for Pexels image search, obtain a free key at https://www.pexels.com/api/
+pip install feedparser requests
 ```
 
 ## Usage
@@ -102,37 +98,6 @@ posts = ws.fetch_reddit_hot(
 ```
 
 Returns a list of dicts: `title`, `url`, `snippet`, `source`, `published`.
-
----
-
-### `fetch_google_trends(seed_keywords, timeframe="now 7-d", geo="")`
-
-Retrieves rising related queries for each seed keyword from Google Trends
-via `pytrends`. Keywords are queried one at a time to stay within rate limits.
-
-```python
-trends = ws.fetch_google_trends(
-    seed_keywords=["artificial intelligence", "cybersecurity"],
-    timeframe="now 7-d",
-    geo="",          # empty = worldwide; "US" = United States only
-)
-# {"artificial intelligence": ["gpt-4o", "claude 3", ...], "cybersecurity": [...]}
-```
-
-Returns a dict mapping each seed keyword to a list of rising query strings.
-
----
-
-### `fetch_pexels_image(query, api_key)`
-
-Searches Pexels for a landscape photo matching `query` and returns its URL.
-Requires a free API key from [pexels.com/api](https://www.pexels.com/api/).
-
-```python
-url = ws.fetch_pexels_image("technology innovation", api_key="your_key_here")
-```
-
-Returns a URL string, or `None` if no image is found or the key is missing.
 
 ---
 

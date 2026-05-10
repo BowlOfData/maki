@@ -1,6 +1,4 @@
-"""
-Example usage of the WebSearch plugin with the Maki framework.
-"""
+"""Example usage of the WebSearch plugin with the Maki framework."""
 
 from maki.plugins.web_search.web_search import WebSearch
 
@@ -48,22 +46,3 @@ if __name__ == "__main__":
     for p in posts:
         print(f"  [{p['source']}] {p['title']}")
         print(f"    {p['url']}")
-
-    # Example 6: Google Trends rising queries
-    print("\nExample 6: Google Trends — rising queries")
-    trends = ws.fetch_google_trends(
-        seed_keywords=["artificial intelligence", "cybersecurity"],
-        timeframe="now 7-d",
-    )
-    for seed, queries in trends.items():
-        print(f"  {seed}: {', '.join(queries[:5]) or '(no results)'}")
-
-    # Example 7: Pexels cover image (requires PEXELS_API_KEY env var)
-    import os
-    api_key = os.environ.get("PEXELS_API_KEY", "")
-    if api_key:
-        print("\nExample 7: Pexels cover image")
-        url = ws.fetch_pexels_image("artificial intelligence technology", api_key)
-        print(f"  Image URL: {url}")
-    else:
-        print("\nExample 7: Pexels — set PEXELS_API_KEY to test")

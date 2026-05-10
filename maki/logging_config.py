@@ -4,7 +4,10 @@ Logging configuration for Maki framework
 import logging
 import os
 
-def configure_logging(log_level=logging.INFO, log_file_path=None):
+from .config import DEFAULT_LOG_FORMAT, DEFAULT_LOG_LEVEL
+
+
+def configure_logging(log_level=DEFAULT_LOG_LEVEL, log_file_path=None):
     """Configure logging for the Maki framework
 
     Args:
@@ -14,7 +17,7 @@ def configure_logging(log_level=logging.INFO, log_file_path=None):
     # Setup logging configuration
     logging.basicConfig(
         level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format=DEFAULT_LOG_FORMAT,
         handlers=[
             logging.StreamHandler()
         ]
@@ -28,7 +31,7 @@ def configure_logging(log_level=logging.INFO, log_file_path=None):
             os.makedirs(log_dir, exist_ok=True)
         file_handler = logging.FileHandler(log_file_path)
         file_handler.setLevel(log_level)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        file_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
         logging.getLogger().addHandler(file_handler)
 
     # Set log level for requests and urllib3

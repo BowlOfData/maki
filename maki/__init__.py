@@ -4,10 +4,10 @@ Public package interface for Maki.
 
 from importlib import import_module
 
-
+from . import config
 
 __all__ = ["LLMBackend", "Maki", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
-           "HFBackend", "LLMResponse", "GenerationConfig", "Message", "RateLimiter"]
+           "HFBackend", "LLMResponse", "GenerationConfig", "Message", "RateLimiter", "config"]
 
 _LAZY_EXPORTS = {
     "LLMBackend": (".backend", "LLMBackend"),

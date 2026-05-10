@@ -4,13 +4,21 @@ Main module for Maki framework with logging configuration
 import logging
 import sys
 
+from .config import (
+    DEFAULT_LOG_FORMAT,
+    DEFAULT_LOG_LEVEL,
+    DEFAULT_MODEL,
+    DEFAULT_OLLAMA_HOST,
+    DEFAULT_OLLAMA_PORT,
+)
+
 # Configure logging
 def configure_logging():
     """Configure logging configuration"""
     # Setup logging configuration with only StreamHandler (no file handler by default)
     logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=DEFAULT_LOG_LEVEL,
+        format=DEFAULT_LOG_FORMAT,
         handlers=[
             logging.StreamHandler(sys.stdout)
         ]
@@ -38,7 +46,10 @@ def main():
     print("")
     print("Example usage:")
     print("  from maki import Maki")
-    print("  maki = Maki(url='http://localhost', port='11434', model='qwen3-coder:30b')")
+    print(
+        f"  maki = Maki(url='{DEFAULT_OLLAMA_HOST}', port='{DEFAULT_OLLAMA_PORT}', "
+        f"model='{DEFAULT_MODEL}')"
+    )
 
 if __name__ == "__main__":
     main()

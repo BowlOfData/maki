@@ -7,12 +7,25 @@ from .urls import Actions
 from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 from .objects import LLMResponse, RateLimiter
 from .backend import LLMBackend
+from .config import (
+    DEFAULT_MODEL,
+    DEFAULT_OLLAMA_HOST,
+    DEFAULT_OLLAMA_PORT,
+    DEFAULT_TEMPERATURE,
+)
 import re
 import time
 import logging
 
 class Maki(LLMBackend):
-    def __init__(self, url: Optional[str] = None, port: Union[str, int, None] = None, model: str = "", temperature=0, rate_limit: Optional[int] = None):
+    def __init__(
+        self,
+        url: Optional[str] = DEFAULT_OLLAMA_HOST,
+        port: Union[str, int, None] = DEFAULT_OLLAMA_PORT,
+        model: Optional[str] = DEFAULT_MODEL,
+        temperature: Optional[float] = DEFAULT_TEMPERATURE,
+        rate_limit: Optional[int] = None,
+    ):
         """ Initialize the Maki object
 
         Args:

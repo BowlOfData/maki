@@ -2,514 +2,282 @@
 
 # Maki
 
-Maki is a Python framework for building multi-agent LLM applications. It supports multiple backends (Ollama, HuggingFace Transformers), a plugin system for extending agent capabilities, and a workflow engine for orchestrating complex multi-agent tasks.
+Maki is a Python framework for building LLM applications with local backends, multi-agent coordination, plugin-based tool use, and workflow orchestration.
+
+It currently ships with:
+
+- `Maki` for Ollama's generate API
+- `MakiLLama` for Ollama's chat API, streaming, async calls, and sessions
+- `Agent` and `AgentManager` for role-based multi-agent execution
+- Built-in plugins for files, directories, JSON, web content, FTP/SFTP, search, and image classification
+- A desktop GUI shell exposed through `maki-gui`
 
 ## Features
 
-- **Multiple LLM backends**: Ollama (via `Maki` and `MakiLLama`) and HuggingFace Transformers (via `HFBackend`)
-- **Multi-agent system**: Create and coordinate agents with roles, instructions, and memory
-- **Stateful agents**: Maintain conversation history across task executions
-- **Streaming support**: Token-by-token output via `MakiLLama.stream()`
-- **Async support**: `async_chat()` for asyncio-based applications
-- **Multi-turn sessions**: `ChatSession` for persistent conversations
-- **Plugin system**: Extend agents with built-in plugins (`file_reader`, `file_writer`, `directory_reader`, `web_to_md`, `ftp_client`, `web_search`)
-- **Tool calling in agents**: Agents can invoke plugins via structured `TOOL:` directives
-- **Workflow engine**: Dependency-based task orchestration with retries and parallel execution
-- **Image input support**: Send image files alongside prompts
-- **Configurable logging**: Explicit logging setup with no side effects on import
-- **Custom exceptions**: `MakiNetworkError`, `MakiTimeoutError`, `MakiAPIError`
-- **Newsletter application**: Ready-to-run multi-agent newsletter generator (`maki_newsletter`)
+- Ollama backends with a shared `LLMBackend` contract
+- Synchronous, streaming, async, and vision-capable Ollama workflows
+- Stateful chat sessions and stateful agents
+- Agent memory, retry logic, and reasoning helpers
+- Plugin loading plus structured `TOOL:` calls from agents
+- Workflow execution with dependencies, retries, conditions, and parallel batches
+- Explicit logging setup and custom exception types
 
 ## Installation
 
-### Option 1: Install with pip (recommended)
+Install the package:
+
 ```bash
 pip install .
 ```
 
-### Desktop GUI
-Install the optional GUI dependencies:
+For development tools:
+
 ```bash
-pip install ".[gui]"
+pip install ".[dev]"
 ```
 
-Run the desktop shell:
+Some built-in plugins rely on extra packages listed in [requirements.txt](requirements.txt), especially:
+
+- `feedparser` for RSS parsing
+- `pytrends` for Google Trends
+- `readability-lxml` and `html2text` for web-to-Markdown conversion
+
+If you want all plugin dependencies available, install from `requirements.txt` as well.
+
+## Configuration
+
+Shared runtime defaults live in [maki/config.py](maki/config.py).
+
+Supported environment variables include:
+
+- `MAKI_OLLAMA_BASE_URL`
+- `MAKI_OLLAMA_HOST`
+- `MAKI_OLLAMA_PORT`
+- `MAKI_DEFAULT_MODEL`
+- `MAKI_DEFAULT_TEMPERATURE`
+- `MAKI_REQUEST_TIMEOUT`
+- `MAKI_HTTP_TIMEOUT`
+- `MAKI_LOG_LEVEL`
+- `MAKI_WEB_USER_AGENT`
+
+`python-dotenv` is supported, so `.env` values can be loaded automatically.
+
+## Quick Start
+
+### Basic Ollama request
+
+```python
+from maki import Maki
+
+llm = Maki(model="gemma4:26b")
+response = llm.request("Explain recursion in one sentence.")
+print(response.content)
+```
+
+### Chat, streaming, and async
+
+```python
+import asyncio
+
+from maki import MakiLLama
+from maki.objects import GenerationConfig
+
+config = GenerationConfig(temperature=0.7, max_tokens=512)
+llm = MakiLLama(model="gemma4:26b", config=config)
+
+reply = llm.chat("Give me three project naming ideas.")
+print(reply.content)
+
+for chunk in llm.stream("Write a short haiku about testing"):
+    print(chunk, end="", flush=True)
+
+async def main():
+    response = await llm.async_chat("Summarize the benefits of type hints.")
+    print(response.content)
+
+asyncio.run(main())
+```
+
+### Stateful session
+
+```python
+from maki import MakiLLama
+
+llm = MakiLLama(model="gemma4:26b")
+session = llm.session(system="You are a concise engineering assistant.")
+
+session.say("We are building a release checklist.")
+response = session.say("What should we verify before publishing a Python package?")
+print(response.content)
+```
+
+### Vision call
+
+```python
+import base64
+
+from maki import MakiLLama
+
+llm = MakiLLama(model="gemma4:26b")
+with open("image.png", "rb") as f:
+    image_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+response = llm.chat_with_image("Describe this image.", image_b64=image_b64)
+print(response.content)
+```
+
+## Agents
+
+### Basic agent usage
+
+```python
+from maki import Maki
+from maki.agents import Agent
+
+llm = Maki(model="gemma4:26b")
+agent = Agent(
+    name="Reviewer",
+    maki_instance=llm,
+    role="code reviewer",
+    instructions="Focus on bugs, regressions, and missing validation.",
+    stateful=True,
+)
+
+result = agent.execute_task("Review this design: a plugin system with file access.")
+print(result)
+```
+
+### Memory and reasoning helpers
+
+```python
+agent.remember("repo", "maki")
+print(agent.recall("repo"))
+
+steps = agent.think_step_by_step("How should we structure plugin validation?")
+print(steps)
+
+subtasks = agent.decompose_task("Prepare this repository for a public release")
+print(subtasks)
+```
+
+### Streaming task execution
+
+```python
+from maki import MakiLLama
+from maki.agents import Agent
+
+llm = MakiLLama(model="gemma4:26b")
+agent = Agent(name="Writer", maki_instance=llm, role="writer")
+
+for chunk in agent.stream_task("Draft a short changelog entry."):
+    print(chunk, end="", flush=True)
+```
+
+## Agent Manager and Workflows
+
+`AgentManager` coordinates multiple agents and can run collaborative or dependency-aware workflows.
+
+```python
+from maki import Maki
+from maki.agents import AgentManager, WorkflowTask
+
+llm = Maki(model="llama3")
+manager = AgentManager(llm)
+
+manager.add_agent("Researcher", role="researcher")
+manager.add_agent("Writer", role="writer")
+
+workflow = [
+    WorkflowTask(
+        name="research",
+        agent="Researcher",
+        task="Find the main public-release risks for this repository.",
+    ),
+    WorkflowTask(
+        name="summary",
+        agent="Writer",
+        task="Summarize the research into a release checklist.",
+        dependencies=["research"],
+    ),
+]
+
+results = manager.run_workflow(workflow)
+print(results["summary"]["result"])
+```
+
+Supported manager patterns include:
+
+- `assign_task()` for direct task routing
+- `coordinate_agents()` for sequential multi-agent execution with optional synthesis
+- `collaborative_task()` for many agents working on one task
+- `run_workflow()` for dict-based or `WorkflowTask`-based orchestration
+
+## Plugins
+
+Built-in plugins are registered in [maki/plugins/__init__.py](maki/plugins/__init__.py):
+
+- `directory_reader`
+- `file_reader`
+- `file_writer`
+- `ftp_client`
+- `image_classifier`
+- `json_reader`
+- `media_search`
+- `provider_updates`
+- `trend_search`
+- `web_search`
+- `web_to_md`
+
+### Loading a plugin in an agent
+
+```python
+from maki import Maki
+from maki.agents import Agent
+
+llm = Maki(model="gemma4:26b")
+agent = Agent(name="ToolUser", maki_instance=llm, role="assistant")
+agent.load_plugin("file_reader")
+
+result = agent.execute_task(
+    "Read the first lines of README.md and summarize them.",
+    use_plugins=True,
+)
+print(result)
+```
+
+When `use_plugins=True`, the agent prompt exposes available plugin methods and the model can emit `TOOL:` directives that Maki validates and executes.
+
+## Desktop App
+
+The repository includes a desktop GUI shell launched with:
+
 ```bash
 maki-gui
 ```
 
-### Option 2: Copy folder to your project
-Copy the `maki` folder into your project and install dependencies:
-```bash
-pip install requests httpx
-```
+The current implementation is a PySide6/QML bootstrap with an application shell, not a full production desktop client yet.
 
-## Quick Start
+## Public API
 
-```python
-from maki import Maki, MakiLLama
+Top-level imports currently exposed by `maki` include:
 
-# Ollama – simple generate API
-maki = Maki(url="http://localhost", port="11434", model="llama3", temperature=0.7)
-result = maki.request("What is the capital of France?")
-print(result)
+- `Maki`
+- `MakiLLama`
+- `Agent`
+- `AgentManager`
+- `LLMBackend`
+- `GenerationConfig`
+- `LLMResponse`
+- `Message`
+- `RateLimiter`
+- `config`
 
-# Ollama – richer chat API with streaming and sessions
-llm = MakiLLama(model="gemma3")
-response = llm.chat("Tell me a joke")
-print(response.content)
-print(f"Tokens: {response.total_tokens} | Speed: {response.tokens_per_second:.1f} tok/s")
-```
+## Testing
 
-## Desktop App Draft
-
-The repository now includes an initial cross-platform desktop GUI scaffold in `maki_gui/`.
-
-- `maki/`: framework core and runtime logic
-- `maki_gui/`: PySide6/QML desktop application
-- `maki_gui/state/`: UI-facing state objects
-- `maki_gui/services/`: service layer for connecting UI to the core runtime
-- `maki_gui/ui/qml/`: QML views and future shared components
-
-The current draft is a shell intended for the first Chat MVP. It provides:
-
-- a dedicated `maki-gui` entry point
-- a desktop window with navigation for Chat, Agents, Workflows, Settings, and Logs
-- a visual foundation that can evolve into reusable components and view models
-
-## Backends
-
-### `Maki` – Ollama generate API
-
-The base class. Use it when you need a minimal, synchronous interface to Ollama.
-
-```python
-from maki import Maki
-
-maki = Maki(url="http://localhost", port="11434", model="llama3", temperature=0.7)
-
-# Text request
-result = maki.request("Explain quantum computing in one sentence.")
-
-# Image request
-result = maki.request_with_images("What's in this image?", img="photo.jpg")
-```
-
-### `MakiLLama` – Ollama chat API
-
-A full-featured Ollama wrapper with streaming, async, and session support.
-
-```python
-from maki import MakiLLama
-from maki.objects import GenerationConfig
-
-config = GenerationConfig(temperature=0.8, max_tokens=1024)
-llm = MakiLLama(model="gemma3", system_prompt="You are a concise assistant.", config=config)
-
-# Single-turn chat
-response = llm.chat("What is recursion?")
-response_text = response.content
-
-# Streaming
-for chunk in llm.stream("Write a haiku about Python"):
-    print(chunk, end="", flush=True)
-
-# Async
-import asyncio
-response = asyncio.run(llm.async_chat("Explain async/await in Python"))
-
-# List available local models
-models = llm.list_models()
-
-# Pull a model
-llm.pull("mistral")
-```
-
-#### Multi-turn sessions
-
-```python
-session = llm.session(system="You are an expert chef specializing in Italian cuisine.")
-r1 = session.say("What's the secret to perfect pasta carbonara?")
-r2 = session.say("Can I substitute bacon for guanciale?")
-session.print_history()
-session.reset()
-```
-
-#### Factory functions
-
-```python
-from maki.makiLLama import gemma3, qwen, llama, mistral
-
-llm = gemma3(system="You are a helpful assistant.")
-llm = qwen(variant="qwen2.5:7b")
-llm = llama(variant="llama3.2")
-llm = mistral()
-```
-
-### `HFBackend` – HuggingFace Transformers
-
-Runs models directly from HuggingFace without Ollama. Supports CUDA, MPS (Apple Silicon), and CPU.
-
-```python
-from maki import HFBackend
-from maki.objects import GenerationConfig
-
-# Load a model (downloads from HuggingFace Hub on first run)
-llm = HFBackend(
-    model_id="google/gemma-3-1b-it",
-    load_in_4bit=True,   # optional quantization
-)
-
-# Simple request
-result = llm.request("What is the capital of France?")
-
-# Full generation with config
-from maki.objects import GenerationConfig
-config = GenerationConfig(max_tokens=512, temperature=0.7)
-response = llm.generate([{"role": "user", "content": "Tell me a joke"}], config)
-print(response.content)
-
-# Streaming
-for chunk in llm.stream([{"role": "user", "content": "Write a poem"}], config):
-    print(chunk, end="", flush=True)
-
-# Release GPU memory when done
-llm.unload()
-```
-
-Supported model families: Gemma 3, Qwen 2.5, Llama 3, Mistral, Phi-3, and any HuggingFace chat model.
-
-## Multi-Agent System
-
-### Basic usage
-
-```python
-from maki import Maki
-from maki.agents import AgentManager
-
-maki = Maki(url="http://localhost", port="11434", model="llama3", temperature=0.7)
-manager = AgentManager(maki)
-
-researcher = manager.add_agent(
-    name="Researcher",
-    role="research analyst",
-    instructions="You are an expert researcher who finds and analyzes information.",
-)
-
-writer = manager.add_agent(
-    name="Writer",
-    role="technical writer",
-    instructions="You write clear, concise summaries from research findings.",
-)
-
-result = manager.assign_task("Researcher", "Research the benefits of renewable energy")
-print(result)
-```
-
-### Stateful agents
-
-Stateful agents include prior task results in subsequent prompts, enabling multi-turn reasoning.
-
-```python
-from maki import Maki
-from maki.agents import Agent
-
-maki = Maki(url="http://localhost", port="11434", model="llama3", temperature=0.7)
-agent = Agent(name="Analyst", maki_instance=maki, role="data analyst", stateful=True)
-
-agent.execute_task("Summarize the Q1 sales data: revenue $1.2M, units 4500.")
-agent.execute_task("Based on Q1, what should our Q2 targets be?")  # sees Q1 result
-
-agent.reset_conversation()  # clear history
-```
-
-### Agent memory
-
-```python
-agent.remember("client_name", "Acme Corp")
-client = agent.recall("client_name")
-agent.clear_memory()
-```
-
-### Streaming tasks
-
-```python
-from maki import MakiLLama
-from maki.agents import Agent
-
-llm = MakiLLama(model="gemma3")
-agent = Agent(name="Writer", maki_instance=llm, role="writer")
-
-for chunk in agent.stream_task("Write a short poem about the ocean"):
-    print(chunk, end="", flush=True)
-```
-
-### Task retry
-
-```python
-result = agent.execute_task_with_retry(
-    "Summarize the latest AI news",
-    max_retries=3,
-    retry_delay=2.0,
-)
-```
-
-### Enhanced reasoning
-
-```python
-# Step-by-step reasoning
-result = agent.think_step_by_step("How do we reduce customer churn?", steps=4)
-
-# Self-correction
-initial = agent.execute_task("Draft a product description for item X")
-improved = agent.self_correct(initial, feedback="Make it shorter and more engaging", max_iterations=2)
-
-# Task decomposition – returns a list of subtask dicts
-subtasks = agent.decompose_task("Launch a new mobile app", max_subtasks=5)
-for subtask in subtasks:
-    print(subtask["description"], "→", subtask["expected_outcome"])
-```
-
-### Per-agent LLM instances
-
-Each agent can use a different model or temperature:
-
-```python
-fast_llm = Maki(url="http://localhost", port="11434", model="mistral", temperature=0.3)
-creative_llm = Maki(url="http://localhost", port="11434", model="llama3", temperature=0.9)
-
-manager.add_agent("Classifier", role="classifier", maki_instance=fast_llm)
-manager.add_agent("Storyteller", role="storyteller", maki_instance=creative_llm)
-```
-
-## Multi-Agent Coordination
-
-### Coordinate agents sequentially
-
-```python
-tasks = [
-    {"agent": "Researcher", "task": "Research renewable energy trends"},
-    {"agent": "Writer", "task": "Summarize the research", "context": {"audience": "executives"}},
-]
-
-results = manager.coordinate_agents(
-    tasks,
-    coordination_prompt="Synthesize these findings into an executive briefing."
-)
-print(results.get("final_synthesis"))
-```
-
-### Collaborative task (all agents work on the same task)
-
-```python
-result = manager.collaborative_task(
-    task="What are the key risks in our Q3 strategy?",
-    agents=["Researcher", "Analyst", "Writer"],
-    strict=False,   # True = fail if any agent errors
-)
-```
-
-## Plugin System
-
-Plugins extend agent capabilities with specialized tools.
-
-```python
-# Load a plugin
-file_reader = agent.load_plugin("file_reader")
-
-# Use directly
-content = file_reader.read_file("report.txt")
-
-# Or retrieve a loaded plugin later
-plugin = agent.get_plugin("file_reader")
-
-# Unload
-agent.unload_plugin("file_reader")
-```
-
-### Built-in plugins
-
-| Plugin | Description |
-|---|---|
-| `file_reader` | Read files from the filesystem |
-| `file_writer` | Write files to the filesystem |
-| `directory_reader` | List and explore directory contents |
-| `json_reader` | Read a JSON array file and return selected fields as compact numbered text, suitable for LLM context |
-| `web_to_md` | Fetch a URL and convert to Markdown |
-| `ftp_client` | Connect to and transfer files via FTP |
-| `web_search` | Fetch articles from RSS feeds, HackerNews, Reddit, GitHub Trending, Lobsters, Google Trends, and AI provider announcement pages (`fetch_model_releases`) |
-
-### Tool calling in agents
-
-When `use_plugins=True`, the agent can issue `TOOL:` calls that are automatically executed:
-
-```python
-agent.load_plugin("file_reader")
-agent.load_plugin("web_to_md")
-
-result = agent.execute_task(
-    "Read the file config.json and summarize its contents",
-    use_plugins=True,
-)
-```
-
-### Custom plugins
-
-Load a plugin from a custom path:
-
-```python
-plugin = agent.load_plugin("my_plugin", plugin_path="/path/to/plugins")
-```
-
-A plugin module must expose either a `register_plugin(maki_instance)` function or a class with the same name as the plugin.
-
-## Workflow Engine
-
-The workflow engine orchestrates multi-agent tasks with dependencies, retries, conditions, and parallel execution.
-
-```python
-from maki.agents import WorkflowTask, TaskStatus, WorkflowState
-
-tasks = [
-    WorkflowTask(
-        name="research",
-        agent="Researcher",
-        task="Research the latest developments in AI safety",
-        dependencies=[],
-        max_retries=2,
-        retry_delay=1.0,
-    ),
-    WorkflowTask(
-        name="write_report",
-        agent="Writer",
-        task="Write a report based on the AI safety research",
-        dependencies=["research"],   # runs after "research"
-        max_retries=1,
-    ),
-    WorkflowTask(
-        name="review",
-        agent="Reviewer",
-        task="Review and critique the report",
-        dependencies=["write_report"],
-        parallelizable=False,
-    ),
-]
-
-results = manager.run_workflow(tasks)
-for name, data in results.items():
-    print(f"{name}: {data['result'][:100]}")
-```
-
-### Dict-based workflow (simple)
-
-```python
-workflow = [
-    {"name": "step1", "agent": "Researcher", "task": "Gather data"},
-    {"name": "step2", "agent": "Analyst",    "task": "Analyze data", "parallelizable": True},
-    {"name": "step3", "agent": "Analyst",    "task": "Verify data",  "parallelizable": True},
-]
-results = manager.run_workflow(workflow)
-```
-
-Workflow features:
-- **Dependency enforcement** via topological sort
-- **Retry logic** with configurable delays per task
-- **Parallel execution** of tasks marked `parallelizable=True`
-- **Conditional execution** via task conditions evaluated at runtime
-- **Status tracking**: `PENDING`, `IN_PROGRESS`, `COMPLETED`, `FAILED`
-
-## Logging
-
-Maki does not configure logging automatically. Call `configure_logging()` explicitly in your application:
-
-```python
-import logging
-from maki.logging_config import configure_logging
-
-# Console only (default)
-configure_logging()
-
-# Console + file with custom level
-configure_logging(log_level=logging.DEBUG, log_file_path="maki.log")
-```
-
-Log format:
-```
-2026-03-15 14:30:45,123 - module_name - LEVEL - Message
-```
-
-## Error Handling
-
-```python
-from maki.exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
-
-try:
-    result = maki.request("Hello")
-except MakiTimeoutError:
-    print("Request timed out")
-except MakiNetworkError:
-    print("Network error")
-except MakiAPIError:
-    print("API returned an error")
-```
-
-Only `MakiNetworkError` and `MakiTimeoutError` are retried automatically by `execute_task_with_retry`. `MakiAPIError` and input validation errors (`ValueError`, `TypeError`) fail immediately.
-
-## Examples
+Run the test suite with:
 
 ```bash
-# Run the built-in demo
-python -m maki
-
-# MakiLLama demo
-python -m maki.makiLLama
+python3 -m pytest
 ```
 
-## Applications
-
-### Maki Newsletter
-
-`maki_newsletter/` is a ready-to-run multi-agent application that generates a weekly
-technical newsletter from RSS feeds and HackerNews.
-
-**Pipeline overview:**
-
-| Step | Command | Description |
-|------|---------|-------------|
-| 1 | `python -m maki_newsletter.main` | Search, download, enrich, deduplicate, rank, summarise, write evaluation file |
-| 2 _(optional)_ | `python -m maki_newsletter.curate` | LLM agent reviews all articles and writes `output/curated_<WW>_<YYYY>.json` with the top `TOP_CURATED` picks as a review guide |
-| 3 | Review `output/evaluate_<week>.md` | Approve or discard articles, guided by the curated picks |
-| 4 | `python -m maki_newsletter.generate` | Assemble and write `output/news_<WW>_<YYYY>.md` |
-
-Articles are scored 0–10 by the LLM. By default only scores ≥ 6 ("good match") are
-included in the final newsletter. Pass `--min-score 4` to also include articles that
-need review.
-
-**New pipeline stages:**
-
-- **AI model release tracking** (`stage_model_releases`): at the start of each run the pipeline scrapes the announcement pages of 15 major AI providers (Anthropic, OpenAI, Google DeepMind, Mistral, Meta, DeepSeek, and more) via `web_search.fetch_model_releases()`. An LLM agent extracts model names, release dates, and key features, filtering only releases from the current ISO week. Results are saved to `output/model_releases_<WW>_<YYYY>.json` and rendered as a **"New Model Releases"** section at the top of the newsletter.
-
-- **Topic deduplication** (`stage_dedup_topics`, Stage 3b): after enrichment, articles that cover the same topic are detected using shared technologies and Jaccard word-overlap on their titles and `main_topic` fields. A Union-Find algorithm groups duplicates; only the highest-scoring article from each group is kept, preventing repetitive content in the final newsletter.
-
-- **Netlify anchor URL backfill** (`_backfill_netlify_urls`): when `NETLIFY_SITE_URL` is set in `.env`, each article receives a `netlify_url` field pointing to its anchor on the rendered Bowl of Data website (`/week/<WW>_<YYYY>.html#<title-slug>`). The slug function is kept in sync with `BowlofData_website/build.py` so anchor IDs match exactly.
-
-See [`maki_newsletter/README.md`](maki_newsletter/README.md) for full setup and
-configuration instructions.
-
----
-
-## License
-
-MIT
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Commit your changes (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin feature/your-feature`)
-5. Create a new Pull Request
-
-## Support
-
-For support, please open an issue on the GitHub repository.
+The repository currently has broad automated coverage across backends, agents, workflows, plugins, and security-related behavior.

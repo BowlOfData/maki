@@ -10,9 +10,7 @@ Dependencies:
     pip install feedparser>=6.0 pytrends>=4.9.0
 """
 
-import calendar
 import logging
-import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -20,115 +18,27 @@ from urllib.parse import quote as urlquote, urlparse
 
 import requests
 
+from maki.config import DEFAULT_HTTP_TIMEOUT, DEFAULT_WEB_USER_AGENT
+from maki.plugins._web_utils import (
+    is_current_week as _is_current_week,
+    is_media_url as _is_media_url,
+    now_utc as _now_utc,
+    parse_published as _parse_published,
+    struct_time_to_datetime as _struct_time_to_datetime,
+    week_start_utc as _week_start_utc,
+)
+
 logger = logging.getLogger(__name__)
 
-ALLOWED_METHODS = ["search_rss", "search_hackernews", "fetch_google_trends", "fetch_reddit_hot", "fetch_pexels_image", "fetch_github_trending", "fetch_lobsters", "fetch_model_releases"]
+ALLOWED_METHODS = [
+    "search_rss",
+    "search_hackernews",
+    "fetch_reddit_hot",
+    "fetch_github_trending",
+    "fetch_lobsters",
+]
 
-
-def _strip_html(html: str) -> str:
-    """Strip HTML tags and normalize whitespace for LLM text extraction."""
-    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"&nbsp;", " ", text)
-    text = re.sub(r"&amp;", "&", text)
-    text = re.sub(r"&lt;", "<", text)
-    text = re.sub(r"&gt;", ">", text)
-    text = re.sub(r"&[a-zA-Z#0-9]+;", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-# ---------------------------------------------------------------------------
-# Week-boundary helpers
-# ---------------------------------------------------------------------------
-
-def _now_utc() -> datetime:
-    """Return the current UTC time as a timezone-aware datetime."""
-    return datetime.now(timezone.utc)
-
-
-def _week_start_utc(now: Optional[datetime] = None) -> datetime:
-    """Return Monday 00:00:00 UTC of the current ISO calendar week."""
-    now = now or _now_utc()
-    return now - timedelta(
-        days=now.weekday(),
-        hours=now.hour,
-        minutes=now.minute,
-        seconds=now.second,
-        microseconds=now.microsecond,
-    )
-
-
-def _parse_published(date_str: str) -> Optional[datetime]:
-    """
-    Parse a published-date string into a timezone-aware datetime.
-
-    Handles ISO 8601 (DuckDuckGo / HackerNews) and RFC 2822
-    (RSS standard: ``"Fri, 17 Apr 2026 02:55:06 +0000"``).
-    Returns ``None`` when the string cannot be parsed.
-    """
-    if not date_str:
-        return None
-    # ISO 8601
-    try:
-        dt = datetime.fromisoformat(date_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except (ValueError, TypeError):
-        pass
-    # RFC 2822 (standard RSS date format)
-    try:
-        from email.utils import parsedate_to_datetime
-        return parsedate_to_datetime(date_str)
-    except Exception:
-        return None
-
-
-def _struct_time_to_datetime(st) -> Optional[datetime]:
-    """Convert a ``time.struct_time`` (UTC, as returned by feedparser) to datetime."""
-    if st is None:
-        return None
-    try:
-        return datetime.fromtimestamp(calendar.timegm(st), tz=timezone.utc)
-    except Exception:
-        return None
-
-
-_MEDIA_EXTENSIONS = frozenset(
-    ".jpg .jpeg .png .gif .webp .svg .bmp .tiff .tif "
-    ".mp4 .mov .avi .webm .mkv .mp3 .wav .pdf".split()
-)
-_MEDIA_HOSTS = frozenset([
-    "i.redd.it", "preview.redd.it", "v.redd.it",
-    "i.imgur.com", "imgur.com",
-    "pbs.twimg.com", "video.twimg.com",
-])
-
-
-def _is_media_url(url: str) -> bool:
-    """Return True when *url* points to a direct media file rather than an article."""
-    try:
-        parsed = urlparse(url)
-        if parsed.netloc in _MEDIA_HOSTS:
-            return True
-        path_lower = parsed.path.lower()
-        return any(path_lower.endswith(ext) for ext in _MEDIA_EXTENSIONS)
-    except Exception:
-        return False
-
-
-def _is_current_week(date_str: str, now: Optional[datetime] = None) -> bool:
-    """
-    Return True if *date_str* falls within the current ISO calendar week
-    (Monday 00:00:00 UTC through now).
-
-    Articles with an unparseable date are included (benefit of the doubt).
-    """
-    dt = _parse_published(date_str)
-    if dt is None:
-        return True
-    now = now or _now_utc()
-    return _week_start_utc(now) <= dt <= now
+_DEFAULT_HEADERS = {"User-Agent": DEFAULT_WEB_USER_AGENT}
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +110,8 @@ class WebSearch:
             try:
                 resp = requests.get(
                     feed_url,
-                    timeout=15,
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; MakiNewsletter/1.0)"},
+                    timeout=DEFAULT_HTTP_TIMEOUT,
+                    headers=_DEFAULT_HEADERS,
                 )
                 resp.raise_for_status()
                 feed = feedparser.parse(resp.text)
@@ -294,7 +204,7 @@ class WebSearch:
 
         results: List[Dict[str, Any]] = []
         try:
-            resp = requests.get(api_url, timeout=10)
+            resp = requests.get(api_url, timeout=DEFAULT_HTTP_TIMEOUT)
             resp.raise_for_status()
             for hit in resp.json().get("hits", []):
                 article_url = hit.get("url", "")
@@ -316,159 +226,6 @@ class WebSearch:
             self.logger.warning("search_hackernews('%s') failed: %s", query, exc)
 
         return results
-
-    def fetch_google_trends(
-        self,
-        seed_keywords: List[str],
-        timeframe: str = "now 7-d",
-        geo: str = "",
-    ) -> Dict[str, List[str]]:
-        """
-        Retrieve rising related queries for each seed keyword from Google Trends.
-
-        Uses the unofficial ``pytrends`` library (no API key required).
-        Rising queries represent topics gaining momentum this week — more
-        useful for trend cross-checking than the static "top" queries.
-
-        Args:
-            seed_keywords: Broad topic keywords, e.g.
-                           ["artificial intelligence", "cybersecurity"].
-                           Google Trends accepts up to 5 at a time; if more
-                           are provided they are batched automatically.
-            timeframe:     Google Trends timeframe string (default ``"now 7-d"``
-                           = last 7 days). Other useful values: ``"now 1-d"``,
-                           ``"today 1-m"``.
-            geo:           Country code (e.g. ``"US"``).  Empty string = worldwide.
-
-        Returns:
-            Dict mapping each seed keyword to a list of rising query strings.
-            Keywords that returned no rising data map to an empty list.
-            Returns an empty dict if ``pytrends`` is not installed or if the
-            request fails.
-        """
-        try:
-            from pytrends.request import TrendReq
-        except ImportError:
-            self.logger.error(
-                "pytrends is not installed. Run: pip install 'pytrends>=4.9.0'"
-            )
-            return {}
-
-        results: Dict[str, List[str]] = {kw: [] for kw in seed_keywords}
-
-        # One keyword per request: smaller payloads are far less likely to
-        # trigger Google's 429 rate limit than a multi-keyword batch.
-        _429_delays = (30.0, 60.0, 120.0)  # back-off ladder for 429 responses
-
-        try:
-            pytrends = TrendReq(hl="en-US", tz=0, timeout=(10, 25))
-        except Exception as exc:
-            self.logger.warning("fetch_google_trends: TrendReq init failed: %s", exc)
-            return results
-
-        for kw in seed_keywords:
-            related = self._google_trends_query(
-                pytrends, [kw], timeframe, geo, _429_delays
-            )
-            if related is None:
-                # All retries exhausted for this keyword — skip it
-                continue
-
-            kw_data = related.get(kw, {}) or {}
-            rising_df = kw_data.get("rising")
-            if rising_df is not None and not rising_df.empty:
-                results[kw] = rising_df["query"].tolist()
-                self.logger.debug(
-                    "fetch_google_trends: '%s' → %d rising queries", kw, len(results[kw])
-                )
-            else:
-                top_df = kw_data.get("top")
-                if top_df is not None and not top_df.empty:
-                    results[kw] = top_df["query"].head(10).tolist()
-                    self.logger.debug(
-                        "fetch_google_trends: '%s' → %d top queries (no rising data)",
-                        kw, len(results[kw]),
-                    )
-
-            # Polite pause between keywords to stay well below rate limits
-            time.sleep(5.0)
-
-        total = sum(len(v) for v in results.values())
-        self.logger.info(
-            "fetch_google_trends: %d total trending queries across %d keywords",
-            total, len(seed_keywords),
-        )
-        return results
-
-    def _google_trends_query(
-        self,
-        pytrends,
-        keywords: List[str],
-        timeframe: str,
-        geo: str,
-        retry_delays: tuple,
-    ) -> Optional[Dict]:
-        """
-        Call pytrends.build_payload + related_queries for *keywords*.
-
-        Retries on 429 responses using *retry_delays* as the back-off ladder
-        (seconds to wait before each retry).  Returns None when all retries
-        are exhausted or on a non-retryable error.
-        """
-        for attempt, delay in enumerate((*retry_delays, None), start=1):
-            try:
-                pytrends.build_payload(keywords, timeframe=timeframe, geo=geo)
-                return pytrends.related_queries()
-            except Exception as exc:
-                is_429 = "429" in str(exc)
-                if is_429 and delay is not None:
-                    self.logger.warning(
-                        "fetch_google_trends: 429 rate-limited for %s "
-                        "(attempt %d/%d) — waiting %.0fs before retry",
-                        keywords, attempt, len(retry_delays) + 1, delay,
-                    )
-                    time.sleep(delay)
-                else:
-                    self.logger.warning(
-                        "fetch_google_trends: query failed for %s: %s", keywords, exc
-                    )
-                    return None
-        return None
-
-    def fetch_pexels_image(self, query: str, api_key: str) -> Optional[str]:
-        """
-        Search Pexels for a landscape photo matching *query* and return its URL.
-
-        Args:
-            query:   Search terms (e.g. "artificial intelligence cybersecurity").
-            api_key: Pexels API key (free at https://www.pexels.com/api/).
-
-        Returns:
-            The direct image URL (large size, landscape orientation), or None
-            if the key is missing, the request fails, or no photos are found.
-        """
-        if not api_key:
-            self.logger.warning("fetch_pexels_image: PEXELS_API_KEY not set — skipping image")
-            return None
-
-        try:
-            resp = requests.get(
-                "https://api.pexels.com/v1/search",
-                headers={"Authorization": api_key},
-                params={"query": query, "per_page": 1, "orientation": "landscape"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            photos = resp.json().get("photos", [])
-            if not photos:
-                self.logger.warning("fetch_pexels_image: no results for query '%s'", query)
-                return None
-            url = photos[0]["src"]["large"]
-            self.logger.info("fetch_pexels_image: image found for '%s' → %s", query, url)
-            return url
-        except Exception as exc:
-            self.logger.warning("fetch_pexels_image: request failed: %s", exc)
-            return None
 
     def fetch_github_trending(self, max_results: int = 10) -> List[Dict[str, Any]]:
         """
@@ -492,13 +249,13 @@ class WebSearch:
             f"&sort=stars&order=desc&per_page={max_results}"
         )
         headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; MakiNewsletter/1.0)",
+            "User-Agent": DEFAULT_WEB_USER_AGENT,
             "Accept": "application/vnd.github.v3+json",
         }
 
         results: List[Dict[str, Any]] = []
         try:
-            resp = requests.get(api_url, headers=headers, timeout=15)
+            resp = requests.get(api_url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
             resp.raise_for_status()
             for item in resp.json().get("items", []):
                 url = item.get("html_url", "")
@@ -551,8 +308,8 @@ class WebSearch:
         try:
             resp = requests.get(
                 "https://lobste.rs/rss",
-                timeout=15,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; MakiNewsletter/1.0)"},
+                timeout=DEFAULT_HTTP_TIMEOUT,
+                headers=_DEFAULT_HEADERS,
             )
             resp.raise_for_status()
             feed = feedparser.parse(resp.text)
@@ -616,12 +373,12 @@ class WebSearch:
         now = _now_utc()
         week_start = _week_start_utc(now)
         results: List[Dict[str, Any]] = []
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; MakiNewsletter/1.0)"}
+        headers = _DEFAULT_HEADERS
 
         for sub in subreddits:
             url = f"https://www.reddit.com/r/{sub}/hot.json?limit={max_per_sub + 5}"
             try:
-                resp = requests.get(url, headers=headers, timeout=15)
+                resp = requests.get(url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
                 resp.raise_for_status()
                 posts = resp.json().get("data", {}).get("children", [])
             except Exception as exc:
@@ -677,60 +434,6 @@ class WebSearch:
             len(results), len(subreddits),
         )
         return results
-
-    def fetch_model_releases(
-        self,
-        sources: Dict[str, str],
-        max_chars: int = 8000,
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch each AI provider's news/announcement page and return its text content.
-
-        Args:
-            sources: Mapping of provider name → URL.
-            max_chars: Maximum characters of stripped text to return per provider.
-
-        Returns:
-            List of dicts with keys: provider, url, content.
-        """
-        _HEADERS = {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        results: List[Dict[str, Any]] = []
-        for provider, url in sources.items():
-            try:
-                resp = requests.get(url, headers=_HEADERS, timeout=20)
-                if resp.status_code != 200:
-                    self.logger.warning(
-                        "fetch_model_releases: HTTP %d for %s (%s)",
-                        resp.status_code, provider, url,
-                    )
-                    continue
-                text = _strip_html(resp.text)
-                # If the page has heavy loading-state noise (SPA skeletons), skip
-                # forward to the first date-like token so the model sees real content.
-                if text.count("Loading") > 5:
-                    m = re.search(r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}|\b20\d{2}-\d{2}-\d{2}\b', text)
-                    if m:
-                        text = text[m.start():]
-                text = text[:max_chars]
-                results.append({"provider": provider, "url": url, "content": text})
-                self.logger.info(
-                    "fetch_model_releases: fetched %s (%d chars)", provider, len(text)
-                )
-            except Exception as exc:
-                self.logger.warning(
-                    "fetch_model_releases: failed for %s: %s", provider, exc
-                )
-            time.sleep(0.5)
-        return results
-
 
 # ---------------------------------------------------------------------------
 # Plugin registration function (maki contract)

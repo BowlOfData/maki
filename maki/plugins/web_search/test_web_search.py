@@ -14,10 +14,12 @@ from maki.plugins.web_search.web_search import (
     WebSearch,
     register_plugin,
     ALLOWED_METHODS,
-    _week_start_utc,
-    _parse_published,
-    _struct_time_to_datetime,
-    _is_current_week,
+)
+from maki.plugins._web_utils import (
+    is_current_week as _is_current_week,
+    parse_published as _parse_published,
+    struct_time_to_datetime as _struct_time_to_datetime,
+    week_start_utc as _week_start_utc,
 )
 
 import time as _time
@@ -132,6 +134,9 @@ class TestWebSearchInit(unittest.TestCase):
     def test_allowed_methods(self):
         self.assertIn("search_rss", ALLOWED_METHODS)
         self.assertIn("search_hackernews", ALLOWED_METHODS)
+        self.assertNotIn("fetch_google_trends", ALLOWED_METHODS)
+        self.assertNotIn("fetch_pexels_image", ALLOWED_METHODS)
+        self.assertNotIn("fetch_model_releases", ALLOWED_METHODS)
 
     def test_all_allowed_methods_exist(self):
         ws = WebSearch()
