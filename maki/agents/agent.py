@@ -102,7 +102,7 @@ class Agent(PluginHandler, ReasoningEngine):
             f"        Task: {task}\n\n"
             f"        Context: {json.dumps(context) if context else 'None'}"
             f"{plugin_section}\n\n"
-            f"        Please provide a detailed response to the task.\n        "
+            f"        Response:\n        "
         )
 
     def execute_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False) -> str:
