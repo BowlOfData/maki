@@ -75,6 +75,7 @@ class MakiLLama(LLMBackend):
         timeout: int = DEFAULT_REQUEST_TIMEOUT,
         rate_limit: Optional[int] = None,
         think: Optional[bool] = None,
+        json_format: bool = False,
     ) -> None:
         self.model = model
         self.temperature = config.temperature if config else DEFAULT_TEMPERATURE
@@ -84,6 +85,7 @@ class MakiLLama(LLMBackend):
         self.system_prompt = system_prompt
         self.timeout = timeout
         self.think = think
+        self.json_format = json_format
         self._session = requests.Session()
         self._verify_connection()
 
@@ -197,6 +199,8 @@ class MakiLLama(LLMBackend):
         }
         if self.think is not None:
             payload["think"] = self.think
+        if self.json_format:
+            payload["format"] = "json"
         return payload
 
     def _parse_response(self, data: dict, elapsed: float) -> LLMResponse:
