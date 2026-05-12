@@ -6,12 +6,11 @@ from importlib import import_module
 
 from . import config
 
-__all__ = ["LLMBackend", "Maki", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
+__all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
            "HFBackend", "LLMResponse", "GenerationConfig", "Message", "RateLimiter", "config"]
 
 _LAZY_EXPORTS = {
     "LLMBackend": (".backend", "LLMBackend"),
-    "Maki": (".maki", "Maki"),
     "Connector": (".connector", "Connector"),
     "Utils": (".utils", "Utils"),
     "Agent": (".agents", "Agent"),

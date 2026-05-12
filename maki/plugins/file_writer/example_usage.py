@@ -2,11 +2,11 @@
 Example usage of the FileWriter plugin with Maki agents
 """
 
-from maki.maki import Maki
+from maki import MakiLLama
 from maki.plugins.file_writer.file_writer import FileWriter
 
-# Initialize Maki
-maki = Maki("http://localhost", 11434, "llama3")
+# Initialize MakiLLama
+maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 
 # Initialize the file writer plugin
 file_writer = FileWriter(maki)

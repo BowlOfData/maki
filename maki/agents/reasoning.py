@@ -122,7 +122,7 @@ class ReasoningEngine:
         3. Solution approach
         """
         try:
-            result = self.maki.request(prompt).content
+            result = self._call_llm(prompt)
         except Exception as e:
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
@@ -167,7 +167,7 @@ class ReasoningEngine:
             Please revise your response to be more accurate and complete.
             """
             try:
-                current = self.maki.request(prompt).content
+                current = self._call_llm(prompt)
             except Exception as e:
                 if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                     raise
@@ -225,13 +225,11 @@ class ReasoningEngine:
         """
 
         try:
-            raw = self.maki.request(prompt)
+            result = self._call_llm(prompt)
         except Exception as e:
             if isinstance(e, (MakiNetworkError, MakiTimeoutError, MakiAPIError)):
                 raise
             raise MakiNetworkError(f"Failed to get task decomposition from LLM: {str(e)}") from e
-
-        result = raw.content
 
         self.reasoning_history.append({
             'original_task': task,

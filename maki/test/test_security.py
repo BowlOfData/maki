@@ -6,14 +6,13 @@ Covers:
   2.  Plugin security — ALLOWED_METHODS whitelist, private methods,
       argument count/length/type limits
   3.  Workflow condition safety — exceptions in conditions are caught
-  4.  RateLimiter — construction, token acquisition, Maki integration
+  4.  RateLimiter — construction, token acquisition, MakiLLama integration
   5.  LLM output parsing — _extract_json_array handles messy LLM output
 """
 
 import unittest
 from unittest.mock import MagicMock, patch
 
-from maki.maki import Maki
 from maki.objects import LLMResponse, RateLimiter
 
 
@@ -136,7 +135,8 @@ class TestPluginSecurity(unittest.TestCase):
     """Tests for PluginHandler._validate_plugin_call security enforcement."""
 
     def setUp(self):
-        self.maki = Maki("localhost", "11434", "llama3", 0.7)
+        self.maki = MagicMock()
+        self.maki.chat.return_value = _r("mock response")
         self.agent = Agent("SecurityAgent", self.maki, "tester", "Test security")
 
     def _plain_plugin(self):
@@ -280,7 +280,7 @@ class TestPluginSecurity(unittest.TestCase):
         self.agent.plugins["plug"] = plugin
 
         directive = 'TOOL: {"plugin": "plug", "method": "_secret", "args": {}}\nsome text'
-        with patch.object(self.maki, 'request', return_value=_r("final answer")):
+        with patch.object(self.maki, 'chat', return_value=_r("final answer")):
             self.agent.handle_plugin_calls(directive, "task", None)
         plugin._secret.assert_not_called()
 
@@ -290,7 +290,7 @@ class TestPluginSecurity(unittest.TestCase):
         self.agent.plugins["plug"] = plugin
 
         directive = 'TOOL: {"plugin": "plug", "method": "other_method", "args": {}}\ntext'
-        with patch.object(self.maki, 'request', return_value=_r("final answer")):
+        with patch.object(self.maki, 'chat', return_value=_r("final answer")):
             self.agent.handle_plugin_calls(directive, "task", None)
         plugin.other_method.assert_not_called()
 
@@ -390,24 +390,39 @@ class TestRateLimiter(unittest.TestCase):
         for _ in range(10):
             rl.acquire()        # all 10 should be immediate
 
-    def test_maki_with_rate_limit_creates_limiter(self):
-        maki = Maki("localhost", "11434", "llama3", 0.7, rate_limit=60)
-        self.assertIsNotNone(maki._rate_limiter)
-        self.assertIsInstance(maki._rate_limiter, RateLimiter)
+    def test_makillama_with_rate_limit_creates_limiter(self):
+        from maki.makiLLama import MakiLLama
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3", rate_limit=60)
+        self.assertIsNotNone(llm._rate_limiter)
+        self.assertIsInstance(llm._rate_limiter, RateLimiter)
 
-    def test_maki_without_rate_limit_has_no_limiter(self):
-        maki = Maki("localhost", "11434", "llama3", 0.7)
-        self.assertIsNone(maki._rate_limiter)
+    def test_makillama_without_rate_limit_has_no_limiter(self):
+        from maki.makiLLama import MakiLLama
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
+        self.assertIsNone(llm._rate_limiter)
 
-    def test_rate_limiter_called_on_request(self):
-        """Rate limiter acquire() is called before each request."""
-        maki = Maki("localhost", "11434", "llama3", 0.7, rate_limit=60)
-        maki._rate_limiter = MagicMock()
+    def test_rate_limiter_called_on_chat(self):
+        """Rate limiter acquire() is called before each chat request."""
+        from maki.makiLLama import MakiLLama
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3", rate_limit=60)
+        llm._rate_limiter = MagicMock()
 
-        with patch('maki.connector.Connector.simple', return_value={"response": "response"}):
-            maki.request("hello")
+        fake_response = MagicMock()
+        fake_response.iter_lines.return_value = iter([
+            b'{"message": {"content": "hi"}, "done": true}'
+        ])
+        fake_response.raise_for_status = MagicMock()
 
-        maki._rate_limiter.acquire.assert_called_once()
+        with patch.object(llm._session, 'post', return_value=fake_response):
+            try:
+                llm.chat("hello")
+            except Exception:
+                pass  # We only care that acquire was called
+
+        llm._rate_limiter.acquire.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -480,26 +495,26 @@ class TestExtractJsonArray(unittest.TestCase):
 
     # integration: decompose_task handles messy LLM output
     def test_decompose_task_handles_fenced_output(self):
-        maki = Maki("localhost", "11434", "llama3", 0.7)
+        maki = MagicMock()
         agent = Agent("A", maki, "researcher", "Be helpful")
         fenced = '```json\n[{"description": "Step 1", "resources": "none", "expected_outcome": "done"}]\n```'
-        with patch.object(maki, 'request', return_value=_r(fenced)):
+        with patch.object(maki, 'chat', return_value=_r(fenced)):
             subtasks = agent.decompose_task("big task")
         self.assertEqual(len(subtasks), 1)
         self.assertEqual(subtasks[0]['description'], 'Step 1')
 
     def test_decompose_task_handles_preamble_output(self):
-        maki = Maki("localhost", "11434", "llama3", 0.7)
+        maki = MagicMock()
         agent = Agent("A", maki, "researcher", "Be helpful")
         messy = 'Sure, here are the subtasks:\n[{"description": "Step 1", "resources": "none", "expected_outcome": "done"}]\nLet me know if you need changes!'
-        with patch.object(maki, 'request', return_value=_r(messy)):
+        with patch.object(maki, 'chat', return_value=_r(messy)):
             subtasks = agent.decompose_task("big task")
         self.assertEqual(subtasks[0]['description'], 'Step 1')
 
     def test_decompose_task_still_raises_on_garbage(self):
-        maki = Maki("localhost", "11434", "llama3", 0.7)
+        maki = MagicMock()
         agent = Agent("A", maki, "researcher", "Be helpful")
-        with patch.object(maki, 'request', return_value=_r("I cannot decompose this task.")):
+        with patch.object(maki, 'chat', return_value=_r("I cannot decompose this task.")):
             with self.assertRaises(ValueError):
                 agent.decompose_task("big task")
 

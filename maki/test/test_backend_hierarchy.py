@@ -16,7 +16,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from maki.backend import LLMBackend
-from maki.maki import Maki
 from maki.agents import Agent, AgentManager
 
 _torch_available = importlib.util.find_spec("torch") is not None
@@ -75,24 +74,10 @@ class TestLLMBackendABC(unittest.TestCase):
 
 class TestClassHierarchy(unittest.TestCase):
 
-    def test_maki_is_llm_backend(self):
-        """Maki must be a subclass of LLMBackend."""
-        self.assertTrue(issubclass(Maki, LLMBackend))
-
-    def test_maki_instance_is_llm_backend(self):
-        """Maki instances must satisfy isinstance(x, LLMBackend)."""
-        maki = Maki("localhost", "11434", "llama3", 0.7)
-        self.assertIsInstance(maki, LLMBackend)
-
     def test_makillama_is_llm_backend(self):
         """MakiLLama must be a subclass of LLMBackend."""
         from maki.makiLLama import MakiLLama
         self.assertTrue(issubclass(MakiLLama, LLMBackend))
-
-    def test_makillama_does_not_inherit_maki(self):
-        """MakiLLama must NOT inherit from Maki (broken inheritance removed)."""
-        from maki.makiLLama import MakiLLama
-        self.assertFalse(issubclass(MakiLLama, Maki))
 
     @_skip_hf
     def test_hfbackend_is_llm_backend(self):
@@ -101,20 +86,11 @@ class TestClassHierarchy(unittest.TestCase):
         self.assertTrue(issubclass(HFBackend, LLMBackend))
 
     @_skip_hf
-    def test_hfbackend_does_not_inherit_maki(self):
-        """HFBackend must NOT inherit from Maki (broken inheritance removed)."""
-        from maki.makiHG import HFBackend
-        self.assertFalse(issubclass(HFBackend, Maki))
-
-    @_skip_hf
-    def test_three_independent_leaves(self):
-        """Maki, MakiLLama, and HFBackend are siblings, not a chain."""
+    def test_makillama_and_hfbackend_are_independent(self):
+        """MakiLLama and HFBackend must not inherit from each other."""
         from maki.makiLLama import MakiLLama
         from maki.makiHG import HFBackend
 
-        # No cross-inheritance between the concrete siblings
-        self.assertFalse(issubclass(Maki, MakiLLama))
-        self.assertFalse(issubclass(Maki, HFBackend))
         self.assertFalse(issubclass(MakiLLama, HFBackend))
         self.assertFalse(issubclass(HFBackend, MakiLLama))
 
@@ -210,14 +186,8 @@ class TestHFBackendCleanInit(unittest.TestCase):
 
 class TestAgentAcceptsLLMBackend(unittest.TestCase):
 
-    def test_agent_accepts_maki(self):
-        """Agent still works with a plain Maki instance."""
-        maki = Maki("localhost", "11434", "llama3", 0.7)
-        agent = Agent("a", maki)
-        self.assertIsNotNone(agent)
-
     def test_agent_accepts_custom_backend(self):
-        """Agent accepts any concrete LLMBackend, not just Maki."""
+        """Agent accepts any concrete LLMBackend."""
         backend = _concrete_backend()
         agent = Agent("a", backend)
         self.assertIsNotNone(agent)
@@ -235,8 +205,8 @@ class TestAgentAcceptsLLMBackend(unittest.TestCase):
         self.assertIsNotNone(agent)
 
     def test_agent_manager_rejects_non_backend(self):
-        maki = Maki("localhost", "11434", "llama3", 0.7)
-        manager = AgentManager(maki)
+        backend = _concrete_backend()
+        manager = AgentManager(backend)
         with self.assertRaises(TypeError) as ctx:
             manager.add_agent("x", maki_instance=object())
         self.assertIn("LLMBackend", str(ctx.exception))
@@ -292,44 +262,6 @@ class TestStreamContract(unittest.TestCase):
         agent = Agent("streamer", backend)
         with self.assertRaises(NotImplementedError):
             list(agent.stream_task("do something"))
-
-
-# ---------------------------------------------------------------------------
-# Token counts from Maki.request()
-# ---------------------------------------------------------------------------
-
-class TestMakiTokenCounts(unittest.TestCase):
-
-    def _make_maki(self):
-        return Maki("localhost", "11434", "llama3", 0.7)
-
-    def test_token_counts_populated_from_api_response(self):
-        """Maki.request() must populate token counts from the Ollama API response."""
-        from unittest.mock import patch
-        from maki.connector import Connector
-        maki = self._make_maki()
-        fake_response = {
-            "response": "hello",
-            "prompt_eval_count": 7,
-            "eval_count": 3,
-        }
-        with patch.object(Connector, 'simple', return_value=fake_response):
-            result = maki.request("test prompt")
-        self.assertEqual(result.prompt_tokens, 7)
-        self.assertEqual(result.completion_tokens, 3)
-        self.assertEqual(result.total_tokens, 10)
-        self.assertEqual(result.content, "hello")
-
-    def test_token_counts_default_to_zero_when_absent(self):
-        """Token counts fall back to 0 if the API omits eval fields."""
-        from unittest.mock import patch
-        from maki.connector import Connector
-        maki = self._make_maki()
-        with patch.object(Connector, 'simple', return_value={"response": "hi"}):
-            result = maki.request("test")
-        self.assertEqual(result.prompt_tokens, 0)
-        self.assertEqual(result.completion_tokens, 0)
-        self.assertEqual(result.total_tokens, 0)
 
 
 # ---------------------------------------------------------------------------

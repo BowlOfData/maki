@@ -6,7 +6,6 @@ Maki is a Python framework for building LLM applications with local backends, mu
 
 It currently ships with:
 
-- `Maki` for Ollama's generate API
 - `MakiLLama` for Ollama's chat API, streaming, async calls, and sessions
 - `Agent` and `AgentManager` for role-based multi-agent execution
 - Built-in plugins for files, directories, JSON, web content, FTP/SFTP, search, and image classification
@@ -14,7 +13,7 @@ It currently ships with:
 
 ## Features
 
-- Ollama backends with a shared `LLMBackend` contract
+- `MakiLLama` Ollama backend built on the chat API with a shared `LLMBackend` contract
 - Synchronous, streaming, async, and vision-capable Ollama workflows
 - Stateful chat sessions and stateful agents
 - Agent memory, retry logic, and reasoning helpers
@@ -64,13 +63,13 @@ Supported environment variables include:
 
 ## Quick Start
 
-### Basic Ollama request
+### Basic request
 
 ```python
-from maki import Maki
+from maki import MakiLLama
 
-llm = Maki(model="gemma4:26b")
-response = llm.request("Explain recursion in one sentence.")
+llm = MakiLLama(model="gemma4:26b")
+response = llm.chat("Explain recursion in one sentence.")
 print(response.content)
 ```
 
@@ -131,10 +130,10 @@ print(response.content)
 ### Basic agent usage
 
 ```python
-from maki import Maki
+from maki import MakiLLama
 from maki.agents import Agent
 
-llm = Maki(model="gemma4:26b")
+llm = MakiLLama(model="gemma4:26b")
 agent = Agent(
     name="Reviewer",
     maki_instance=llm,
@@ -178,10 +177,10 @@ for chunk in agent.stream_task("Draft a short changelog entry."):
 `AgentManager` coordinates multiple agents and can run collaborative or dependency-aware workflows.
 
 ```python
-from maki import Maki
+from maki import MakiLLama
 from maki.agents import AgentManager, WorkflowTask
 
-llm = Maki(model="llama3")
+llm = MakiLLama(model="gemma4:26b")
 manager = AgentManager(llm)
 
 manager.add_agent("Researcher", role="researcher")
@@ -231,10 +230,10 @@ Built-in plugins are registered in [maki/plugins/__init__.py](maki/plugins/__ini
 ### Loading a plugin in an agent
 
 ```python
-from maki import Maki
+from maki import MakiLLama
 from maki.agents import Agent
 
-llm = Maki(model="gemma4:26b")
+llm = MakiLLama(model="gemma4:26b")
 agent = Agent(name="ToolUser", maki_instance=llm, role="assistant")
 agent.load_plugin("file_reader")
 
@@ -261,7 +260,6 @@ The current implementation is a PySide6/QML bootstrap with an application shell,
 
 Top-level imports currently exposed by `maki` include:
 
-- `Maki`
 - `MakiLLama`
 - `Agent`
 - `AgentManager`

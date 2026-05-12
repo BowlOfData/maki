@@ -27,7 +27,7 @@ class Agent(PluginHandler, ReasoningEngine):
     """An individual agent that can perform tasks using the Maki framework."""
 
     def __init__(self, name: str, maki_instance: LLMBackend, role: str = "", instructions: str = "",
-                 stateful: bool = False):
+                 stateful: bool = False, use_streaming: bool = False):
         """
         Initialize an agent.
 
@@ -37,6 +37,9 @@ class Agent(PluginHandler, ReasoningEngine):
             role: The role of the agent (e.g., "researcher", "writer", "analyst")
             instructions: Specific instructions for this agent
             stateful: If True, prior task results are included in subsequent prompts
+            use_streaming: If True, execute_task uses streaming internally (chat_collect)
+                so the timeout applies per-chunk rather than to the full response.
+                Useful for tasks with very long outputs that exceed the backend timeout.
 
         Raises:
             ValueError: If name is not a valid string
@@ -51,14 +54,15 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(instructions, str):
             raise ValueError("Instructions must be a string")
 
-        if not isinstance(maki_instance, LLMBackend):
-            raise TypeError("maki_instance must be an LLMBackend instance")
+        if not (isinstance(maki_instance, LLMBackend) or hasattr(maki_instance, 'request')):
+            raise TypeError("maki_instance must implement the LLMBackend interface")
 
         self.name = name.strip()
         self.maki = maki_instance
         self.role = role
         self.instructions = instructions
         self.stateful = stateful
+        self.use_streaming = use_streaming
         self.memory = {}
 
         # Maximum number of entries to keep in history; deque enforces this automatically
@@ -92,6 +96,12 @@ class Agent(PluginHandler, ReasoningEngine):
             lines.append(f"Task: {turn['task']}")
             lines.append(f"Response: {turn['result'][:300]}")
         return "\n\nPrior conversation:\n" + "\n".join(lines)
+
+    def _call_llm(self, prompt: str) -> str:
+        """Send a plain prompt to the backend, routing through chat() when available."""
+        if hasattr(self.maki, 'chat'):
+            return self.maki.chat(prompt).content
+        return self.maki.request(prompt).content
 
     def _build_system_message(self) -> str:
         """Return the system message (role + instructions) for this agent."""
@@ -151,7 +161,10 @@ class Agent(PluginHandler, ReasoningEngine):
             if hasattr(self.maki, 'chat'):
                 system_msg = self._build_system_message()
                 user_msg = self._build_user_message(task, context, use_plugins)
-                result = self.maki.chat(user_msg, system=system_msg).content
+                if self.use_streaming and hasattr(self.maki, 'chat_collect'):
+                    result = self.maki.chat_collect(user_msg, system=system_msg).content
+                else:
+                    result = self.maki.chat(user_msg, system=system_msg).content
             else:
                 prompt = self._build_prompt(task, context, use_plugins)
                 result = self.maki.request(prompt).content

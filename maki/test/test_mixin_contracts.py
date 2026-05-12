@@ -11,7 +11,6 @@ import unittest
 from collections import deque
 from unittest.mock import MagicMock
 
-from maki.maki import Maki
 from maki.backend import LLMBackend
 from maki.agents import Agent, PluginHostProtocol, ReasoningHostProtocol
 from maki.agents.plugin_handler import PluginHandler
@@ -218,7 +217,7 @@ class TestProtocolIsInstance(unittest.TestCase):
 class TestAgentSatisfiesProtocols(unittest.TestCase):
 
     def setUp(self):
-        self.maki = Maki("localhost", "11434", "llama3", 0.7)
+        self.maki = MagicMock()
 
     def test_agent_satisfies_plugin_host_protocol(self):
         agent = Agent("Alice", self.maki, role="tester")
@@ -342,7 +341,7 @@ class TestInitSubclassEnforcement(unittest.TestCase):
         calling super() must fail immediately at instantiation, not silently
         produce a broken agent.
         """
-        maki = Maki("localhost", "11434", "llama3", 0.7)
+        maki = MagicMock()
 
         class BrokenAgent(Agent):
             def __init__(self, name):
@@ -357,7 +356,7 @@ class TestInitSubclassEnforcement(unittest.TestCase):
 
     def test_agent_subclass_with_super_works_correctly(self):
         """A well-formed Agent subclass must initialize without error."""
-        maki = Maki("localhost", "11434", "llama3", 0.7)
+        maki = MagicMock()
 
         class GoodAgent(Agent):
             def __init__(self, name, backend, extra="default"):

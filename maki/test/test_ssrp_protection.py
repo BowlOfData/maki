@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maki.utils import Utils
 from maki.connector import Connector
-from maki.maki import Maki
 
 class TestSSRFProtection(unittest.TestCase):
 

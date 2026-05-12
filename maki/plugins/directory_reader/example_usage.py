@@ -2,11 +2,11 @@
 Example usage of the DirectoryReader plugin with Maki agents
 """
 
-from maki.maki import Maki
+from maki import MakiLLama
 from maki.plugins.directory_reader.directory_reader import DirectoryReader
 
-# Initialize Maki
-maki = Maki("http://localhost", 11434, "llama3")
+# Initialize MakiLLama
+maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 
 # Initialize the directory reader plugin
 directory_reader = DirectoryReader(maki)

@@ -4,11 +4,11 @@ Example usage of the ImageClassifier plugin with the Maki framework.
 
 import asyncio
 
-from maki.maki import Maki
+from maki import MakiLLama
 from maki.plugins.image_classifier import ImageClassifier
 
 # Requires a running Ollama instance with a vision-capable model.
-maki = Maki("http://localhost", 11434, "gemma4:26b")
+maki = MakiLLama(model="gemma4:26b", base_url="http://localhost:11434")
 classifier = ImageClassifier(maki_instance=maki)
 
 

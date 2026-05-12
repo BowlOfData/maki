@@ -6,7 +6,6 @@ from unittest.mock import patch, MagicMock
 import time
 
 # Import the classes we want to test
-from maki.maki import Maki
 from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus, WorkflowState
 
 
@@ -14,7 +13,8 @@ class TestEnhancedWorkflowManagement(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures before each test method."""
-        self.default_maki = Maki("localhost", "11434", "llama3", 0.7)
+        self.default_maki = MagicMock()
+        self.default_maki.chat.return_value = "mock response"
         self.agent_manager = AgentManager(self.default_maki)
 
     def test_workflow_task_initialization(self):
@@ -130,9 +130,9 @@ class TestEnhancedWorkflowManagement(unittest.TestCase):
             )
         ]
 
-        # Mock the Maki request to avoid actual HTTP requests
-        with patch.object(self.default_maki, 'request') as mock_request:
-            mock_request.return_value = "Research completed successfully"
+        # Mock the chat method to avoid actual HTTP requests
+        with patch.object(self.default_maki, 'chat') as mock_chat:
+            mock_chat.return_value = "Research completed successfully"
 
             # This would test the workflow execution, but we're mainly testing the classes
             # The actual execution logic is tested in the other test files

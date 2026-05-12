@@ -2,8 +2,7 @@
 Unit tests for Agent history cleanup functionality
 """
 import unittest
-from unittest.mock import patch
-from maki.maki import Maki
+from unittest.mock import patch, MagicMock
 from maki.agents import Agent
 from maki.objects import LLMResponse
 
@@ -16,7 +15,8 @@ def _r(content: str) -> LLMResponse:
 class TestHistoryCleanup(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures before each test method."""
-        self.maki = Maki("localhost", "11434", "llama3", 0.7)
+        self.maki = MagicMock()
+        self.maki.chat.return_value = _r("mock response")
         self.agent = Agent("TestAgent", self.maki, "researcher", "You are a researcher")
 
     def test_history_cleanup_initialization(self):
@@ -29,8 +29,8 @@ class TestHistoryCleanup(unittest.TestCase):
         """Test that task history gets cleaned up when it exceeds max entries"""
         # Add more entries than the max
         for i in range(1500):
-            with patch.object(self.maki, 'request') as mock_request:
-                mock_request.return_value = _r(f"Result {i}")
+            with patch.object(self.maki, 'chat') as mock_chat:
+                mock_chat.return_value = _r(f"Result {i}")
                 self.agent.execute_task(f"Task {i}")
 
         # Check that history was cleaned up to max entries
@@ -44,8 +44,8 @@ class TestHistoryCleanup(unittest.TestCase):
         """Test that reasoning history gets cleaned up when it exceeds max entries"""
         # Add more entries than the max
         for i in range(1500):
-            with patch.object(self.maki, 'request') as mock_request:
-                mock_request.return_value = _r(f"Reasoning {i}")
+            with patch.object(self.maki, 'chat') as mock_chat:
+                mock_chat.return_value = _r(f"Reasoning {i}")
                 self.agent.think_step_by_step(f"Problem {i}")
 
         # Check that history was cleaned up to max entries
@@ -63,8 +63,8 @@ class TestHistoryCleanup(unittest.TestCase):
 
         # Add more entries than the new max
         for i in range(750):
-            with patch.object(self.maki, 'request') as mock_request:
-                mock_request.return_value = _r(f"Result {i}")
+            with patch.object(self.maki, 'chat') as mock_chat:
+                mock_chat.return_value = _r(f"Result {i}")
                 self.agent.execute_task(f"Task {i}")
 
         # Check that history was cleaned up to new max entries
@@ -76,8 +76,8 @@ class TestHistoryCleanup(unittest.TestCase):
 
     def test_history_cleanup_with_self_correct(self):
         """Test that self_correct also cleans up history"""
-        with patch.object(self.maki, 'request') as mock_request:
-            mock_request.return_value = _r("Corrected response")
+        with patch.object(self.maki, 'chat') as mock_chat:
+            mock_chat.return_value = _r("Corrected response")
             self.agent.self_correct("Original", "Feedback")
 
         # History should have one entry
@@ -85,8 +85,8 @@ class TestHistoryCleanup(unittest.TestCase):
 
         # Add many entries to trigger cleanup
         for i in range(1500):
-            with patch.object(self.maki, 'request') as mock_request:
-                mock_request.return_value = _r(f"Result {i}")
+            with patch.object(self.maki, 'chat') as mock_chat:
+                mock_chat.return_value = _r(f"Result {i}")
                 self.agent.self_correct(f"Original {i}", f"Feedback {i}")
 
         # Check that history was cleaned up to max entries
@@ -94,8 +94,8 @@ class TestHistoryCleanup(unittest.TestCase):
 
     def test_history_cleanup_with_decompose_task(self):
         """Test that decompose_task also cleans up history"""
-        with patch.object(self.maki, 'request') as mock_request:
-            mock_request.return_value = _r('[{"description": "Subtask 1", "resources": "None", "expected_outcome": "Done"}]')
+        with patch.object(self.maki, 'chat') as mock_chat:
+            mock_chat.return_value = _r('[{"description": "Subtask 1", "resources": "None", "expected_outcome": "Done"}]')
             self.agent.decompose_task("Main task")
 
         # History should have one entry
@@ -103,8 +103,8 @@ class TestHistoryCleanup(unittest.TestCase):
 
         # Add many entries to trigger cleanup
         for i in range(1500):
-            with patch.object(self.maki, 'request') as mock_request:
-                mock_request.return_value = _r('[{"description": "Subtask 1", "resources": "None", "expected_outcome": "Done"}]')
+            with patch.object(self.maki, 'chat') as mock_chat:
+                mock_chat.return_value = _r('[{"description": "Subtask 1", "resources": "None", "expected_outcome": "Done"}]')
                 self.agent.decompose_task(f"Main task {i}")
 
         # Check that history was cleaned up to max entries

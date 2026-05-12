@@ -1,47 +1,32 @@
 #!/usr/bin/env python3
 """
-Test script to verify logging functionality in Maki
+Test script to verify logging functionality in Maki (placeholder).
+
+The original test relied on the Maki class which has been removed.
+Logging configuration is covered by configure_logging() in maki/logging_config.py.
 """
 
 import logging
-import sys
-import os
+import unittest
 
-# Add the project root to Python path so imports work properly
-# Note: This approach avoids sys.path manipulation by running from the project root
-# with python -m maki.test.test_logging
-# Or run from project root with: python -m maki.test.test_logging
+from maki.logging_config import configure_logging
 
-from maki import Maki
 
-def test_logging():
-    """Test that logging is working properly"""
-    print("Testing Maki logging functionality...")
+class TestLoggingConfig(unittest.TestCase):
 
-    # Setup basic logging to see output
-    logging.basicConfig(level=logging.DEBUG)
-
-    try:
-        # This should trigger logging
-        maki = Maki(url="localhost", port="11434", model="llama3", temperature=0.7)
-        print("Maki initialized successfully")
-
-        # Test version method
-        print("Testing version method...")
-        # Note: This will fail because we're not running a real Ollama instance
-        # but the logging should still work
+    def test_configure_logging_does_not_raise(self):
+        """configure_logging() must be callable without error."""
         try:
-            version = maki.version()
-        except Exception as e:
-            print(f"Expected error (no real Ollama instance): {str(e)}")
+            configure_logging()
+        except Exception as exc:
+            self.fail(f"configure_logging() raised an unexpected exception: {exc}")
 
-        print("Logging test completed successfully")
+    def test_configure_logging_sets_up_logger(self):
+        """After configure_logging(), the 'maki' logger should exist."""
+        configure_logging()
+        logger = logging.getLogger("maki")
+        self.assertIsNotNone(logger)
 
-    except Exception as e:
-        print(f"Error during test: {str(e)}")
-        return False
-
-    return True
 
 if __name__ == "__main__":
-    test_logging()
+    unittest.main()

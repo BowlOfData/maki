@@ -5,11 +5,11 @@ This file demonstrates how to use the FTPClient plugin to connect to FTP/SFTP se
 and perform various file operations.
 """
 
-from maki.maki import Maki
+from maki import MakiLLama
 from maki.plugins.ftp_client.ftp_client import FTPClient
 
-# Initialize Maki
-maki = Maki("http://localhost", 11434, "llama3")
+# Initialize MakiLLama
+maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 
 # Initialize the FTP client plugin
 ftp_client = FTPClient(maki)

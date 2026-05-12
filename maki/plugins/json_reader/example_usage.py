@@ -2,11 +2,11 @@
 Example usage of the JsonReader plugin.
 """
 
-from maki import Maki
+from maki import MakiLLama
 from maki.plugins.json_reader import JsonReader
 
 
-maki = Maki("http://localhost", 11434, "llama3")
+maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 plugin = JsonReader(maki)
 
 result = plugin.read_json_fields(

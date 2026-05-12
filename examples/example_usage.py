@@ -9,22 +9,19 @@ import os
 # Add the current directory to Python path so we can import maki
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from maki import Maki
+from maki import MakiLLama
+from maki.objects import GenerationConfig
 from maki.agents import AgentManager, Agent
 
 def main():
     print("=== Maki Framework Example Usage ===")
 
-    # Initialize Maki (this would connect to Ollama)
-    print("1. Initializing Maki...")
+    # Initialize MakiLLama (this would connect to Ollama)
+    print("1. Initializing MakiLLama...")
     try:
         # Using localhost with default Ollama port
-        maki = Maki(url="localhost", port="11434", model="llama3", temperature=0.7)
-        print("✓ Maki initialized successfully")
-
-        # Test basic functionality
-        version_info = maki.version()
-        print(f"✓ Maki version: {version_info}")
+        maki = MakiLLama(model="llama3", base_url="http://localhost:11434", config=GenerationConfig(temperature=0.7))
+        print("✓ MakiLLama initialized successfully")
 
     except Exception as e:
         print(f"⚠ Warning: Could not connect to Ollama - {e}")

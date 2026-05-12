@@ -296,6 +296,81 @@ class MakiLLama(LLMBackend):
         finally:
             Utils.cleanup_response(response)
 
+    def chat_collect(
+        self,
+        prompt: str,
+        history: Optional[list[Message]] = None,
+        config: Optional[GenerationConfig] = None,
+        system: Optional[str] = None,
+        images: Optional[list[str]] = None,
+    ) -> LLMResponse:
+        """
+        Like chat() but uses HTTP streaming internally.
+
+        The configured timeout applies per-chunk rather than to the total response,
+        so long-running generations (e.g. large ranking tasks) complete without
+        hitting the global read timeout.  Raises MakiTimeoutError only if the
+        model stops producing output for longer than self.timeout seconds.
+        """
+        log.debug("chat_collect (stream): %s", prompt[:100])
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
+        payload = self._build_payload(prompt, history, config, stream=True, system=system, images=images)
+        t0 = time.perf_counter()
+        chunks: list[str] = []
+        last_data: dict = {}
+        response = None
+        try:
+            response = self._session.post(
+                f"{self.base_url}/api/chat",
+                json=payload,
+                stream=True,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if line:
+                    data = json.loads(line)
+                    chunk = data.get("message", {}).get("content", "")
+                    if chunk:
+                        chunks.append(chunk)
+                    if data.get("done"):
+                        last_data = data
+                        break
+        except requests.exceptions.Timeout as e:
+            raise MakiTimeoutError(
+                f"chat_collect() timed out waiting for next chunk after {self.timeout}s"
+            ) from e
+        except requests.exceptions.ConnectionError as e:
+            raise MakiNetworkError(f"chat_collect() connection failed: {e}") from e
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response else "unknown"
+            raise MakiAPIError(f"chat_collect() HTTP error {status}: {e}") from e
+        except requests.exceptions.RequestException as e:
+            raise MakiNetworkError(f"chat_collect() request failed: {e}") from e
+        finally:
+            Utils.cleanup_response(response)
+
+        elapsed = time.perf_counter() - t0
+        content = "".join(chunks)
+        if not content.strip():
+            thinking = last_data.get("message", {}).get("thinking", "")
+            if thinking:
+                log.debug("chat_collect: content empty, falling back to thinking field")
+                content = thinking
+        prompt_tokens = last_data.get("prompt_eval_count", 0)
+        completion_tokens = last_data.get("eval_count", 0)
+        log.info("chat_collect: %.2fs, %d tokens", elapsed, prompt_tokens + completion_tokens)
+        return LLMResponse(
+            content=content,
+            model=last_data.get("model", self.model),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            elapsed_seconds=elapsed,
+            done=last_data.get("done", True),
+        )
+
     async def async_chat(
         self,
         prompt: str,

@@ -61,8 +61,8 @@ class AgentManager:
 
         maki_to_use = maki_instance if maki_instance is not None else self.maki
 
-        if not isinstance(maki_to_use, LLMBackend):
-            raise TypeError("maki_instance must be an LLMBackend instance")
+        if not (isinstance(maki_to_use, LLMBackend) or hasattr(maki_to_use, 'request')):
+            raise TypeError("maki_instance must implement the LLMBackend interface")
 
         agent = Agent(name, maki_to_use, role, instructions)
         self.agents[name] = agent
@@ -170,7 +170,7 @@ class AgentManager:
             properly attributes each result to its original task and agent.
             """
             try:
-                results['final_synthesis'] = self.maki.request(synthesis_prompt).content
+                results['final_synthesis'] = self.maki.chat(synthesis_prompt).content if hasattr(self.maki, 'chat') else self.maki.request(synthesis_prompt).content
             except Exception as e:
                 logger.error(f"Failed to create synthesis: {str(e)}", exc_info=True)
                 results['final_synthesis'] = None
@@ -248,7 +248,7 @@ class AgentManager:
         """
 
         try:
-            return self.maki.request(synthesis_prompt).content
+            return self.maki.chat(synthesis_prompt).content if hasattr(self.maki, 'chat') else self.maki.request(synthesis_prompt).content
         except Exception as e:
             logger.error(f"Failed to create final synthesis: {str(e)}", exc_info=True)
             raise RuntimeError(

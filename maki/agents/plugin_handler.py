@@ -310,4 +310,4 @@ class PluginHandler:
             f"Previous partial response: {clean_response}\n\n"
             f"Please provide your final answer incorporating the tool results."
         )
-        return self.maki.request(follow_up).content
+        return self._call_llm(follow_up)

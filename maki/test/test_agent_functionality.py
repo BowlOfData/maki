@@ -5,7 +5,6 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 # Import the classes we want to test
-from maki.maki import Maki
 from maki.agents import Agent, AgentManager
 from maki.objects import LLMResponse
 
@@ -19,8 +18,10 @@ class TestAgentFunctionality(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures before each test method."""
-        self.default_maki = Maki("localhost", "11434", "llama3", 0.7)
-        self.specialized_maki = Maki("localhost", "11434", "mixtral", 0.3)
+        self.default_maki = MagicMock()
+        self.default_maki.chat.return_value = _r("mock response")
+        self.specialized_maki = MagicMock()
+        self.specialized_maki.chat.return_value = _r("mock response")
         self.agent_manager = AgentManager(self.default_maki)
 
     def test_agent_initialization(self):
@@ -34,15 +35,14 @@ class TestAgentFunctionality(unittest.TestCase):
 
     def test_agent_execute_task(self):
         """Test that Agent can execute tasks"""
-        # Mock the Maki request to avoid actual HTTP requests
-        with patch.object(self.default_maki, 'request') as mock_request:
-            mock_request.return_value = _r("Test response")
+        with patch.object(self.default_maki, 'chat') as mock_chat:
+            mock_chat.return_value = _r("Test response")
 
             agent = Agent("TestAgent", self.default_maki, "researcher", "You are a researcher")
             result = agent.execute_task("Test task")
 
             self.assertEqual(result, "Test response")
-            mock_request.assert_called_once()
+            mock_chat.assert_called_once()
 
     def test_agent_memory(self):
         """Test agent memory functionality"""
@@ -76,7 +76,7 @@ class TestAgentFunctionality(unittest.TestCase):
         )
 
         self.assertIn("TestAgent", self.agent_manager.list_agents())
-        self.assertEqual(agent.maki, self.default_maki)  # Should use default Maki
+        self.assertEqual(agent.maki, self.default_maki)  # Should use default backend
 
     def test_agent_manager_add_agent_with_maki_instance(self):
         """Test adding agent with specific Maki instance"""
@@ -88,7 +88,7 @@ class TestAgentFunctionality(unittest.TestCase):
         )
 
         self.assertIn("TestAgent", self.agent_manager.list_agents())
-        self.assertEqual(agent.maki, self.specialized_maki)  # Should use specialized Maki
+        self.assertEqual(agent.maki, self.specialized_maki)  # Should use specialized backend
 
     def test_agent_manager_get_agent(self):
         """Test getting agents from manager"""
@@ -143,13 +143,13 @@ class TestAgentFunctionality(unittest.TestCase):
             instructions="You are a researcher"
         )
 
-        # Mock the Maki request to avoid actual HTTP requests
-        with patch.object(self.default_maki, 'request') as mock_request:
-            mock_request.return_value = _r("Task completed successfully")
+        # Mock the chat method to avoid actual HTTP requests
+        with patch.object(self.default_maki, 'chat') as mock_chat:
+            mock_chat.return_value = _r("Task completed successfully")
 
             result = self.agent_manager.assign_task("TestAgent", "Test task")
             self.assertEqual(result, "Task completed successfully")
-            mock_request.assert_called_once()
+            mock_chat.assert_called_once()
 
     def test_backward_compatibility(self):
         """Test that backward compatibility is maintained"""
@@ -163,12 +163,12 @@ class TestAgentFunctionality(unittest.TestCase):
             instructions="You are an expert researcher"
         )
 
-        # Should use the default Maki instance
+        # Should use the default backend instance
         self.assertEqual(researcher.maki, self.default_maki)
 
         # Should be able to assign tasks
-        with patch.object(self.default_maki, 'request') as mock_request:
-            mock_request.return_value = _r("Research completed")
+        with patch.object(self.default_maki, 'chat') as mock_chat:
+            mock_chat.return_value = _r("Research completed")
             result = manager.assign_task("Researcher", "Research topic")
             self.assertEqual(result, "Research completed")
 

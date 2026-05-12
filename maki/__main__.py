@@ -8,8 +8,7 @@ from .config import (
     DEFAULT_LOG_FORMAT,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MODEL,
-    DEFAULT_OLLAMA_HOST,
-    DEFAULT_OLLAMA_PORT,
+    DEFAULT_OLLAMA_BASE_URL,
 )
 
 # Configure logging
@@ -29,10 +28,10 @@ def configure_logging():
 # configure_logging()
 
 # Import and expose the main classes
-from .maki import Maki
+from .makiLLama import MakiLLama
 from .agents import Agent, AgentManager
 
-__all__ = ['Maki', 'Agent', 'AgentManager']
+__all__ = ['MakiLLama', 'Agent', 'AgentManager']
 
 def main():
     """Main entry point for the Maki package"""
@@ -40,15 +39,14 @@ def main():
     print("Usage: python -m maki")
     print("")
     print("Available classes:")
-    print("  Maki - Main class for interacting with LLMs")
+    print("  MakiLLama - Main class for interacting with LLMs via Ollama")
     print("  Agent - Individual agent class")
     print("  AgentManager - Manager for coordinating agents")
     print("")
     print("Example usage:")
-    print("  from maki import Maki")
+    print("  from maki import MakiLLama")
     print(
-        f"  maki = Maki(url='{DEFAULT_OLLAMA_HOST}', port='{DEFAULT_OLLAMA_PORT}', "
-        f"model='{DEFAULT_MODEL}')"
+        f"  maki = MakiLLama(model='{DEFAULT_MODEL}', base_url='{DEFAULT_OLLAMA_BASE_URL}')"
     )
 
 if __name__ == "__main__":

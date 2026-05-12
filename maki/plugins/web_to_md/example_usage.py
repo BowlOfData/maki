@@ -2,11 +2,11 @@
 Example usage of the WebToMd plugin with Maki agents
 """
 
-from maki.maki import Maki
+from maki import MakiLLama
 from maki.plugins.web_to_md.web_to_md import WebToMd
 
-# Initialize Maki
-maki = Maki("http://localhost", 11434, "llama3")
+# Initialize MakiLLama
+maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 
 # Initialize the web_to_md plugin
 web_to_md = WebToMd(maki)
