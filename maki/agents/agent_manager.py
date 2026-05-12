@@ -36,7 +36,7 @@ class AgentManager:
         logger.info("AgentManager initialized")
 
     def add_agent(self, name: str, role: str = "", instructions: str = "",
-                  maki_instance: LLMBackend = None) -> Agent:
+                  maki_instance: LLMBackend = None, use_streaming: bool = False) -> Agent:
         """
         Add a new agent to the manager.
 
@@ -46,6 +46,9 @@ class AgentManager:
             instructions: Specific instructions for this agent
             maki_instance: Optional per-agent Maki instance (different model/temperature).
                            Falls back to the manager's default instance.
+            use_streaming: If True, execute_task uses streaming internally so the timeout
+                           applies per-chunk rather than to the full response. Useful for
+                           agents with large prompts or long expected outputs.
 
         Returns:
             The created Agent instance
@@ -64,7 +67,7 @@ class AgentManager:
         if not (isinstance(maki_to_use, LLMBackend) or hasattr(maki_to_use, 'request')):
             raise TypeError("maki_instance must implement the LLMBackend interface")
 
-        agent = Agent(name, maki_to_use, role, instructions)
+        agent = Agent(name, maki_to_use, role, instructions, use_streaming=use_streaming)
         self.agents[name] = agent
         logger.info(f"Added agent '{name}' with role '{role}'")
         return agent

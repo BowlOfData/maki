@@ -172,6 +172,30 @@ for chunk in agent.stream_task("Draft a short changelog entry."):
     print(chunk, end="", flush=True)
 ```
 
+### Long-running tasks with `use_streaming`
+
+By default, `execute_task` sends one blocking HTTP request. If the model takes longer than the configured timeout (default 120 s) to finish, it raises `MakiTimeoutError`.
+
+Set `use_streaming=True` on the agent to avoid this. Internally, Maki switches to a streaming connection and collects the full response — the timeout then applies *per chunk* rather than to the whole reply, so generation can take as long as it needs.
+
+```python
+from maki import MakiLLama
+from maki.agents import Agent
+
+llm = MakiLLama(model="gemma4:26b")
+agent = Agent(
+    name="Ranker",
+    maki_instance=llm,
+    role="content ranker",
+    use_streaming=True,   # no global timeout on the response
+)
+
+result = agent.execute_task("Rank these 50 articles by relevance: ...")
+print(result)
+```
+
+Use this whenever the task involves a large prompt or a long expected output — ranking, summarisation of many items, code generation, etc.
+
 ## Agent Manager and Workflows
 
 `AgentManager` coordinates multiple agents and can run collaborative or dependency-aware workflows.
