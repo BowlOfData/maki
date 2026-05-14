@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 from maki.config import (
     DEFAULT_BROWSER_ACCEPT_LANGUAGE,
     DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_HTTP_READ_TIMEOUT,
     DEFAULT_WEB_USER_AGENT,
 )
 from maki.plugins.file_writer.file_writer import FileWriter
@@ -46,6 +47,8 @@ _RETRYABLE_ERRORS = (
     "ConnectionReset",
     "ConnectionError",
     "ChunkedEncodingError",
+    "ReadTimeout",
+    "Timeout",
 )
 
 # Optional dependencies — imported once at module load so the cost is paid
@@ -181,7 +184,7 @@ class WebToMd:
         last_exc: Exception = RuntimeError("No attempts made")
         for attempt, delay in enumerate((*_RETRY_DELAYS, None), start=1):
             try:
-                response = session.get(url, timeout=DEFAULT_HTTP_TIMEOUT, allow_redirects=True)
+                response = session.get(url, timeout=(DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT), allow_redirects=True)
                 return response
             except Exception as exc:
                 last_exc = exc

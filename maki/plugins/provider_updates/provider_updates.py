@@ -55,7 +55,13 @@ class ProviderUpdates:
                     )
                     continue
                 text = strip_html(resp.text)
-                if text.count("Loading") > 5:
+                # For GitHub releases pages, skip the navigation boilerplate
+                # that precedes the first version tag.
+                if "github.com" in url and "/releases" in url:
+                    match = re.search(r"\bv\d+\.\d+", text)
+                    if match:
+                        text = text[match.start():]
+                elif text.count("Loading") > 5:
                     match = re.search(
                         r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}|\b20\d{2}-\d{2}-\d{2}\b",
                         text,
