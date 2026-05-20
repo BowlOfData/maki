@@ -219,3 +219,4 @@ examples/modular_agents_example.py
 news_letter_plan.md
 maki_gui/*
 maki_newsletter/output/*
+plugin_ocr.md

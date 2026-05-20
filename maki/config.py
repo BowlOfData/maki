@@ -70,6 +70,11 @@ PEXELS_API_KEY_ENV = "PEXELS_API_KEY"
 PLUGIN_PACKAGE_PREFIX = "maki.plugins"
 PLUGIN_REQUIRED_FILES = ("__init__.py", "README.md", "example_usage.py")
 
+DEFAULT_OCR_OUTPUT_DIR = os.path.expanduser(
+    os.getenv("MAKI_OCR_OUTPUT_DIR", "~/maki_ocr_output")
+)
+DEFAULT_OCR_MODEL = os.getenv("MAKI_OCR_MODEL", "glm-ocr")
+
 __all__ = [
     "DEFAULT_OLLAMA_SCHEME",
     "DEFAULT_OLLAMA_HOST",
@@ -88,4 +93,6 @@ __all__ = [
     "PEXELS_API_KEY_ENV",
     "PLUGIN_PACKAGE_PREFIX",
     "PLUGIN_REQUIRED_FILES",
+    "DEFAULT_OCR_OUTPUT_DIR",
+    "DEFAULT_OCR_MODEL",
 ]

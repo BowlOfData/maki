@@ -8,7 +8,7 @@ It currently ships with:
 
 - `MakiLLama` for Ollama's chat API, streaming, async calls, and sessions
 - `Agent` and `AgentManager` for role-based multi-agent execution
-- Built-in plugins for files, directories, JSON, web content, FTP/SFTP, search, and image classification
+- Built-in plugins for files, directories, JSON, web content, FTP/SFTP, search, image classification, and OCR
 - A desktop GUI shell exposed through `maki-gui`
 
 ## Features
@@ -246,6 +246,7 @@ Built-in plugins are registered in [maki/plugins/__init__.py](maki/plugins/__ini
 - `image_classifier`
 - `json_reader`
 - `media_search`
+- `ocr`
 - `provider_updates`
 - `trend_search`
 - `web_search`
