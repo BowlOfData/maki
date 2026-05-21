@@ -135,8 +135,7 @@ def _symbol_keywords(symbols: List[str]) -> List[str]:
 
 
 def _match_symbols(text: str, symbols: List[str]) -> List[str]:
-    keywords = _symbol_keywords(symbols)
-    return [s for s, kw in zip(symbols, keywords) if kw in text]
+    return [s for s in symbols if any(kw in text for kw in _symbol_keywords([s]))]
 
 
 def _parse_feed_date(entry) -> Optional[datetime]:

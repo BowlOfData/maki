@@ -7,6 +7,8 @@ readability-lxml >= 0.8
 html2text >= 2020.1.16
 pytrends >= 4.9.0
 python-dotenv >= 1.0.0
+alpaca-py >= 0.43.0
+pyyaml >= 6.0
 
 # OCR plugin — optional dependencies (uncomment what you need)
 # pdf2image >= 1.16.0      # LLM backend: PDF rasterisation (also needs poppler)
