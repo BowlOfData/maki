@@ -22,6 +22,12 @@ PLUGIN_REGISTRY = {
     "trend_search": "TrendSearch",
     "web_search": "WebSearch",
     "web_to_md": "WebToMd",
+    # Tranding plugins
+    "alpaca_data": "AlpacaData",
+    "alpaca_news": "AlpacaNews",
+    "alpaca_trading": "AlpacaTrading",
+    "alpaca_stream": "AlpacaStream",
+    "obsidian_memory": "ObsidianMemory",
 }
 
 __all__ = ["PLUGIN_REGISTRY", "get_plugin_class", "list_plugins"]
