@@ -6,7 +6,6 @@ This tests the functionality of the new LocalLLM wrapper that extends Maki.
 
 import sys
 import os
-import unittest
 from unittest.mock import patch, MagicMock
 
 # Add the current directory to Python path
@@ -17,17 +16,18 @@ def test_makillama_initialization():
     try:
         from maki.makiLLama import MakiLLama
 
-        # Test basic initialization
-        llm = MakiLLama(model="gemma3")
-        print("✓ MakiLLama initialization successful")
+        with patch.object(MakiLLama, "_verify_connection", return_value=None):
+            # Test basic initialization
+            llm = MakiLLama(model="gemma3")
+            print("✓ MakiLLama initialization successful")
 
-        # Test initialization with all parameters
-        llm2 = MakiLLama(
-            model="llama3",
-            base_url="http://localhost:11434",
-            system_prompt="You are a helpful assistant",
-            timeout=60
-        )
+            # Test initialization with all parameters
+            llm2 = MakiLLama(
+                model="llama3",
+                base_url="http://localhost:11434",
+                system_prompt="You are a helpful assistant",
+                timeout=60
+            )
         print("✓ MakiLLama full initialization successful")
 
         # Test that attributes are set correctly
@@ -43,17 +43,17 @@ def test_makillama_initialization():
 
         print("✓ MakiLLama attribute assignment successful")
 
-        return True
     except Exception as e:
         print(f"✗ MakiLLama initialization failed: {e}")
-        return False
+        raise
 
 def test_makillama_methods():
     """Test that MakiLLama has all the required methods"""
     try:
         from maki.makiLLama import MakiLLama
 
-        llm = MakiLLama(model="gemma3")
+        with patch.object(MakiLLama, "_verify_connection", return_value=None):
+            llm = MakiLLama(model="gemma3")
 
         # Test that methods exist
         assert hasattr(llm, 'chat')
@@ -66,25 +66,18 @@ def test_makillama_methods():
         assert hasattr(llm, '_verify_connection')
         print("✓ All MakiLLama methods present")
 
-        return True
     except Exception as e:
         print(f"✗ MakiLLama methods test failed: {e}")
-        return False
+        raise
 
 def test_makillama_chat_method():
     """Test the chat method functionality"""
     try:
-        from maki.makiLLama import MakiLLama, Message, GenerationConfig
+        from maki.makiLLama import MakiLLama
 
         # Mock requests to avoid actual HTTP calls
-        with patch('requests.post') as mock_post, \
-             patch('requests.get') as mock_get:
-
-            # Setup mock responses
-            mock_get_response = MagicMock()
-            mock_get_response.json.return_value = {"models": [{"name": "gemma3"}, {"name": "llama3"}]}
-            mock_get_response.status_code = 200
-            mock_get.return_value = mock_get_response
+        with patch.object(MakiLLama, "_verify_connection", return_value=None), \
+             patch("requests.Session.post") as mock_post:
 
             mock_post_response = MagicMock()
             mock_post_response.json.return_value = {
@@ -109,25 +102,18 @@ def test_makillama_chat_method():
 
             print("✓ MakiLLama chat method works correctly")
 
-        return True
     except Exception as e:
         print(f"✗ MakiLLama chat test failed: {e}")
-        return False
+        raise
 
 def test_makillama_stream_method():
     """Test the stream method functionality"""
     try:
-        from maki.makiLLama import MakiLLama, Message
+        from maki.makiLLama import MakiLLama
 
         # Mock requests to avoid actual HTTP calls
-        with patch('requests.post') as mock_post, \
-             patch('requests.get') as mock_get:
-
-            # Setup mock responses for get request (model verification)
-            mock_get_response = MagicMock()
-            mock_get_response.json.return_value = {"models": [{"name": "gemma3"}]}
-            mock_get_response.status_code = 200
-            mock_get.return_value = mock_get_response
+        with patch.object(MakiLLama, "_verify_connection", return_value=None), \
+             patch("requests.Session.post") as mock_post:
 
             # Setup mock streaming response
             mock_post_response = MagicMock()
@@ -149,25 +135,18 @@ def test_makillama_stream_method():
 
             print("✓ MakiLLama stream method works correctly")
 
-        return True
     except Exception as e:
         print(f"✗ MakiLLama stream test failed: {e}")
-        return False
+        raise
 
 def test_makillama_session():
     """Test the session functionality"""
     try:
-        from maki.makiLLama import MakiLLama, Message
+        from maki.makiLLama import MakiLLama
 
         # Mock requests to avoid actual HTTP calls
-        with patch('requests.post') as mock_post, \
-             patch('requests.get') as mock_get:
-
-            # Setup mock responses
-            mock_get_response = MagicMock()
-            mock_get_response.json.return_value = {"models": [{"name": "gemma3"}]}
-            mock_get_response.status_code = 200
-            mock_get.return_value = mock_get_response
+        with patch.object(MakiLLama, "_verify_connection", return_value=None), \
+             patch("requests.Session.post") as mock_post:
 
             mock_post_response = MagicMock()
             mock_post_response.json.return_value = {
@@ -193,10 +172,9 @@ def test_makillama_session():
 
             print("✓ MakiLLama session functionality works correctly")
 
-        return True
     except Exception as e:
         print(f"✗ MakiLLama session test failed: {e}")
-        return False
+        raise
 
 def test_makillama_generation_config():
     """Test GenerationConfig functionality"""
@@ -239,10 +217,9 @@ def test_makillama_generation_config():
 
         print("✓ GenerationConfig works correctly")
 
-        return True
     except Exception as e:
         print(f"✗ GenerationConfig test failed: {e}")
-        return False
+        raise
 
 def test_makillama_message():
     """Test Message dataclass functionality"""
@@ -261,35 +238,34 @@ def test_makillama_message():
 
         print("✓ Message dataclass works correctly")
 
-        return True
     except Exception as e:
         print(f"✗ Message test failed: {e}")
-        return False
+        raise
 
 def test_makillama_factories():
     """Test factory functions"""
     try:
-        from maki.makiLLama import gemma3, qwen, llama, mistral
+        from maki.makiLLama import MakiLLama, gemma3, qwen, llama, mistral
 
-        # Test factory functions
-        llm1 = gemma3()
-        assert llm1.model == "gemma3"
+        with patch.object(MakiLLama, "_verify_connection", return_value=None):
+            # Test factory functions
+            llm1 = gemma3()
+            assert llm1.model == "gemma3"
 
-        llm2 = qwen("qwen2.5:7b")
-        assert llm2.model == "qwen2.5:7b"
+            llm2 = qwen("qwen2.5:7b")
+            assert llm2.model == "qwen2.5:7b"
 
-        llm3 = llama("llama3.2")
-        assert llm3.model == "llama3.2"
+            llm3 = llama("llama3.2")
+            assert llm3.model == "llama3.2"
 
-        llm4 = mistral()
-        assert llm4.model == "mistral"
+            llm4 = mistral()
+            assert llm4.model == "mistral"
 
         print("✓ Factory functions work correctly")
 
-        return True
     except Exception as e:
         print(f"✗ Factory functions test failed: {e}")
-        return False
+        raise
 
 if __name__ == "__main__":
     print("Testing MakiLLama class...")
@@ -307,7 +283,11 @@ if __name__ == "__main__":
 
     results = []
     for test in tests:
-        results.append(test())
+        try:
+            test()
+            results.append(True)
+        except Exception:
+            results.append(False)
 
     if all(results):
         print("\n✓ All MakiLLama tests passed!")
