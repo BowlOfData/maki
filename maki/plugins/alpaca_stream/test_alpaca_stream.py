@@ -2,6 +2,8 @@ import asyncio
 import pytest
 from unittest.mock import MagicMock, patch
 
+pytest.importorskip("alpaca")
+
 
 @pytest.fixture()
 def plugin():

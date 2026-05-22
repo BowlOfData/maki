@@ -82,8 +82,8 @@ class AlpacaTrading:
         client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Submit a trading order. Returns order dict."""
-        from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopLimitOrderRequest
-        from alpaca.trading.enums import OrderSide, TimeInForce
+        from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce, OrderType
 
         side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         tif_enum = TimeInForce.GTC if time_in_force.lower() == "gtc" else TimeInForce.DAY
@@ -103,6 +103,16 @@ class AlpacaTrading:
                 side=side_enum,
                 time_in_force=tif_enum,
                 limit_price=limit_price,
+                client_order_id=client_order_id,
+            )
+        elif order_type == "stop" and stop_price:
+            req = StopOrderRequest(
+                symbol=symbol,
+                qty=qty,
+                side=side_enum,
+                type=OrderType.STOP,
+                time_in_force=tif_enum,
+                stop_price=round(stop_price, 8),
                 client_order_id=client_order_id,
             )
         else:

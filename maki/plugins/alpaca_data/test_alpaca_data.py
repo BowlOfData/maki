@@ -1,6 +1,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+pytest.importorskip("alpaca")
+
 
 def _make_bar(t, o, h, l, c, v):
     bar = MagicMock()

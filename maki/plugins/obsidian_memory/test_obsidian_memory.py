@@ -2,6 +2,9 @@ import json
 import tempfile
 import pytest
 from pathlib import Path
+
+pytest.importorskip("yaml")
+
 from maki.plugins.obsidian_memory.obsidian_memory import ObsidianMemory, _safe_filename, _split_frontmatter
 
 
