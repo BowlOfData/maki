@@ -16,6 +16,23 @@
 
 ---
 
+## Architecture
+
+<p align="center">
+  <img src="img/diagram.png" alt="Maki Architecture Diagram" width="900" />
+</p>
+
+The framework is organized into four layers:
+
+- **Public API** — `maki/__init__.py` lazy-loads all exports on first access
+- **LLM Backends** — `MakiLLama` (Ollama) and `HFBackend` (HuggingFace) both implement the abstract `LLMBackend` contract
+- **Agent System** — `Agent` composes `PluginHandler` and `ReasoningEngine` mixins; `AgentManager` orchestrates agents via `WorkflowTask` and `WorkflowState`
+- **Infrastructure** — `Connector` (SSRF-protected HTTP), shared data classes, typed exceptions, runtime config, and logging
+
+The Plugin System sits alongside the Agent layer: plugins are loaded on demand and invoked automatically when the LLM emits a `TOOL:` directive.
+
+---
+
 ## Features
 
 - `MakiLLama` — Ollama chat API with synchronous, streaming, async, and vision-capable workflows
