@@ -107,78 +107,74 @@ class AlpacaData:
         """Convert 'EUR/USD' → 'EURUSD' for Alpaca's market data endpoints."""
         return symbol.replace("/", "")
 
+    @staticmethod
+    def _yf_symbol(symbol: str) -> str:
+        """Convert 'EUR/USD' → 'EURUSD=X' for Yahoo Finance."""
+        return symbol.replace("/", "") + "=X"
+
+    @staticmethod
+    def _yf_interval(timeframe: str) -> str:
+        return {"1Min": "1m", "5Min": "5m", "15Min": "15m", "1Hour": "1h", "1Day": "1d"}.get(timeframe, "1m")
+
     def get_forex_bars(
         self,
         symbol: str,
         timeframe: str = "1Min",
         lookback: int = 60,
     ) -> List[Dict[str, Any]]:
-        """Return the last *lookback* OHLCV bars for a forex pair (e.g. 'EUR/USD').
+        """Return the last *lookback* OHLCV bars for a forex pair via Yahoo Finance."""
+        import yfinance as yf
 
-        Returns an empty list when the market is closed (weekends) or no bars
-        are available yet — the caller already handles this gracefully.
-        """
-        import httpx
+        yf_sym = self._yf_symbol(symbol)
+        interval = self._yf_interval(timeframe)
+        period_minutes = lookback * _tf_minutes(timeframe)
+        # yfinance period string: use days for longer windows, else intraday
+        if period_minutes <= 1440:
+            period = "1d"
+        elif period_minutes <= 7 * 1440:
+            period = "5d"
+        else:
+            period = "1mo"
 
-        _TF_MAP = {
-            "1Min": "1Min", "5Min": "5Min", "15Min": "15Min",
-            "1Hour": "1Hour", "1Day": "1Day",
-        }
-        tf = _TF_MAP.get(timeframe, "1Min")
-        fx_sym = self._fx_symbol(symbol)
-        start = (
-            datetime.now(timezone.utc) - timedelta(minutes=lookback * _tf_minutes(timeframe))
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        url = f"{_ALPACA_DATA_URL}/v2/stocks/{fx_sym}/bars"
-        params = {"timeframe": tf, "start": start, "limit": lookback, "feed": "iex"}
-        headers = {
-            "APCA-API-KEY-ID": os.environ.get("APCA_API_KEY_ID", ""),
-            "APCA-API-SECRET-KEY": os.environ.get("APCA_API_SECRET_KEY", ""),
-        }
-        resp = httpx.get(url, params=params, headers=headers, timeout=10.0)
-        resp.raise_for_status()
-        raw = resp.json().get("bars") or []
+        ticker = yf.Ticker(yf_sym)
+        df = ticker.history(period=period, interval=interval, auto_adjust=True)
+        if df.empty:
+            return []
+        df = df.tail(lookback)
         return [
             {
-                "t": b["t"],
-                "o": float(b["o"]),
-                "h": float(b["h"]),
-                "l": float(b["l"]),
-                "c": float(b["c"]),
-                "v": float(b.get("v", 0.0)),
+                "t": idx.isoformat(),
+                "o": float(row["Open"]),
+                "h": float(row["High"]),
+                "l": float(row["Low"]),
+                "c": float(row["Close"]),
+                "v": float(row.get("Volume", 0.0)),
             }
-            for b in raw
+            for idx, row in df.iterrows()
         ]
 
     def get_forex_latest_quote(self, symbol: str) -> Dict[str, Any]:
-        """Return the latest bid/ask for a forex pair (e.g. 'EUR/USD').
+        """Return the latest bid/ask for a forex pair via Yahoo Finance.
 
-        Raises RuntimeError when the market is closed or no quote is available —
-        the caller (safety tick, tick workflow) should treat this as a skip.
+        Raises RuntimeError when no quote is available.
         """
-        import httpx
+        import yfinance as yf
 
-        fx_sym = self._fx_symbol(symbol)
-        url = f"{_ALPACA_DATA_URL}/v2/stocks/{fx_sym}/quotes/latest"
-        headers = {
-            "APCA-API-KEY-ID": os.environ.get("APCA_API_KEY_ID", ""),
-            "APCA-API-SECRET-KEY": os.environ.get("APCA_API_SECRET_KEY", ""),
-        }
-        resp = httpx.get(url, params={"feed": "iex"}, headers=headers, timeout=10.0)
-        if resp.status_code == 404:
+        yf_sym = self._yf_symbol(symbol)
+        ticker = yf.Ticker(yf_sym)
+        info = ticker.fast_info
+        price = getattr(info, "last_price", None)
+        if not price:
             raise RuntimeError(f"No quote available for {symbol} (market may be closed)")
-        resp.raise_for_status()
-        q = resp.json().get("quote") or {}
-        if not q or not q.get("bp"):
-            raise RuntimeError(f"Empty quote for {symbol} (market may be closed)")
+        # Yahoo Finance doesn't provide a real spread for FX; synthesise a 1-pip spread.
+        pip = 0.0001 if "JPY" not in symbol else 0.01
         return {
             "symbol": symbol,
-            "bid": float(q["bp"]),
-            "ask": float(q["ap"]),
-            "bid_size": float(q.get("bs", 0)),
-            "ask_size": float(q.get("as", 0)),
-            "timestamp": q.get("t", ""),
+            "bid": round(price - pip / 2, 6),
+            "ask": round(price + pip / 2, 6),
+            "bid_size": 0.0,
+            "ask_size": 0.0,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     # ------------------------------------------------------------------
