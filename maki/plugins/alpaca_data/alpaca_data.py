@@ -181,11 +181,65 @@ class AlpacaData:
     # Equities stubs — v2
     # ------------------------------------------------------------------
 
-    def get_bars(self, symbol: str, timeframe: str = "1Min", lookback: int = 60):
-        raise NotImplementedError("Equities bar fetch enabled in v2")
+    def get_equity_bars(
+        self,
+        symbol: str,
+        timeframe: str = "1Min",
+        lookback: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Return the last *lookback* OHLCV bars for a US equity (e.g. 'AAPL')."""
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
-    def get_latest_quote(self, symbol: str):
-        raise NotImplementedError("Equities quote fetch enabled in v2")
+        tf_map = {
+            "1Min": TimeFrame(1, TimeFrameUnit.Minute),
+            "5Min": TimeFrame(5, TimeFrameUnit.Minute),
+            "15Min": TimeFrame(15, TimeFrameUnit.Minute),
+            "1Hour": TimeFrame(1, TimeFrameUnit.Hour),
+            "1Day": TimeFrame(1, TimeFrameUnit.Day),
+        }
+        tf = tf_map.get(timeframe, TimeFrame(1, TimeFrameUnit.Minute))
+        api_key = os.environ.get("APCA_API_KEY_ID")
+        api_secret = os.environ.get("APCA_API_SECRET_KEY")
+        client = StockHistoricalDataClient(api_key=api_key, secret_key=api_secret)
+        start = datetime.now(timezone.utc) - timedelta(minutes=lookback * _tf_minutes(timeframe))
+        req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf, start=start, limit=lookback)
+        bars = client.get_stock_bars(req)
+        symbol_bars = bars.data.get(symbol) or []
+        return [
+            {
+                "t": bar.timestamp.isoformat(),
+                "o": float(bar.open),
+                "h": float(bar.high),
+                "l": float(bar.low),
+                "c": float(bar.close),
+                "v": float(bar.volume),
+            }
+            for bar in symbol_bars
+        ]
+
+    def get_equity_latest_quote(self, symbol: str) -> Dict[str, Any]:
+        """Return the latest bid/ask for a US equity (e.g. 'AAPL')."""
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockLatestQuoteRequest
+
+        api_key = os.environ.get("APCA_API_KEY_ID")
+        api_secret = os.environ.get("APCA_API_SECRET_KEY")
+        client = StockHistoricalDataClient(api_key=api_key, secret_key=api_secret)
+        req = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+        quotes = client.get_stock_latest_quote(req)
+        q = quotes.get(symbol) if isinstance(quotes, dict) else quotes.data.get(symbol)
+        if not q or not q.bid_price or not q.ask_price:
+            raise RuntimeError(f"No quote available for {symbol} (market may be closed)")
+        return {
+            "symbol": symbol,
+            "bid": float(q.bid_price),
+            "ask": float(q.ask_price),
+            "bid_size": float(q.bid_size),
+            "ask_size": float(q.ask_size),
+            "timestamp": q.timestamp.isoformat(),
+        }
 
 
 def register_plugin(maki_instance=None):
