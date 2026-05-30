@@ -3,9 +3,10 @@ Obsidian memory plugin for Maki.
 
 Reads and writes Markdown notes with YAML frontmatter into a local vault.
 The vault path is resolved from (in priority order):
-  1. TRANDING_VAULT_PATH env var
-  2. vault_path constructor arg
-  3. ~/ObsidianVaults/tranding
+  1. vault_path constructor arg
+  2. MAKI_VAULT_PATH env var
+  3. TRANDING_VAULT_PATH env var  (deprecated — kept for back-compat)
+  4. ~/ObsidianVaults/maki
 """
 
 import json
@@ -36,10 +37,19 @@ class ObsidianMemory:
         import yaml as _yaml
         self._yaml = _yaml
 
+        tranding_legacy = os.environ.get("TRANDING_VAULT_PATH")
+        if tranding_legacy:
+            import warnings
+            warnings.warn(
+                "TRANDING_VAULT_PATH is deprecated; use MAKI_VAULT_PATH instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         raw = (
-            os.environ.get("TRANDING_VAULT_PATH")
-            or vault_path
-            or "~/ObsidianVaults/tranding"
+            vault_path
+            or os.environ.get("MAKI_VAULT_PATH")
+            or tranding_legacy
+            or "~/ObsidianVaults/maki"
         )
         self._vault = Path(raw).expanduser().resolve()
         self._vault.mkdir(parents=True, exist_ok=True)

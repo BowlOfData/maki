@@ -394,7 +394,14 @@ class AgentManager:
 
     def _execute_workflow_task(self, wt: WorkflowTask, results: Dict,
                                state: WorkflowState):
-        """Run a single WorkflowTask, updating its fields and the WorkflowState."""
+        """Run a single WorkflowTask, updating its fields and the WorkflowState.
+
+        The agent receives a ``context`` dict built from the structured ``data``
+        payloads of all completed dependencies (keyed by dependency name).  This
+        lets downstream agents consume typed data directly rather than parsing
+        free-text strings.  The text ``result`` of each dependency is also
+        included under ``<dep_name>__result`` for backward compatibility.
+        """
         # Evaluate conditions; skip if any returns False
         if not wt.should_execute(results):
             logger.info(f"WorkflowTask '{wt.name}' skipped (conditions not met)")
@@ -410,6 +417,16 @@ class AgentManager:
             logger.error(f"WorkflowTask '{wt.name}' failed: {err}")
             return wt.name, None
 
+        # Build context from dependency outputs
+        context: dict = {}
+        for dep in wt.dependencies:
+            dep_result = results.get(dep)
+            if dep_result:
+                if dep_result.get("data") is not None:
+                    context[dep] = dep_result["data"]
+                if dep_result.get("result") is not None:
+                    context[f"{dep}__result"] = dep_result["result"]
+
         wt.status = TaskStatus.IN_PROGRESS
         wt.attempts += 1
         start = time.time()
@@ -417,6 +434,7 @@ class AgentManager:
         try:
             result = agent.execute_task_with_retry(
                 wt.task,
+                context=context or None,
                 max_retries=wt.max_retries,
                 retry_delay=wt.retry_delay
             )
@@ -424,9 +442,15 @@ class AgentManager:
             wt.status = TaskStatus.COMPLETED
             wt.execution_time = time.time() - start
             state.update_task_status(
-                wt.name, TaskStatus.COMPLETED, result, wt.execution_time
+                wt.name, TaskStatus.COMPLETED, result, wt.execution_time,
+                data=wt.data,
             )
-            return wt.name, {'agent': wt.agent, 'task': wt.task, 'result': result}
+            return wt.name, {
+                'agent': wt.agent,
+                'task': wt.task,
+                'result': result,
+                'data': wt.data,
+            }
 
         except Exception as e:
             wt.status = TaskStatus.FAILED

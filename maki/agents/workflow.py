@@ -51,6 +51,11 @@ class WorkflowTask:
         self.parallelizable = parallelizable
         self.status = TaskStatus.PENDING
         self.result = None
+        # Structured output from this task.  Populated by the agent (or post-processor)
+        # after execution.  Dependents receive it via the ``context`` dict under their
+        # dependency name, so downstream agents can consume typed data directly rather
+        # than parsing free-text strings.
+        self.data: Optional[Dict[str, Any]] = None
         self.timestamp = None
         self.attempts = 0
         self.execution_time = 0.0
@@ -85,11 +90,13 @@ class WorkflowState:
         self.error_log = []
 
     def update_task_status(self, task_name: str, status: TaskStatus, result: Any = None,
-                          execution_time: float = 0.0, resources_used: Dict = None):
-        """Update task status and metrics"""
+                          execution_time: float = 0.0, resources_used: Dict = None,
+                          data: Optional[Dict[str, Any]] = None):
+        """Update task status and metrics, including optional structured data payload."""
         self.tasks[task_name] = {
             'status': status,
             'result': result,
+            'data': data,
             'timestamp': time.time(),
             'execution_time': execution_time,
             'resources_used': resources_used or {}

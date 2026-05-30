@@ -28,6 +28,7 @@ PLUGIN_REGISTRY = {
     "alpaca_trading": "AlpacaTrading",
     "alpaca_stream": "AlpacaStream",
     "obsidian_memory": "ObsidianMemory",
+    "rag_memory": "RagMemory",
 }
 
 __all__ = ["PLUGIN_REGISTRY", "get_plugin_class", "list_plugins"]
