@@ -7,20 +7,24 @@ from importlib import import_module
 from . import config
 
 __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
-           "HFBackend", "LLMResponse", "GenerationConfig", "Message", "RateLimiter", "config"]
+           "HFBackend", "MakiOpenAI", "MakiAnthropic", "LLMResponse", "GenerationConfig",
+           "Message", "RateLimiter", "BackendType", "config"]
 
 _LAZY_EXPORTS = {
-    "LLMBackend": (".backend", "LLMBackend"),
-    "Connector": (".connector", "Connector"),
-    "Utils": (".utils", "Utils"),
-    "Agent": (".agents", "Agent"),
-    "AgentManager": (".agents", "AgentManager"),
-    "MakiLLama": (".makiLLama", "MakiLLama"),
-    "HFBackend": (".makiHG", "HFBackend"),
-    "LLMResponse": (".objects", "LLMResponse"),
-    "GenerationConfig": (".objects", "GenerationConfig"),
-    "Message": (".objects", "Message"),
-    "RateLimiter": (".objects", "RateLimiter"),
+    "LLMBackend":     (".backend",       "LLMBackend"),
+    "Connector":      (".connector",     "Connector"),
+    "Utils":          (".utils",         "Utils"),
+    "Agent":          (".agents",        "Agent"),
+    "AgentManager":   (".agents",        "AgentManager"),
+    "MakiLLama":      (".makiLLama",     "MakiLLama"),
+    "HFBackend":      (".makiHG",        "HFBackend"),
+    "MakiOpenAI":     (".makiOpenAI",    "MakiOpenAI"),
+    "MakiAnthropic":  (".makiAnthropic", "MakiAnthropic"),
+    "LLMResponse":    (".objects",       "LLMResponse"),
+    "GenerationConfig": (".objects",     "GenerationConfig"),
+    "Message":        (".objects",       "Message"),
+    "RateLimiter":    (".objects",       "RateLimiter"),
+    "BackendType":    (".objects",       "BackendType"),
 }
 
 

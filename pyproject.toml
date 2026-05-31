@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "maki"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
   {name="Bowl of Data", email="bowlofdata@gmail.com"},
 ]
@@ -36,6 +36,16 @@ dev = [
     "pytest>=6.0",
     "black>=21.0",
     "flake8>=3.8",
+]
+openai = [
+    "openai>=1.0",
+]
+anthropic = [
+    "anthropic>=0.20",
+]
+all = [
+    "openai>=1.0",
+    "anthropic>=0.20",
 ]
 [project.scripts]
 maki = "maki.__main__:main"

@@ -8,7 +8,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, TextIteratorStreamer
 
 from .backend import LLMBackend
-from .objects import GenerationConfig, LLMResponse
+from .objects import GenerationConfig, LLMResponse, BackendType
 
 
 class HFBackend(LLMBackend):
@@ -186,7 +186,7 @@ class HFBackend(LLMBackend):
             completion_tokens=completion_tokens,
             total_tokens=input_len + completion_tokens,
             elapsed_seconds=elapsed,
-            backend="transformers",
+            backend=BackendType.HF,
         )
 
     def stream(self, prompt: str) -> Generator[str, None, None]:  # type: ignore[override]

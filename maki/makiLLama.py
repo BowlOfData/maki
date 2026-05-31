@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import time
 import logging
-from typing import Generator, Iterator, Optional
+from typing import Generator, Optional
 
 from urllib.parse import urlparse
 
@@ -29,7 +29,8 @@ from .config import (
     DEFAULT_TEMPERATURE,
 )
 from .utils import Utils
-from .objects import LLMResponse, Message, GenerationConfig, RateLimiter
+from .objects import LLMResponse, Message, GenerationConfig, RateLimiter, BackendType
+from .session import ChatSession
 from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 
 import requests
@@ -223,6 +224,7 @@ class MakiLLama(LLMBackend):
             total_tokens=prompt_tokens + completion_tokens,
             elapsed_seconds=elapsed,
             done=data.get("done", True),
+            backend=BackendType.OLLAMA,
         )
 
     def chat(
@@ -449,72 +451,6 @@ class MakiLLama(LLMBackend):
 
     def __repr__(self) -> str:
         return f"LocalLLM(model={self.model!r}, base_url={self.base_url!r})"
-
-
-# ---------------------------------------------------------------------------
-# Stateful session
-# ---------------------------------------------------------------------------
-
-class ChatSession:
-    """
-    Maintains conversation history across turns.
-
-    Usage
-    -----
-        session = llm.session(system="You are a helpful chef.")
-        session.say("How do I make carbonara?")
-        session.say("What if I don't have guanciale?")
-        session.print_history()
-    """
-
-    def __init__(self, llm: MakiLLama, system: Optional[str] = None) -> None:
-        self._llm = llm
-        self._history: list[Message] = []
-        self._system = system
-
-    def say(
-        self,
-        prompt: str,
-        stream: bool = False,
-        config: Optional[GenerationConfig] = None,
-    ) -> LLMResponse | Iterator[str]:
-        """Send a message and automatically extend the conversation history."""
-        log.debug("Session saying: %s", prompt[:100] + "..." if len(prompt) > 100 else prompt)
-        if stream:
-            return self._say_stream(prompt, config)
-        response = self._llm.chat(prompt, history=self._history, config=config, system=self._system)
-        self._history.append(Message("user", prompt))
-        self._history.append(Message("assistant", response.content))
-        return response
-
-    def _say_stream(self, prompt: str, config: Optional[GenerationConfig]) -> Iterator[str]:
-        """Generator that streams tokens and appends to history when done."""
-        full = ""
-        for chunk in self._llm.stream(prompt, history=self._history, config=config, system=self._system):
-            full += chunk
-            yield chunk
-        self._history.append(Message("user", prompt))
-        self._history.append(Message("assistant", full))
-
-    def reset(self) -> None:
-        """Clear conversation history."""
-        self._history.clear()
-        log.info("Session history cleared.")
-
-    def print_history(self) -> None:
-        """Pretty-print the full conversation."""
-        for msg in self._history:
-            color = "cyan" if msg.role == "user" else "green"
-            log.info(f"[bold {color}]{msg.role.upper()}[/bold {color}]")
-            log.info(msg.content)
-            log.info("")
-
-    @property
-    def history(self) -> list[Message]:
-        return list(self._history)
-
-    def __len__(self) -> int:
-        return len(self._history)
 
 
 # ---------------------------------------------------------------------------

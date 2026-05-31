@@ -1,7 +1,15 @@
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional
 import threading
 import time as _time
+
+
+class BackendType(str, Enum):
+    OLLAMA    = "ollama"
+    OPENAI    = "openai"
+    ANTHROPIC = "anthropic"
+    HF        = "huggingface"
 
 
 @dataclass
@@ -62,6 +70,28 @@ class GenerationConfig:
             "do_sample": self.do_sample,
         }
 
+    def to_openai_kwargs(self) -> dict:
+        kwargs: dict = {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": self.max_tokens,
+        }
+        if self.seed != -1:
+            kwargs["seed"] = self.seed
+        if self.stop:
+            kwargs["stop"] = self.stop
+        return kwargs
+
+    def to_anthropic_kwargs(self) -> dict:
+        kwargs: dict = {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": self.max_tokens,
+        }
+        if self.stop:
+            kwargs["stop_sequences"] = self.stop
+        return kwargs
+
 
 @dataclass
 class LLMResponse:
@@ -72,7 +102,7 @@ class LLMResponse:
     total_tokens: int
     elapsed_seconds: float
     done: bool = True
-    backend: str = "ollama"
+    backend: BackendType = BackendType.OLLAMA
 
     def __str__(self) -> str:
         return self.content
