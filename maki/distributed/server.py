@@ -158,6 +158,15 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
         request.app.state.agent.remember(req.key, req.value)
         return {"ok": True}
 
+    @app.get("/memory")
+    def memory_list(request: Request, _: None = Depends(_auth)):
+        return {"memory": dict(request.app.state.agent.memory)}
+
+    @app.delete("/memory")
+    def memory_clear(request: Request, _: None = Depends(_auth)):
+        request.app.state.agent.clear_memory()
+        return {"ok": True}
+
     @app.get("/memory/{key}")
     def memory_get(key: str, request: Request, _: None = Depends(_auth)):
         ag: Agent = request.app.state.agent
