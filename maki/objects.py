@@ -24,6 +24,10 @@ class Message:
             d["images"] = self.images
         return d
 
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Message':
+        return cls(role=data["role"], content=data["content"], images=data.get("images"))
+
 
 @dataclass
 class GenerationConfig:
@@ -92,6 +96,33 @@ class GenerationConfig:
             kwargs["stop_sequences"] = self.stop
         return kwargs
 
+    def to_dict(self) -> dict:
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "repeat_penalty": self.repeat_penalty,
+            "max_tokens": self.max_tokens,
+            "seed": self.seed,
+            "stop": self.stop,
+            "do_sample": self.do_sample,
+            "num_ctx": self.num_ctx,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'GenerationConfig':
+        return cls(
+            temperature=data.get("temperature", 0.7),
+            top_p=data.get("top_p", 0.9),
+            top_k=data.get("top_k", 40),
+            repeat_penalty=data.get("repeat_penalty", 1.1),
+            max_tokens=data.get("max_tokens", 2048),
+            seed=data.get("seed", -1),
+            stop=data.get("stop", []),
+            do_sample=data.get("do_sample", True),
+            num_ctx=data.get("num_ctx"),
+        )
+
 
 @dataclass
 class LLMResponse:
@@ -110,6 +141,31 @@ class LLMResponse:
     @property
     def tokens_per_second(self) -> float:
         return self.completion_tokens / self.elapsed_seconds if self.elapsed_seconds else 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "content": self.content,
+            "model": self.model,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "elapsed_seconds": self.elapsed_seconds,
+            "done": self.done,
+            "backend": self.backend.value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'LLMResponse':
+        return cls(
+            content=data["content"],
+            model=data["model"],
+            prompt_tokens=data["prompt_tokens"],
+            completion_tokens=data["completion_tokens"],
+            total_tokens=data["total_tokens"],
+            elapsed_seconds=data["elapsed_seconds"],
+            done=data.get("done", True),
+            backend=BackendType(data["backend"]),
+        )
 
 
 class RateLimiter:
