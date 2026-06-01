@@ -43,9 +43,17 @@ openai = [
 anthropic = [
     "anthropic>=0.20",
 ]
+distributed = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "pyyaml>=6.0",
+]
 all = [
     "openai>=1.0",
     "anthropic>=0.20",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "pyyaml>=6.0",
 ]
 [project.scripts]
 maki = "maki.__main__:main"
