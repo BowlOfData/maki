@@ -27,6 +27,7 @@ try:
     from fastapi.responses import StreamingResponse
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel, field_validator
+    from starlette.middleware.base import BaseHTTPMiddleware
 except ImportError as _e:
     raise ImportError(
         "Distributed server requires optional dependencies. "
@@ -36,6 +37,7 @@ except ImportError as _e:
 import json
 import logging
 import time
+import uuid
 from typing import Any, Optional
 
 from ..agents.agent import Agent
@@ -76,6 +78,22 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
     app = FastAPI(title="Maki Agent Server", version="0.1.0")
     app.state.agent = agent
     app.state.api_key = api_key
+
+    # ------------------------------------------------------------------
+    # Trace middleware: attach/propagate X-Maki-Trace-Id on every request
+    # ------------------------------------------------------------------
+
+    class _TracingMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            trace_id = request.headers.get("X-Maki-Trace-Id") or str(uuid.uuid4())
+            request.state.trace_id = trace_id
+            logger.debug("[trace=%s] → %s %s", trace_id, request.method, request.url.path)
+            response = await call_next(request)
+            response.headers["X-Maki-Trace-Id"] = trace_id
+            logger.debug("[trace=%s] ← %d", trace_id, response.status_code)
+            return response
+
+    app.add_middleware(_TracingMiddleware)
 
     def _auth(
         request: Request,
@@ -120,7 +138,9 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
     @app.post("/execute")
     def execute(req: ExecuteRequest, request: Request, _: None = Depends(_auth)):
         ag: Agent = request.app.state.agent
+        trace_id: str = getattr(request.state, "trace_id", str(uuid.uuid4()))
         t0 = time.time()
+        logger.debug("[trace=%s] executing task for agent '%s'", trace_id, ag.name)
         try:
             result = ag.execute_task(req.task, req.context, req.use_plugins)
         except (MakiNetworkError, MakiTimeoutError) as e:
@@ -129,10 +149,13 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e))
         except MakiError as e:
             raise HTTPException(status_code=500, detail=str(e))
+        elapsed = round(time.time() - t0, 3)
+        logger.debug("[trace=%s] task completed in %.3fs", trace_id, elapsed)
         return {
             "result": result,
             "agent_id": ag.agent_id,
-            "elapsed": round(time.time() - t0, 3),
+            "elapsed": elapsed,
+            "trace_id": trace_id,
         }
 
     @app.get("/stream")

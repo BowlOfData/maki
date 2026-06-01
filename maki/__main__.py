@@ -2,8 +2,15 @@
 Main entry point for the Maki framework CLI.
 
 Usage:
-    maki                   Print usage help.
-    maki serve --config <file> [--host HOST] [--port PORT] [--api-key KEY]
+    maki                              Print usage help.
+    maki serve --config <file> [options]
+
+serve options:
+    --host HOST           Bind address (default: 127.0.0.1)
+    --port PORT           Listen port  (default: 8100)
+    --api-key KEY         Bearer token for auth
+    --tls-cert FILE       TLS certificate file (enables HTTPS)
+    --tls-key  FILE       TLS private-key file
 """
 import argparse
 import logging
@@ -53,12 +60,19 @@ def _cmd_serve(args: argparse.Namespace) -> None:
 
     app = create_app(agent, api_key=args.api_key)
 
+    scheme = "https" if args.tls_cert else "http"
     print(f"Maki Agent Server — {agent.name!r} ({agent.role or 'no role'})")
-    print(f"  Listening on  http://{args.host}:{args.port}")
+    print(f"  Listening on  {scheme}://{args.host}:{args.port}")
     print(f"  Auth          {'Bearer token' if args.api_key else 'disabled (trusted network)'}")
+    print(f"  TLS           {'enabled' if args.tls_cert else 'disabled'}")
     print(f"  Plugins       {list(agent.plugins.keys()) or 'none'}")
 
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn_kwargs: dict = {"host": args.host, "port": args.port}
+    if args.tls_cert:
+        uvicorn_kwargs["ssl_certfile"] = args.tls_cert
+    if args.tls_key:
+        uvicorn_kwargs["ssl_keyfile"] = args.tls_key
+    uvicorn.run(app, **uvicorn_kwargs)
 
 
 def main() -> None:
@@ -78,6 +92,10 @@ def main() -> None:
                        help="Listen port (default: 8100)")
     serve.add_argument("--api-key", default=None, metavar="KEY",
                        help="Bearer token for authentication (omit for open access)")
+    serve.add_argument("--tls-cert", default=None, metavar="FILE",
+                       help="TLS certificate file — enables HTTPS when set")
+    serve.add_argument("--tls-key", default=None, metavar="FILE",
+                       help="TLS private-key file (required when --tls-cert is set)")
 
     args = parser.parse_args()
 
