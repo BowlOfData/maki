@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional
 import json
 import logging
 import time
+import uuid
 
 from ..backend import LLMBackend
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
@@ -57,6 +58,7 @@ class Agent(PluginHandler, ReasoningEngine):
         if not (isinstance(maki_instance, LLMBackend) or hasattr(maki_instance, 'request')):
             raise TypeError("maki_instance must implement the LLMBackend interface")
 
+        self.agent_id = str(uuid.uuid4())
         self.name = name.strip()
         self.maki = maki_instance
         self.role = role
@@ -314,6 +316,50 @@ class Agent(PluginHandler, ReasoningEngine):
     def clear_memory(self):
         """Clear the agent's memory."""
         self.memory.clear()
+
+    def to_dict(self) -> dict:
+        """Serialize the agent's state to a JSON-compatible dict.
+
+        The LLM backend is not included — pass it explicitly to from_dict().
+        """
+        return {
+            'agent_id': self.agent_id,
+            'name': self.name,
+            'role': self.role,
+            'instructions': self.instructions,
+            'stateful': self.stateful,
+            'use_streaming': self.use_streaming,
+            'memory': dict(self.memory),
+            'task_history': list(self.task_history),
+            'conversation_history': list(self._conversation_history),
+            'max_history_entries': self._max_history_entries,
+            'stateful_context_window': self._stateful_context_window,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, maki_instance: LLMBackend) -> 'Agent':
+        """Reconstruct an Agent from a dict produced by to_dict().
+
+        Args:
+            data: Dict previously returned by to_dict().
+            maki_instance: LLM backend to attach (not serialized).
+        """
+        agent = cls(
+            name=data['name'],
+            maki_instance=maki_instance,
+            role=data.get('role', ''),
+            instructions=data.get('instructions', ''),
+            stateful=data.get('stateful', False),
+            use_streaming=data.get('use_streaming', False),
+        )
+        agent.agent_id = data['agent_id']
+        agent.memory = dict(data.get('memory', {}))
+        max_entries = data.get('max_history_entries', 1000)
+        agent._max_history_entries = max_entries
+        agent.task_history = deque(data.get('task_history', []), maxlen=max_entries)
+        agent._conversation_history = deque(data.get('conversation_history', []), maxlen=max_entries)
+        agent._stateful_context_window = data.get('stateful_context_window', 10)
+        return agent
 
     def set_max_history_entries(self, max_entries: int):
         """Set the maximum number of entries to keep in history.
