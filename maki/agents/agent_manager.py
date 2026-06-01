@@ -7,8 +7,9 @@ collaboration, and workflow execution.
 
 import json
 import logging
+import threading
 import time
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..backend import LLMBackend
@@ -258,7 +259,12 @@ class AgentManager:
                 f"collaborative_task: synthesis failed after all agents succeeded: {str(e)}"
             ) from e
 
-    def run_workflow(self, workflow: List) -> Dict[str, Any]:
+    def run_workflow(
+        self,
+        workflow: List,
+        workflow_id: Optional[str] = None,
+        state_store: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         """
         Execute a workflow.
 
@@ -266,14 +272,20 @@ class AgentManager:
 
         - **Dict workflow**: same behaviour as before; steps with
           ``parallelizable: True`` that appear consecutively are batched into a
-          thread pool.
+          thread pool.  state_store is ignored for dict workflows.
         - **WorkflowTask workflow**: dependencies are enforced via topological sort,
           WorkflowTask fields (status, result, attempts, execution_time) are updated
           during execution, conditions are evaluated, and retries are driven by each
           task's own max_retries / retry_delay settings.
 
         Args:
-            workflow: List of step dicts or WorkflowTask objects
+            workflow:     List of step dicts or WorkflowTask objects.
+            workflow_id:  Stable identifier used for checkpointing and resume.
+                          Required when state_store is provided; ignored otherwise.
+            state_store:  Optional StateStore instance.  When supplied, state is
+                          persisted after every task so the workflow can be resumed
+                          after a restart.  On resume, already-COMPLETED tasks are
+                          skipped; FAILED / PENDING tasks are re-executed.
 
         Returns:
             Dict mapping step/task names to result dicts with keys
@@ -282,7 +294,9 @@ class AgentManager:
         if not workflow:
             return {}
         if isinstance(workflow[0], WorkflowTask):
-            return self._run_workflow_tasks(workflow)
+            return self._run_workflow_tasks(
+                workflow, workflow_id=workflow_id, state_store=state_store
+            )
         return self._run_workflow_dicts(workflow)
 
     # ------------------------------------------------------------------
@@ -338,7 +352,12 @@ class AgentManager:
 
         return results
 
-    def _run_workflow_tasks(self, tasks: List[WorkflowTask]) -> Dict[str, Any]:
+    def _run_workflow_tasks(
+        self,
+        tasks: List[WorkflowTask],
+        workflow_id: Optional[str] = None,
+        state_store: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         """
         Execute a list of WorkflowTask objects.
 
@@ -347,10 +366,48 @@ class AgentManager:
         - Conditions are evaluated at runtime; tasks that fail their conditions are skipped.
         - Retries use each task's own max_retries and retry_delay.
         - Consecutive parallelizable tasks are batched into a thread pool.
+        - When state_store + workflow_id are supplied, state is persisted after every
+          task and COMPLETED tasks from a prior run are skipped on resume.
         """
-        state = WorkflowState(f"workflow_{int(time.time())}")
+        wf_id = workflow_id or f"workflow_{int(time.time())}"
+
+        # ------------------------------------------------------------------
+        # Checkpoint resume: load prior state and pre-populate results
+        # ------------------------------------------------------------------
+        checkpoint = (
+            state_store.load_workflow(wf_id)
+            if (state_store is not None and workflow_id)
+            else None
+        )
+        state = checkpoint if checkpoint is not None else WorkflowState(wf_id)
         results: Dict[str, Any] = {}
 
+        if checkpoint is not None:
+            task_map = {t.name: t for t in tasks}
+            for task_name, task_data in checkpoint.tasks.items():
+                if task_data.get("status") == TaskStatus.COMPLETED:
+                    wt = task_map.get(task_name)
+                    if wt is not None:
+                        wt.status = TaskStatus.COMPLETED
+                        wt.result = task_data.get("result")
+                        results[task_name] = {
+                            "agent": wt.agent,
+                            "task": wt.task,
+                            "result": task_data.get("result"),
+                            "data": task_data.get("data"),
+                        }
+            if results:
+                logger.info(
+                    "Resuming workflow '%s': %d task(s) already completed, skipping.",
+                    wf_id, len(results),
+                )
+
+        if state_store is not None:
+            state_store.save_workflow(state)
+
+        # ------------------------------------------------------------------
+        # Topological sort + batch construction (unchanged from before)
+        # ------------------------------------------------------------------
         ordered = self._topological_sort(tasks)
 
         # Batch consecutive parallelizable tasks, but never place a task in the
@@ -371,25 +428,49 @@ class AgentManager:
             else:
                 batches.append([wt])
 
+        # Lock used when persisting state from the main thread after parallel tasks.
+        _save_lock = threading.Lock()
+
+        def _persist():
+            if state_store is not None:
+                with _save_lock:
+                    state_store.save_workflow(state)
+
+        # ------------------------------------------------------------------
+        # Execute batches
+        # ------------------------------------------------------------------
         for batch in batches:
             if batch[0].parallelizable and len(batch) > 1:
+                # Skip tasks already completed in a prior run.
+                pending = [wt for wt in batch if wt.name not in results]
+                if not pending:
+                    continue
+
                 def _run_wf_task(wt: WorkflowTask):
                     return self._execute_workflow_task(wt, results, state)
 
                 with ThreadPoolExecutor() as pool:
-                    futures = {pool.submit(_run_wf_task, wt): wt for wt in batch}
+                    futures = {pool.submit(_run_wf_task, wt): wt for wt in pending}
                     for future in as_completed(futures):
                         name, value = future.result()
                         if value is not None:
                             results[name] = value
+                        _persist()
             else:
                 wt = batch[0]
+                if wt.name in results:
+                    logger.debug("Skipping task '%s' (resumed from checkpoint).", wt.name)
+                    continue
                 name, value = self._execute_workflow_task(wt, results, state)
                 if value is not None:
                     results[name] = value
+                _persist()
 
         state.status = "completed"
         state.end_time = time.time()
+        if state_store is not None:
+            state_store.save_workflow(state)
+
         return results
 
     def _execute_workflow_task(self, wt: WorkflowTask, results: Dict,
