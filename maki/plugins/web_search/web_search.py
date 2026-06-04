@@ -11,6 +11,7 @@ Dependencies:
 """
 
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -370,33 +371,49 @@ class WebSearch:
             Self-posts (no external URL) and very-low-score posts (< 10) are
             excluded.
         """
+        import feedparser
+        import re as _re
+
         now = _now_utc()
         week_start = _week_start_utc(now)
         results: List[Dict[str, Any]] = []
-        headers = _DEFAULT_HEADERS
+        headers = {
+            "User-Agent": os.getenv(
+                "MAKI_REDDIT_USER_AGENT",
+                "python:maki_newsletter:v1.0 (by /u/maki_bot)",
+            )
+        }
 
         for sub in subreddits:
-            url = f"https://www.reddit.com/r/{sub}/hot.json?limit={max_per_sub + 5}"
+            # Reddit's .json API returns 403 — use the RSS feed instead
+            url = f"https://www.reddit.com/r/{sub}/hot.rss?limit={max_per_sub + 5}"
             try:
                 resp = requests.get(url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
                 resp.raise_for_status()
-                posts = resp.json().get("data", {}).get("children", [])
+                feed = feedparser.parse(resp.text)
+                entries = feed.entries
             except Exception as exc:
                 self.logger.warning("fetch_reddit_hot: r/%s failed: %s", sub, exc)
                 time.sleep(0.5)
                 continue
 
             count = 0
-            for child in posts:
+            for entry in entries:
                 if count >= max_per_sub:
                     break
-                post = child.get("data", {})
 
-                # Skip self-posts (no external link) and low-engagement posts
-                external_url = post.get("url", "")
-                if post.get("is_self") or not external_url:
-                    continue
-                if post.get("score", 0) < 10:
+                # Extract the external URL from the entry content HTML
+                html = ""
+                if entry.get("content"):
+                    html = entry.content[0].get("value", "")
+                elif entry.get("summary"):
+                    html = entry.summary
+
+                hrefs = _re.findall(r'href="(https?://[^"]+)"', html)
+                external_url = next(
+                    (h for h in hrefs if "reddit.com" not in h), ""
+                )
+                if not external_url:
                     continue
 
                 # Skip direct media/image URLs — these are not articles
@@ -404,18 +421,15 @@ class WebSearch:
                     self.logger.debug("fetch_reddit_hot: skipping media URL %s", external_url)
                     continue
 
-                created_utc = post.get("created_utc")
-                if created_utc:
-                    post_dt = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+                published_str = ""
+                if entry.get("published_parsed"):
+                    post_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
                     if not (week_start <= post_dt <= now):
                         continue
                     published_str = post_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-                else:
-                    published_str = ""
 
-                title = post.get("title", "")
-                selftext = post.get("selftext", "") or ""
-                snippet = selftext[:400].strip() if selftext else title.strip()
+                title = entry.get("title", "")
+                snippet = title.strip()
 
                 results.append({
                     "title": title,
