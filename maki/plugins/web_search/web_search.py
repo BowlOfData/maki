@@ -98,7 +98,7 @@ class WebSearch:
         except ImportError:
             self.logger.error(
                 "feedparser is not installed. "
-                "Run: pip install 'feedparser>=6.0'"
+                'Run: pip install "maki[web]"'
             )
             return []
 
@@ -299,7 +299,7 @@ class WebSearch:
             import feedparser
         except ImportError:
             self.logger.error(
-                "feedparser is not installed. Run: pip install 'feedparser>=6.0'"
+                'feedparser is not installed. Run: pip install "maki[web]"'
             )
             return []
 

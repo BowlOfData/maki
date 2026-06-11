@@ -58,13 +58,17 @@ For development tools:
 pip install ".[dev]"
 ```
 
-Some built-in plugins rely on extra packages listed in [requirements.txt](requirements.txt):
+Some built-in plugins and backends rely on optional extras (defined in [pyproject.toml](pyproject.toml)):
 
-- `feedparser` for RSS parsing
-- `pytrends` for Google Trends
-- `readability-lxml` and `html2text` for web-to-Markdown conversion
+- `maki[web]` — `feedparser`, `readability-lxml`, `html2text` (web search / web-to-Markdown)
+- `maki[trends]` — `pytrends` (Google Trends)
+- `maki[alpaca]` — `alpaca-py` (market data, news, trading)
+- `maki[ftp]` — `paramiko` (FTP/SFTP)
+- `maki[gui]` — `PySide6` (desktop GUI)
+- `maki[openai]` / `maki[anthropic]` — hosted LLM backends
+- `maki[distributed]` / `maki[distributed-redis]` — agent server, proxies, Redis checkpoints
 
-Install from `requirements.txt` to make all plugin dependencies available.
+Install everything with `pip install ".[all]"`.
 
 ---
 

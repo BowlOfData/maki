@@ -11,7 +11,12 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import feedparser
+try:
+    import feedparser
+except ImportError as e:
+    raise ImportError(
+        'feedparser is not installed. Run: pip install "maki[alpaca]"'
+    ) from e
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +32,12 @@ FREE_RSS_FEEDS = {
 
 class AlpacaNews:
     def __init__(self, maki_instance=None):
-        from alpaca.data.historical import NewsClient
+        try:
+            from alpaca.data.historical import NewsClient
+        except ImportError as e:
+            raise ImportError(
+                'alpaca-py is not installed. Run: pip install "maki[alpaca]"'
+            ) from e
 
         api_key = os.environ.get("APCA_API_KEY_ID")
         api_secret = os.environ.get("APCA_API_SECRET_KEY")

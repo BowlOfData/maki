@@ -26,7 +26,12 @@ class AlpacaStream:
     """
 
     def __init__(self, maki_instance=None):
-        from alpaca.data.live import CryptoDataStream
+        try:
+            from alpaca.data.live import CryptoDataStream
+        except ImportError as e:
+            raise ImportError(
+                'alpaca-py is not installed. Run: pip install "maki[alpaca]"'
+            ) from e
 
         api_key = os.environ.get("APCA_API_KEY_ID")
         api_secret = os.environ.get("APCA_API_SECRET_KEY")

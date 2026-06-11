@@ -3,13 +3,10 @@ A production-grade Python wrapper for local LLMs served via Ollama.
 Supports: Gemma 3, Qwen, Llama, Mistral, Phi, DeepSeek and any other
 model available through `ollama pull <model>`.
 
-Requirements:
-    pip install requests httpx rich
-
 Quick-start:
     # 1. Install Ollama  →  https://ollama.com
     # 2. Pull a model    →  ollama pull gemma3
-    # 3. Run this file   →  python local_llm.py
+    # 3. Use it          →  from maki import MakiLLama
 """
 
 from __future__ import annotations
