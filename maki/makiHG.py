@@ -192,7 +192,7 @@ class HFBackend(LLMBackend):
     def stream(self, prompt: str) -> Generator[str, None, None]:  # type: ignore[override]
         """Stream tokens for a plain-text *prompt* (satisfies LLMBackend contract)."""
         messages = [{"role": "user", "content": prompt.strip()}]
-        yield from self.stream_messages(messages, GenerationConfig())
+        yield from self.stream_messages(messages, self._config)
 
     def stream_messages(self, messages: list[dict], config: GenerationConfig) -> Generator[str, None, None]:
         """Token-by-token streaming using a TextIteratorStreamer."""
