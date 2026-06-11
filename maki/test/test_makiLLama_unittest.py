@@ -183,5 +183,38 @@ class TestMakiLLama(unittest.TestCase):
         self.assertEqual(msg_dict["role"], "user")
         self.assertEqual(msg_dict["content"], "Hello world")
 
+    @patch('requests.Session.post')
+    def test_pull_progress_logging(self, mock_post):
+        """pull() handles progress chunks with 'total' without crashing.
+
+        Regression test: log.info(..., end='\\r') raised TypeError on the
+        first progress chunk. Progress is now logged at ~10% intervals.
+        """
+        import json
+        lines = [
+            json.dumps({"status": "pulling manifest"}).encode(),
+            json.dumps({"status": "downloading", "total": 100, "completed": 5}).encode(),
+            json.dumps({"status": "downloading", "total": 100, "completed": 50}).encode(),
+            json.dumps({"status": "downloading", "total": 100, "completed": 55}).encode(),
+            json.dumps({"status": "downloading", "total": 100, "completed": 100}).encode(),
+            json.dumps({"status": "success"}).encode(),
+        ]
+        mock_response = MagicMock()
+        mock_response.iter_lines.return_value = lines
+        mock_post.return_value = mock_response
+
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
+
+        with self.assertLogs('maki.makiLLama', level='INFO') as cm:
+            llm.pull()
+
+        progress = [m for m in cm.output if '%]' in m]
+        # 5% and 50% logged (>=10% apart), 55% suppressed, 100% logged.
+        self.assertEqual(len(progress), 3)
+        self.assertIn('[5%]', progress[0])
+        self.assertIn('[50%]', progress[1])
+        self.assertIn('[100%]', progress[2])
+
 if __name__ == '__main__':
     unittest.main()

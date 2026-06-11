@@ -142,15 +142,21 @@ class MakiLLama(LLMBackend):
                 timeout=600,
             )
             response.raise_for_status()
+            last_pct = -10
             for line in response.iter_lines():
                 if line:
                     data = json.loads(line)
                     status = data.get("status", "")
-                    if "total" in data and data["total"]:
+                    if data.get("total"):
                         pct = int(data.get("completed", 0) / data["total"] * 100)
-                        log.info(f"  {status} [{pct}%]", end="\r")
+                        if pct < last_pct:  # a new layer started downloading
+                            last_pct = -10
+                        if pct >= last_pct + 10:
+                            log.info("  %s [%d%%]", status, pct)
+                            last_pct = pct
                     else:
-                        log.info(f"  {status}")
+                        log.info("  %s", status)
+                        last_pct = -10
         except Exception as e:
             log.error("Failed to pull model '%s': %s", target, str(e))
             raise
