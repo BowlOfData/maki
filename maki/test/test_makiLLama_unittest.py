@@ -216,5 +216,37 @@ class TestMakiLLama(unittest.TestCase):
         self.assertIn('[50%]', progress[1])
         self.assertIn('[100%]', progress[2])
 
+    @patch('requests.Session.post')
+    def test_call_forwards_system_and_images(self, mock_post):
+        """Regression §1.6: llm(prompt, system=..., images=...) silently
+        dropped both kwargs because the __call__ allowlist only contained
+        history and config."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {"content": "ok"},
+            "model": "gemma3",
+            "prompt_eval_count": 1,
+            "eval_count": 1,
+        }
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        with patch.object(MakiLLama, '_verify_connection'):
+            llm = MakiLLama(model="gemma3")
+
+        llm("describe this", system="You are terse.", images=["aW1n"])
+
+        payload = mock_post.call_args.kwargs["json"]
+        roles = [m["role"] for m in payload["messages"]]
+        self.assertIn("system", roles)
+        system_msg = next(m for m in payload["messages"] if m["role"] == "system")
+        self.assertEqual(system_msg["content"], "You are terse.")
+        user_msg = next(m for m in payload["messages"] if m["role"] == "user")
+        self.assertEqual(user_msg.get("images"), ["aW1n"])
+
+        # Unknown kwargs are still dropped with a warning, not passed through.
+        with self.assertLogs('maki.makiLLama', level='WARNING'):
+            llm("hello", bogus_param=42)
+
 if __name__ == '__main__':
     unittest.main()

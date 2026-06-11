@@ -435,12 +435,11 @@ class MakiLLama(LLMBackend):
 
     def __call__(self, prompt: str, **kwargs) -> LLMResponse:
         """llm("your prompt") as a shorthand for llm.chat(...)."""
-        # Validate and sanitize input parameters to prevent code injection
         if not isinstance(prompt, str):
             raise TypeError("Prompt must be a string")
 
-        # Only allow specific, safe parameters to be passed through
-        allowed_params = {'history', 'config'}
+        # Pass through every kwarg chat() accepts; warn on anything else.
+        allowed_params = {'history', 'config', 'system', 'images'}
         filtered_kwargs = {}
 
         for key, value in kwargs.items():
