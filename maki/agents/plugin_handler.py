@@ -14,6 +14,8 @@ import os
 import re
 from typing import Dict, Optional, TYPE_CHECKING
 
+from ..exceptions import MakiValidationError
+
 if TYPE_CHECKING:
     from .protocols import PluginHostProtocol
 
@@ -112,6 +114,8 @@ class PluginHandler:
 
         Raises:
             ImportError: If plugin cannot be loaded
+            MakiValidationError: If the module exposes neither a
+                register_plugin() function nor a class named after the plugin
             Exception: If plugin initialization fails
         """
         try:
@@ -134,7 +138,10 @@ class PluginHandler:
                 plugin_class = getattr(module, plugin_name)
                 plugin_instance = plugin_class(self.maki)
             else:
-                plugin_instance = module(self.maki)
+                raise MakiValidationError(
+                    f"Plugin '{plugin_name}' has no register_plugin() function "
+                    f"or '{plugin_name}' class"
+                )
 
             self.plugins[plugin_name] = plugin_instance
             logger.info(f"Plugin '{plugin_name}' loaded successfully for agent '{self.name}'")

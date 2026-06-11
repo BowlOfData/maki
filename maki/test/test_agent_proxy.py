@@ -296,6 +296,37 @@ class TestAgentProxyStream(unittest.TestCase):
         result = list(proxy.stream_task("go"))
         self.assertEqual(result, ["hello", " world"])
 
+    def test_stream_error_status_maps_to_maki_error_and_records_failure(self):
+        """Regression §1.3: a non-2xx streaming response raised
+        httpx.ResponseNotRead (reading .text on an unread stream) instead of
+        the mapped Maki error, and the circuit breaker never saw the failure.
+        """
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.is_success = False
+        mock_response.text = "internal error"
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_response
+        mock_cm.__exit__.return_value = False
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = MagicMock(
+            status_code=200, is_success=True,
+            json=lambda: {
+                "agent_id": "x", "name": "t", "role": "", "plugins": [],
+                "backend": "Mock", "model": "t",
+            },
+        )
+        mock_client.stream.return_value = mock_cm
+        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+            proxy = AgentProxy(endpoint="http://fake:8100")
+
+        with self.assertRaises(MakiNetworkError):
+            list(proxy.stream_task("go"))
+        mock_response.read.assert_called_once()
+        self.assertEqual(proxy._circuit_breaker.failure_count, 1)
+
 
 # ---------------------------------------------------------------------------
 # AgentProxy — memory

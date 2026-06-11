@@ -33,7 +33,7 @@ class TrendSearch:
             from pytrends.request import TrendReq
         except ImportError:
             self.logger.error(
-                "pytrends is not installed. Run: pip install 'pytrends>=4.9.0'"
+                'pytrends is not installed. Run: pip install "maki[trends]"'
             )
             return {}
 

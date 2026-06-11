@@ -294,5 +294,34 @@ class TestMakiLLamaExceptionWrapping(unittest.TestCase):
             llm.chat("hello")
 
 
+class TestHFBackendStreamConfig(unittest.TestCase):
+
+    def test_stream_uses_configured_generation_config(self):
+        """Regression §1.7: HFBackend.stream() built a fresh
+        GenerationConfig() instead of using self._config, so custom
+        temperature/max_tokens were silently ignored when streaming.
+
+        Runs without torch by stubbing the heavy imports — the bug is in
+        pure dispatch logic, not in generation.
+        """
+        import sys
+        if _torch_available:
+            from maki.makiHG import HFBackend
+        else:
+            with patch.dict(sys.modules, {"torch": MagicMock(), "transformers": MagicMock()}):
+                from maki.makiHG import HFBackend
+        from maki.objects import GenerationConfig
+
+        backend = object.__new__(HFBackend)
+        custom = GenerationConfig(temperature=0.123, max_tokens=77)
+        backend._config = custom
+
+        with patch.object(backend, "stream_messages", return_value=iter(["chunk"])) as sm:
+            chunks = list(backend.stream("hello"))
+
+        self.assertEqual(chunks, ["chunk"])
+        self.assertIs(sm.call_args.args[1], custom)
+
+
 if __name__ == "__main__":
     unittest.main()

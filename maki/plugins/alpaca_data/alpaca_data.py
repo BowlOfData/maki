@@ -26,7 +26,12 @@ _ALPACA_DATA_URL = "https://data.alpaca.markets"
 
 class AlpacaData:
     def __init__(self, maki_instance=None):
-        from alpaca.data.historical import CryptoHistoricalDataClient
+        try:
+            from alpaca.data.historical import CryptoHistoricalDataClient
+        except ImportError as e:
+            raise ImportError(
+                'alpaca-py is not installed. Run: pip install "maki[alpaca]"'
+            ) from e
 
         api_key = os.environ.get("APCA_API_KEY_ID")
         api_secret = os.environ.get("APCA_API_SECRET_KEY")

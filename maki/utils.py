@@ -4,10 +4,15 @@ import os
 import logging
 import re
 import ipaddress
-from typing import Any
+from typing import Any, Optional
 from .urls import GENERIC_LLAMA_URL
 
 logger = logging.getLogger(__name__)
+
+# Strong references to in-flight client-cleanup tasks. asyncio keeps only
+# weak references to tasks, so a fire-and-forget create_task() result can be
+# garbage-collected before it ever runs.
+_CLEANUP_TASKS: set = set()
 
 
 class Utils:
@@ -258,18 +263,23 @@ class Utils:
             raise ValueError(f"Invalid JSON data: {str(e)}") from e
 
     @staticmethod
-    def convert64(img: str) -> bytes:
-        """Convert an image file to base64 string
+    def convert64(img: str, allowed_dirs: Optional[list[str]] = None) -> str:
+        """Convert an image file to a base64-encoded string
 
         Args:
             img: path to image file
+            allowed_dirs: optional list of base directories the image must
+                live in after full symlink resolution. When omitted, any
+                readable file is accepted.
 
         Returns:
-            Base64 encoded bytes of the image
+            Base64-encoded string of the image contents
 
         Raises:
-            ValueError: If img is not a valid string or file doesn't exist
-            Exception: For other file reading errors
+            ValueError: If img is not a valid string, points to a directory,
+                or resolves outside allowed_dirs
+            FileNotFoundError: If the file doesn't exist
+            OSError: For other file reading errors
         """
         logger = logging.getLogger(__name__)
 
@@ -278,27 +288,28 @@ class Utils:
 
         img = img.strip()
 
-        # Resolve both the logical absolute path and the fully dereferenced real path.
-        # Any mismatch means there is a symlink or '..' traversal somewhere in the
-        # path chain — both are rejected to prevent directory traversal attacks.
-        abs_img = os.path.abspath(img)
+        # Resolve symlinks and '..' fully, then verify containment in an
+        # allowed base directory (same pattern as FileWriter._safe_path).
+        # A bare symlink anywhere in the ancestry is not an attack — on macOS
+        # /tmp and /var are symlinks — escaping the allowed base is.
         real_img = os.path.realpath(img)
-        if abs_img != real_img:
-            raise ValueError(
-                "Image path must not contain symbolic links or path traversal sequences"
-            )
+        if allowed_dirs is not None:
+            bases = [os.path.realpath(d) for d in allowed_dirs]
+            if not any(real_img == b or real_img.startswith(b + os.sep) for b in bases):
+                raise ValueError(
+                    f"Image path '{img}' resolves outside the allowed directories"
+                )
 
-        if not os.path.exists(abs_img):
+        if not os.path.exists(real_img):
             raise FileNotFoundError(f"Image file not found: {img}")
 
-        if not os.path.isfile(abs_img):
+        if not os.path.isfile(real_img):
             raise ValueError("Image path must point to a file, not a directory")
 
         try:
             logger.debug(f"Converting image to base64: {img}")
-            result = ''
-            with open(img, "rb") as image_file:
-                result = base64.b64encode(image_file.read())
+            with open(real_img, "rb") as image_file:
+                result = base64.b64encode(image_file.read()).decode("ascii")
             logger.debug("Image conversion completed successfully")
             return result
         except OSError as e:
@@ -335,8 +346,12 @@ class Utils:
                     import asyncio
                     try:
                         loop = asyncio.get_running_loop()
-                        # A loop is already running; schedule cleanup as a fire-and-forget task
-                        loop.create_task(client.aclose())
+                        # A loop is already running; schedule cleanup as a
+                        # fire-and-forget task, holding a strong reference
+                        # until it completes.
+                        task = loop.create_task(client.aclose())
+                        _CLEANUP_TASKS.add(task)
+                        task.add_done_callback(_CLEANUP_TASKS.discard)
                     except RuntimeError:
                         # No running event loop — safe to block
                         asyncio.run(client.aclose())

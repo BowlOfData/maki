@@ -26,7 +26,12 @@ _LIVE_URL = "https://api.alpaca.markets"
 
 class AlpacaTrading:
     def __init__(self, maki_instance=None):
-        from alpaca.trading import TradingClient
+        try:
+            from alpaca.trading import TradingClient
+        except ImportError as e:
+            raise ImportError(
+                'alpaca-py is not installed. Run: pip install "maki[alpaca]"'
+            ) from e
 
         api_key = os.environ.get("APCA_API_KEY_ID")
         api_secret = os.environ.get("APCA_API_SECRET_KEY")

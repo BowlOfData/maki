@@ -3,13 +3,10 @@ A production-grade Python wrapper for local LLMs served via Ollama.
 Supports: Gemma 3, Qwen, Llama, Mistral, Phi, DeepSeek and any other
 model available through `ollama pull <model>`.
 
-Requirements:
-    pip install requests httpx rich
-
 Quick-start:
     # 1. Install Ollama  →  https://ollama.com
     # 2. Pull a model    →  ollama pull gemma3
-    # 3. Run this file   →  python local_llm.py
+    # 3. Use it          →  from maki import MakiLLama
 """
 
 from __future__ import annotations
@@ -145,15 +142,21 @@ class MakiLLama(LLMBackend):
                 timeout=600,
             )
             response.raise_for_status()
+            last_pct = -10
             for line in response.iter_lines():
                 if line:
                     data = json.loads(line)
                     status = data.get("status", "")
-                    if "total" in data and data["total"]:
+                    if data.get("total"):
                         pct = int(data.get("completed", 0) / data["total"] * 100)
-                        log.info(f"  {status} [{pct}%]", end="\r")
+                        if pct < last_pct:  # a new layer started downloading
+                            last_pct = -10
+                        if pct >= last_pct + 10:
+                            log.info("  %s [%d%%]", status, pct)
+                            last_pct = pct
                     else:
-                        log.info(f"  {status}")
+                        log.info("  %s", status)
+                        last_pct = -10
         except Exception as e:
             log.error("Failed to pull model '%s': %s", target, str(e))
             raise
@@ -432,12 +435,11 @@ class MakiLLama(LLMBackend):
 
     def __call__(self, prompt: str, **kwargs) -> LLMResponse:
         """llm("your prompt") as a shorthand for llm.chat(...)."""
-        # Validate and sanitize input parameters to prevent code injection
         if not isinstance(prompt, str):
             raise TypeError("Prompt must be a string")
 
-        # Only allow specific, safe parameters to be passed through
-        allowed_params = {'history', 'config'}
+        # Pass through every kwarg chat() accepts; warn on anything else.
+        allowed_params = {'history', 'config', 'system', 'images'}
         filtered_kwargs = {}
 
         for key, value in kwargs.items():
