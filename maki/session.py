@@ -48,11 +48,17 @@ class ChatSession:
     def _say_stream(self, prompt: str, config: Optional[GenerationConfig]) -> Iterator[str]:
         """Generator that streams tokens and appends to history when done."""
         full = ""
-        for chunk in self._llm.stream(prompt, history=self._history, config=config, system=self._system):
-            full += chunk
-            yield chunk
-        self._history.append(Message("user", prompt))
-        self._history.append(Message("assistant", full))
+        try:
+            for chunk in self._llm.stream(prompt, history=self._history, config=config, system=self._system):
+                full += chunk
+                yield chunk
+        finally:
+            # Always record whatever was produced, even if the consumer
+            # abandons the stream mid-way — otherwise both turns vanish
+            # from history and later turns silently lose context.
+            if full:
+                self._history.append(Message("user", prompt))
+                self._history.append(Message("assistant", full))
 
     def reset(self) -> None:
         """Clear conversation history."""
