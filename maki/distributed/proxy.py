@@ -275,6 +275,11 @@ class AgentProxy:
             with self._session.stream(
                 "GET", self._url("/stream"), params=params, headers=headers,
             ) as response:
+                if not response.is_success:
+                    # A streaming body must be read before .text is available;
+                    # otherwise httpx raises ResponseNotRead instead of the
+                    # mapped Maki error.
+                    response.read()
                 self._raise_for_response(response)
                 self._circuit_breaker.record_success()
                 for line in response.iter_lines():
@@ -290,6 +295,9 @@ class AgentProxy:
                         )
                     if "chunk" in data:
                         yield data["chunk"]
+        except _RETRYABLE:
+            self._circuit_breaker.record_failure()
+            raise
         except httpx.TimeoutException as e:
             self._circuit_breaker.record_failure()
             raise MakiTimeoutError("Timeout during streaming") from e
