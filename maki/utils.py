@@ -9,6 +9,11 @@ from .urls import GENERIC_LLAMA_URL
 
 logger = logging.getLogger(__name__)
 
+# Strong references to in-flight client-cleanup tasks. asyncio keeps only
+# weak references to tasks, so a fire-and-forget create_task() result can be
+# garbage-collected before it ever runs.
+_CLEANUP_TASKS: set = set()
+
 
 class Utils:
 
@@ -341,8 +346,12 @@ class Utils:
                     import asyncio
                     try:
                         loop = asyncio.get_running_loop()
-                        # A loop is already running; schedule cleanup as a fire-and-forget task
-                        loop.create_task(client.aclose())
+                        # A loop is already running; schedule cleanup as a
+                        # fire-and-forget task, holding a strong reference
+                        # until it completes.
+                        task = loop.create_task(client.aclose())
+                        _CLEANUP_TASKS.add(task)
+                        task.add_done_callback(_CLEANUP_TASKS.discard)
                     except RuntimeError:
                         # No running event loop — safe to block
                         asyncio.run(client.aclose())

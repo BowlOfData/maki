@@ -115,6 +115,37 @@ class TestErrorHandling(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Utils.convert64(sneaky, allowed_dirs=[inside])
 
+    def test_cleanup_response_keeps_task_reference(self):
+        """Regression §1.10: cleanup_response scheduled client.aclose() with
+        loop.create_task() but kept no reference to the task; asyncio holds
+        only weak references, so the cleanup could be garbage-collected
+        before running. The task must be held until it completes."""
+        import asyncio
+        from maki import utils as utils_module
+
+        class FakeAsyncClient:
+            def __init__(self):
+                self.closed = False
+
+            async def aclose(self):
+                self.closed = True
+
+        async def main():
+            client = FakeAsyncClient()
+            Utils.cleanup_response(None, client)
+            # A strong reference exists while the task is pending.
+            self.assertEqual(len(utils_module._CLEANUP_TASKS), 1)
+            while utils_module._CLEANUP_TASKS:
+                await asyncio.sleep(0)
+            self.assertTrue(client.closed)
+
+        asyncio.run(main())
+
+        # Without a running loop the cleanup happens synchronously.
+        client = FakeAsyncClient()
+        Utils.cleanup_response(None, client)
+        self.assertTrue(client.closed)
+
     def test_agent_initialization_validation(self):
         """Test that Agent validates initialization parameters"""
         maki = MagicMock()
