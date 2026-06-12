@@ -55,14 +55,29 @@ class TestSanitize(unittest.TestCase):
         self.assertEqual(_sanitize("my_workflow.v2"), "my_workflow.v2")
 
     def test_slash_replaced(self):
-        self.assertEqual(_sanitize("a/b"), "a_b")
+        # Sanitized IDs get a hash suffix so "a/b" can't collide with "a_b".
+        self.assertTrue(_sanitize("a/b").startswith("a_b-"))
 
     def test_dotdot_replaced(self):
         # ../../etc → .._.._etc (slashes replaced) → ____etc (dots replaced)
-        self.assertEqual(_sanitize("../../etc"), "____etc")
+        self.assertTrue(_sanitize("../../etc").startswith("____etc-"))
 
     def test_spaces_replaced(self):
-        self.assertEqual(_sanitize("my workflow"), "my_workflow")
+        self.assertTrue(_sanitize("my workflow").startswith("my_workflow-"))
+
+    def test_sanitized_output_is_safe(self):
+        for unsafe in ("a/b", "../../etc", "my workflow", "x\x00y"):
+            result = _sanitize(unsafe)
+            self.assertNotIn("..", result)
+            self.assertRegex(result, r"^[a-zA-Z0-9_\-.]+$")
+
+    def test_distinct_ids_do_not_collide(self):
+        self.assertNotEqual(_sanitize("a/b"), _sanitize("a_b"))
+        self.assertNotEqual(_sanitize("a/b"), _sanitize("a.b"))
+        self.assertNotEqual(_sanitize("a/b"), _sanitize("a b"))
+
+    def test_sanitize_is_deterministic(self):
+        self.assertEqual(_sanitize("a/b"), _sanitize("a/b"))
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +176,22 @@ class TestLocalStateStore(unittest.TestCase):
         self.assertTrue(any(f.endswith(".json") for f in files))
         for f in files:
             self.assertNotIn("..", f)
+
+    def test_colliding_ids_map_to_distinct_files(self):
+        slash = WorkflowState("a/b")
+        slash.update_task_status("t1", TaskStatus.COMPLETED, result="slash")
+        underscore = WorkflowState("a_b")
+        underscore.update_task_status("t1", TaskStatus.COMPLETED,
+                                      result="underscore")
+        self.store.save_workflow(slash)
+        self.store.save_workflow(underscore)
+
+        files = [f for f in os.listdir(self._tmpdir) if f.endswith(".json")]
+        self.assertEqual(len(files), 2)
+        self.assertEqual(
+            self.store.load_workflow("a/b").tasks["t1"]["result"], "slash")
+        self.assertEqual(
+            self.store.load_workflow("a_b").tasks["t1"]["result"], "underscore")
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ Both stores are thread-safe for concurrent task saves within a single workflow.
 RedisStateStore's update_task() is not atomic (load→modify→save), so concurrent
 callers for the *same* workflow_id should use an external lock.
 """
+import hashlib
 import json
 import logging
 import os
@@ -32,11 +33,19 @@ _SAFE_ID = re.compile(r"[^a-zA-Z0-9_\-.]")
 
 
 def _sanitize(workflow_id: str) -> str:
-    """Replace unsafe characters so the ID can be used as a filename or key."""
+    """Replace unsafe characters so the ID can be used as a filename or key.
+
+    When any character is replaced, a short hash of the original ID is
+    appended so distinct IDs that sanitize to the same string (e.g. ``a/b``
+    and ``a_b``) cannot collide on one file/key.
+    """
     result = _SAFE_ID.sub("_", workflow_id)
     # Replace ".." sequences (path traversal defence) until none remain.
     while ".." in result:
         result = result.replace("..", "_")
+    if result != workflow_id:
+        digest = hashlib.sha256(workflow_id.encode("utf-8")).hexdigest()[:8]
+        result = f"{result}-{digest}"
     return result
 
 
