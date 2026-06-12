@@ -26,6 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Plan documents moved from the repo root to `docs/`
 
 ### Fixed
+- `LocalStateStore` checkpoint writes are now atomic (temp file + `os.replace`) — a crash mid-save no longer leaves a corrupt checkpoint, which is the scenario checkpointing exists for; applies to both `save_workflow` and `update_task`
+- Workflow IDs that sanitize to the same filename/Redis key (e.g. `a/b` and `a_b`) no longer overwrite each other's state — sanitized IDs get a short hash suffix (IDs that need no sanitization are unchanged)
 - `MakiLLama.pull()` crashed with `TypeError` on the first progress chunk (`log.info(..., end="\r")`); progress is now logged at ~10% intervals
 - `AgentProxy` streaming raised `httpx.ResponseNotRead` on non-2xx responses instead of the mapped Maki error, and the circuit breaker never recorded the failure
 - `Utils.convert64` rejected any path under a symlinked directory (e.g. `/tmp` on macOS); now resolves symlinks and optionally enforces containment via a new `allowed_dirs` parameter. It also returns a base64 `str` (as documented) instead of `bytes`
