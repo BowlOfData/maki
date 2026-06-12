@@ -28,7 +28,8 @@ class Agent(PluginHandler, ReasoningEngine):
     """An individual agent that can perform tasks using the Maki framework."""
 
     def __init__(self, name: str, maki_instance: LLMBackend, role: str = "", instructions: str = "",
-                 stateful: bool = False, use_streaming: bool = False):
+                 stateful: bool = False, use_streaming: bool = False,
+                 allow_dangerous_tools: bool = False):
         """
         Initialize an agent.
 
@@ -41,6 +42,11 @@ class Agent(PluginHandler, ReasoningEngine):
             use_streaming: If True, execute_task uses streaming internally (chat_collect)
                 so the timeout applies per-chunk rather than to the full response.
                 Useful for tasks with very long outputs that exceed the backend timeout.
+            allow_dangerous_tools: If True, plugin methods marked in a plugin's
+                DANGEROUS_METHODS (file writes, uploads, deletes, …) may be
+                invoked via TOOL: directives. Off by default — a prompt-injected
+                instruction in scraped content should not be able to write
+                files or delete remote directories.
 
         Raises:
             ValueError: If name is not a valid string
@@ -65,6 +71,7 @@ class Agent(PluginHandler, ReasoningEngine):
         self.instructions = instructions
         self.stateful = stateful
         self.use_streaming = use_streaming
+        self.allow_dangerous_tools = allow_dangerous_tools
         self.memory = {}
 
         # Maximum number of entries to keep in history; deque enforces this automatically

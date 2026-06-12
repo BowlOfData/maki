@@ -69,7 +69,8 @@ class TestUsePlugins(Base):
     def test_tool_call_executed_and_result_fed_back(self):
         """TOOL: directive in LLM response triggers plugin call and follow-up request"""
         fake_plugin = MagicMock()
-        fake_plugin.ALLOWED_METHODS = None  # no explicit whitelist; all public methods accessible
+        fake_plugin.ALLOWED_METHODS = ["read_file"]  # tool calls are fail-closed; whitelist required
+        fake_plugin.DANGEROUS_METHODS = None  # plain MagicMock would auto-create an invalid marker
         fake_plugin.read_file = MagicMock(return_value="file content here")
         self.agent.plugins['FileReader'] = fake_plugin
 

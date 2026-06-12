@@ -39,6 +39,12 @@ class PluginHandler:
     """
     Mixin that adds plugin loading and tool-call execution to an agent.
 
+    Tool calls are **fail-closed**: a plugin exposes only the methods named in
+    its class-level ``ALLOWED_METHODS`` whitelist; a plugin without one exposes
+    nothing. Methods additionally listed in ``DANGEROUS_METHODS`` (writes,
+    uploads, deletes, …) are blocked unless the host sets
+    ``allow_dangerous_tools = True``.
+
     **Contract** – the host class must set the following instance attributes
     before ``__init__`` returns:
 
@@ -143,6 +149,13 @@ class PluginHandler:
                     f"or '{plugin_name}' class"
                 )
 
+            if getattr(plugin_instance, "ALLOWED_METHODS", None) is None:
+                logger.warning(
+                    f"Plugin '{plugin_name}' declares no ALLOWED_METHODS; none of "
+                    f"its methods will be callable via TOOL: directives. Declare a "
+                    f"class-level ALLOWED_METHODS whitelist to expose methods."
+                )
+
             self.plugins[plugin_name] = plugin_instance
             logger.info(f"Plugin '{plugin_name}' loaded successfully for agent '{self.name}'")
             return plugin_instance
@@ -168,22 +181,50 @@ class PluginHandler:
         if method_name.startswith("_"):
             return f"Method '{method_name}' is not callable via tool directives"
 
-        # Respect an explicit whitelist declared on the plugin class.
-        # Fail closed: if ALLOWED_METHODS is present but not a recognized
-        # collection type (e.g. an empty dict {}), block all calls rather than
-        # silently bypassing the whitelist.
+        # Enforce the whitelist declared on the plugin class. Fail closed:
+        # a plugin that declares no ALLOWED_METHODS exposes nothing, and an
+        # ALLOWED_METHODS of an unrecognized collection type (e.g. an empty
+        # dict {}) blocks all calls rather than silently bypassing the
+        # whitelist. The attribute must live on the class/instance — a
+        # module-level constant is invisible here.
         allowed = getattr(plugin, "ALLOWED_METHODS", None)
-        if allowed is not None:
-            if not isinstance(allowed, (list, set, tuple, frozenset)):
-                return (
-                    f"Plugin '{plugin_name}' has an invalid ALLOWED_METHODS type "
-                    f"'{type(allowed).__name__}'; all calls blocked"
-                )
-            if method_name not in allowed:
-                return (
-                    f"Method '{method_name}' is not in the allowed methods "
-                    f"for plugin '{plugin_name}'"
-                )
+        if allowed is None:
+            return (
+                f"Plugin '{plugin_name}' declares no ALLOWED_METHODS; "
+                f"no methods are exposed to tool calls"
+            )
+        if not isinstance(allowed, (list, set, tuple, frozenset)):
+            return (
+                f"Plugin '{plugin_name}' has an invalid ALLOWED_METHODS type "
+                f"'{type(allowed).__name__}'; all calls blocked"
+            )
+        if method_name not in allowed:
+            return (
+                f"Method '{method_name}' is not in the allowed methods "
+                f"for plugin '{plugin_name}'"
+            )
+
+        # Destructive methods (writes, uploads, deletes) may additionally be
+        # listed in DANGEROUS_METHODS; they require the host agent to opt in
+        # via allow_dangerous_tools=True.
+        dangerous = getattr(plugin, "DANGEROUS_METHODS", None)
+        if dangerous is not None and not isinstance(
+            dangerous, (list, set, tuple, frozenset)
+        ):
+            return (
+                f"Plugin '{plugin_name}' has an invalid DANGEROUS_METHODS type "
+                f"'{type(dangerous).__name__}'; all calls blocked"
+            )
+        if (
+            dangerous
+            and method_name in dangerous
+            and not getattr(self, "allow_dangerous_tools", False)
+        ):
+            return (
+                f"Method '{method_name}' on plugin '{plugin_name}' is marked "
+                f"dangerous; create the agent with allow_dangerous_tools=True "
+                f"to permit it"
+            )
 
         # args must be a plain dict.
         if not isinstance(args, dict):
@@ -211,14 +252,18 @@ class PluginHandler:
     def _allowed_methods(self, plugin) -> list:
         """Return the list of method names exposed by *plugin* to the LLM."""
         explicit = getattr(plugin, "ALLOWED_METHODS", None)
-        if explicit is not None:
-            if not isinstance(explicit, (list, set, tuple, frozenset)):
-                return []  # fail closed: invalid whitelist type → expose nothing
-            return [m for m in explicit if callable(getattr(plugin, m, None))]
-        return [
-            m for m in dir(plugin)
-            if not m.startswith("_") and callable(getattr(plugin, m))
-        ]
+        # Fail closed: no whitelist or an invalid whitelist type → expose nothing.
+        if explicit is None or not isinstance(explicit, (list, set, tuple, frozenset)):
+            return []
+        methods = [m for m in explicit if callable(getattr(plugin, m, None))]
+        dangerous = getattr(plugin, "DANGEROUS_METHODS", None)
+        if dangerous is not None:
+            if not isinstance(dangerous, (list, set, tuple, frozenset)):
+                return []  # invalid marker type blocks all calls; advertise nothing
+            if not getattr(self, "allow_dangerous_tools", False):
+                # Don't advertise methods the agent would refuse to execute.
+                methods = [m for m in methods if m not in dangerous]
+        return methods
 
     def build_plugin_prompt_section(self) -> str:
         """Build the plugin description section for inclusion in a prompt."""
