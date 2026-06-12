@@ -16,6 +16,7 @@ import uuid
 
 from ..backend import LLMBackend
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
+from ..objects import ConversationMemory, Message
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
 
@@ -80,13 +81,12 @@ class Agent(PluginHandler, ReasoningEngine):
         self.reasoning_history: deque = deque(maxlen=self._max_history_entries)
         self.task_history: deque = deque(maxlen=self._max_history_entries)
 
-        # Stateful multi-turn conversation memory (separate from task_history)
-        self._conversation_history: deque = deque(maxlen=self._max_history_entries)
-
-        # Number of recent turns injected into the prompt when stateful=True.
-        # Kept separate from _max_history_entries so callers can tune context
-        # window size independently of the total retention limit.
-        self._stateful_context_window = 10
+        # Stateful multi-turn conversation memory (separate from task_history).
+        # Token-budgeted and eviction-based; replaces the old fixed-window + 300-char
+        # truncation approach.
+        self._conversation_memory = ConversationMemory(
+            max_entries=self._max_history_entries,
+        )
 
         # One in-flight task at a time; acquired by execute_task / stream_task so
         # concurrent callers (workflow thread pools, FastAPI handlers) are serialized.
@@ -103,13 +103,9 @@ class Agent(PluginHandler, ReasoningEngine):
 
     def _build_history_section(self) -> str:
         """Return the prior-conversation block for stateful prompts, or empty string."""
-        if not self.stateful or not self._conversation_history:
+        if not self.stateful:
             return ""
-        lines = []
-        for turn in list(self._conversation_history)[-self._stateful_context_window:]:
-            lines.append(f"Task: {turn['task']}")
-            lines.append(f"Response: {turn['result'][:300]}")
-        return "\n\nPrior conversation:\n" + "\n".join(lines)
+        return self._conversation_memory.format_as_text()
 
     def _build_system_message(self) -> str:
         """Return the system message (role + instructions) for this agent."""
@@ -192,13 +188,14 @@ class Agent(PluginHandler, ReasoningEngine):
 
             # Maintain stateful conversation history
             if self.stateful:
-                self._conversation_history.append({'task': task, 'result': result})
+                self._conversation_memory.append(Message("user", task))
+                self._conversation_memory.append(Message("assistant", result))
 
         return result
 
     def reset_conversation(self):
         """Clear the stateful conversation history."""
-        self._conversation_history.clear()
+        self._conversation_memory.clear()
 
     def execute_task_with_retry(self, task: str, context: Optional[Dict] = None,
                                max_retries: int = 3, retry_delay: float = 1.0) -> str:
@@ -293,7 +290,8 @@ class Agent(PluginHandler, ReasoningEngine):
                             'timestamp': time.time(),
                         })
                         if self.stateful:
-                            self._conversation_history.append({'task': task, 'result': full_result})
+                            self._conversation_memory.append(Message("user", task))
+                            self._conversation_memory.append(Message("assistant", full_result))
 
         return _tracked()
 
@@ -323,9 +321,9 @@ class Agent(PluginHandler, ReasoningEngine):
             'use_streaming': self.use_streaming,
             'memory': dict(self.memory),
             'task_history': list(self.task_history),
-            'conversation_history': list(self._conversation_history),
+            'conversation_memory': self._conversation_memory.to_list(),
+            'conversation_token_budget': self._conversation_memory.token_budget,
             'max_history_entries': self._max_history_entries,
-            'stateful_context_window': self._stateful_context_window,
         }
 
     @classmethod
@@ -349,8 +347,25 @@ class Agent(PluginHandler, ReasoningEngine):
         max_entries = data.get('max_history_entries', 1000)
         agent._max_history_entries = max_entries
         agent.task_history = deque(data.get('task_history', []), maxlen=max_entries)
-        agent._conversation_history = deque(data.get('conversation_history', []), maxlen=max_entries)
-        agent._stateful_context_window = data.get('stateful_context_window', 10)
+        token_budget = data.get('conversation_token_budget', ConversationMemory.DEFAULT_TOKEN_BUDGET)
+        if 'conversation_memory' in data:
+            agent._conversation_memory = ConversationMemory.from_list(
+                data['conversation_memory'],
+                token_budget=token_budget,
+                max_entries=max_entries,
+            )
+        elif 'conversation_history' in data:
+            # Migration from old {'task': ..., 'result': ...} format
+            agent._conversation_memory = ConversationMemory(
+                token_budget=token_budget, max_entries=max_entries,
+            )
+            for turn in data['conversation_history']:
+                agent._conversation_memory._messages.append(Message('user', turn.get('task', '')))
+                agent._conversation_memory._messages.append(Message('assistant', turn.get('result', '')))
+        else:
+            agent._conversation_memory = ConversationMemory(
+                token_budget=token_budget, max_entries=max_entries,
+            )
         return agent
 
     def set_max_history_entries(self, max_entries: int):
@@ -367,5 +382,6 @@ class Agent(PluginHandler, ReasoningEngine):
         # Recreate deques with new maxlen, preserving most recent entries
         self.reasoning_history = deque(self.reasoning_history, maxlen=max_entries)
         self.task_history = deque(self.task_history, maxlen=max_entries)
-        self._conversation_history = deque(self._conversation_history, maxlen=max_entries)
+        # max_entries setter trims immediately if the new cap is smaller
+        self._conversation_memory.max_entries = max(2, max_entries)
 

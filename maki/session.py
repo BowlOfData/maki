@@ -8,14 +8,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterator, Optional
 
-from .objects import GenerationConfig, LLMResponse, Message
+from .objects import ConversationMemory, GenerationConfig, LLMResponse, Message
 
 log = logging.getLogger(__name__)
 
 
 class ChatSession:
     """
-    Maintains conversation history across turns.
+    Maintains token-budgeted conversation history across turns.
 
     Usage
     -----
@@ -25,9 +25,14 @@ class ChatSession:
         session.print_history()
     """
 
-    def __init__(self, llm: Any, system: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        llm: Any,
+        system: Optional[str] = None,
+        token_budget: int = ConversationMemory.DEFAULT_TOKEN_BUDGET,
+    ) -> None:
         self._llm = llm
-        self._history: list[Message] = []
+        self._memory = ConversationMemory(token_budget=token_budget)
         self._system = system
 
     def say(
@@ -40,16 +45,18 @@ class ChatSession:
         log.debug("Session saying: %s", prompt[:100] + "..." if len(prompt) > 100 else prompt)
         if stream:
             return self._say_stream(prompt, config)
-        response = self._llm.chat(prompt, history=self._history, config=config, system=self._system)
-        self._history.append(Message("user", prompt))
-        self._history.append(Message("assistant", response.content))
+        history_snapshot = self._memory.messages()
+        response = self._llm.chat(prompt, history=history_snapshot, config=config, system=self._system)
+        self._memory.append(Message("user", prompt))
+        self._memory.append(Message("assistant", response.content))
         return response
 
     def _say_stream(self, prompt: str, config: Optional[GenerationConfig]) -> Iterator[str]:
         """Generator that streams tokens and appends to history when done."""
         full = ""
+        history_snapshot = self._memory.messages()
         try:
-            for chunk in self._llm.stream(prompt, history=self._history, config=config, system=self._system):
+            for chunk in self._llm.stream(prompt, history=history_snapshot, config=config, system=self._system):
                 full += chunk
                 yield chunk
         finally:
@@ -57,25 +64,25 @@ class ChatSession:
             # abandons the stream mid-way — otherwise both turns vanish
             # from history and later turns silently lose context.
             if full:
-                self._history.append(Message("user", prompt))
-                self._history.append(Message("assistant", full))
+                self._memory.append(Message("user", prompt))
+                self._memory.append(Message("assistant", full))
 
     def reset(self) -> None:
         """Clear conversation history."""
-        self._history.clear()
+        self._memory.clear()
         log.info("Session history cleared.")
 
     def print_history(self) -> None:
         """Pretty-print the full conversation."""
-        for msg in self._history:
+        for msg in self._memory.messages():
             color = "cyan" if msg.role == "user" else "green"
             log.info(f"[bold {color}]{msg.role.upper()}[/bold {color}]")
             log.info(msg.content)
             log.info("")
 
     @property
-    def history(self) -> list[Message]:
-        return list(self._history)
+    def history(self) -> list:
+        return self._memory.messages()
 
     def __len__(self) -> int:
-        return len(self._history)
+        return len(self._memory)
