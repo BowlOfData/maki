@@ -25,13 +25,11 @@ from .config import (
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TEMPERATURE,
 )
+from .connector import AsyncConnector, Connector
 from .utils import Utils
 from .objects import LLMResponse, Message, GenerationConfig, RateLimiter, BackendType
 from .session import ChatSession
-from .exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
-
-import requests
-import httpx
+from .exceptions import MakiNetworkError
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -84,7 +82,10 @@ class MakiLLama(LLMBackend):
         self.timeout = timeout
         self.think = think
         self.json_format = json_format
-        self._session = requests.Session()
+        # Operator-configured endpoint: private/LAN addresses are legitimate
+        # (loopback Ollama is the common case), so allow_private=True.
+        self._http = Connector(timeout=timeout, allow_private=True)
+        self._async_http = AsyncConnector(timeout=timeout, allow_private=True)
         self._verify_connection()
 
     # ------------------------------------------------------------------
@@ -93,19 +94,20 @@ class MakiLLama(LLMBackend):
 
     def close(self) -> None:
         """Close the underlying HTTP session and release connections."""
-        self._session.close()
+        self._http.close()
 
     def __del__(self) -> None:
         try:
-            self._session.close()
+            http = getattr(self, "_http", None)
+            if http is not None:
+                http.close()
         except Exception:
             pass
 
     def _verify_connection(self) -> None:
         """Ping the Ollama daemon; raise a friendly error if unreachable."""
         try:
-            r = self._session.get(f"{self.base_url}/api/tags", timeout=5)
-            r.raise_for_status()
+            r = self._http.get(f"{self.base_url}/api/tags", timeout=5)
             available = [m["name"] for m in r.json().get("models", [])]
             log.debug("Available models: %s", available)
             if not any(self.model in m for m in available):
@@ -115,7 +117,7 @@ class MakiLLama(LLMBackend):
                 )
             else:
                 log.info("Connected to Ollama · model=%s", self.model)
-        except requests.exceptions.ConnectionError as e:
+        except MakiNetworkError as e:
             log.error("Cannot reach Ollama at %s", self.base_url)
             raise RuntimeError(
                 "Cannot reach Ollama at %s.\n"
@@ -125,8 +127,7 @@ class MakiLLama(LLMBackend):
 
     def list_models(self) -> list[str]:
         """Return names of all locally pulled models."""
-        r = self._session.get(f"{self.base_url}/api/tags", timeout=10)
-        r.raise_for_status()
+        r = self._http.get(f"{self.base_url}/api/tags", timeout=10)
         return [m["name"] for m in r.json().get("models", [])]
 
     def pull(self, model: Optional[str] = None) -> None:
@@ -135,15 +136,14 @@ class MakiLLama(LLMBackend):
         log.info("Pulling model '%s' …", target)
         response = None
         try:
-            response = self._session.post(
+            response = self._http.post(
                 f"{self.base_url}/api/pull",
                 json={"name": target},
                 stream=True,
                 timeout=600,
             )
-            response.raise_for_status()
             last_pct = -10
-            for line in response.iter_lines():
+            for line in Connector.iter_lines(response):
                 if line:
                     data = json.loads(line)
                     status = data.get("status", "")
@@ -247,20 +247,9 @@ class MakiLLama(LLMBackend):
             self._rate_limiter.acquire()
         payload = self._build_payload(prompt, history, config, stream=False, system=system, images=images)
         t0 = time.perf_counter()
-        try:
-            r = self._session.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
-            elapsed = time.perf_counter() - t0
-            r.raise_for_status()
-        except requests.exceptions.Timeout as e:
-            raise MakiTimeoutError(f"chat() timed out after {self.timeout}s") from e
-        except requests.exceptions.ConnectionError as e:
-            raise MakiNetworkError(f"chat() connection failed: {e}") from e
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response else "unknown"
-            raise MakiAPIError(f"chat() HTTP error {status}: {e}") from e
-        except requests.exceptions.RequestException as e:
-            raise MakiNetworkError(f"chat() request failed: {e}") from e
-        response = self._parse_response(r.json(), elapsed)
+        r = self._http.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+        elapsed = time.perf_counter() - t0
+        response = self._parse_response(Connector.json_or_raise(r), elapsed)
         log.info("chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
 
@@ -284,14 +273,13 @@ class MakiLLama(LLMBackend):
         payload = self._build_payload(prompt, history, config, stream=True, system=system)
         response = None
         try:
-            response = self._session.post(
+            response = self._http.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=True,
                 timeout=self.timeout,
             )
-            response.raise_for_status()
-            for line in response.iter_lines():
+            for line in Connector.iter_lines(response):
                 if line:
                     data = json.loads(line)
                     chunk = data.get("message", {}).get("content", "")
@@ -330,14 +318,15 @@ class MakiLLama(LLMBackend):
         last_data: dict = {}
         response = None
         try:
-            response = self._session.post(
+            # The configured timeout applies per-chunk on the streaming read,
+            # so long generations survive as long as chunks keep arriving.
+            response = self._http.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=True,
                 timeout=self.timeout,
             )
-            response.raise_for_status()
-            for line in response.iter_lines():
+            for line in Connector.iter_lines(response):
                 if line:
                     data = json.loads(line)
                     chunk = data.get("message", {}).get("content", "")
@@ -346,17 +335,6 @@ class MakiLLama(LLMBackend):
                     if data.get("done"):
                         last_data = data
                         break
-        except requests.exceptions.Timeout as e:
-            raise MakiTimeoutError(
-                f"chat_collect() timed out waiting for next chunk after {self.timeout}s"
-            ) from e
-        except requests.exceptions.ConnectionError as e:
-            raise MakiNetworkError(f"chat_collect() connection failed: {e}") from e
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response else "unknown"
-            raise MakiAPIError(f"chat_collect() HTTP error {status}: {e}") from e
-        except requests.exceptions.RequestException as e:
-            raise MakiNetworkError(f"chat_collect() request failed: {e}") from e
         finally:
             Utils.cleanup_response(response)
 
@@ -392,20 +370,9 @@ class MakiLLama(LLMBackend):
         log.debug("async_chat: %s", prompt[:100])
         payload = self._build_payload(prompt, history, config, stream=False, images=images, system=system)
         t0 = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                r = await client.post(f"{self.base_url}/api/chat", json=payload)
-            elapsed = time.perf_counter() - t0
-            r.raise_for_status()
-        except httpx.TimeoutException as e:
-            raise MakiTimeoutError(f"async_chat() timed out after {self.timeout}s") from e
-        except httpx.ConnectError as e:
-            raise MakiNetworkError(f"async_chat() connection failed: {e}") from e
-        except httpx.HTTPStatusError as e:
-            raise MakiAPIError(f"async_chat() HTTP error {e.response.status_code}: {e}") from e
-        except httpx.RequestError as e:
-            raise MakiNetworkError(f"async_chat() request failed: {e}") from e
-        response = self._parse_response(r.json(), elapsed)
+        r = await self._async_http.post(f"{self.base_url}/api/chat", json=payload)
+        elapsed = time.perf_counter() - t0
+        response = self._parse_response(Connector.json_or_raise(r), elapsed)
         log.info("async_chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
 

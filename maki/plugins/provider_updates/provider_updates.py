@@ -11,17 +11,25 @@ import re
 import time
 from typing import Any, Dict, List
 
-import requests
-
 from maki.config import (
     DEFAULT_BROWSER_ACCEPT_LANGUAGE,
     DEFAULT_HTTP_TIMEOUT,
     DEFAULT_WEB_USER_AGENT,
 )
+from maki.connector import Connector
 from maki.plugins._web_utils import strip_html
 
 
 ALLOWED_METHODS = ["fetch_model_releases"]
+
+# All outbound HTTP goes through the hardened Connector layer
+# (SSRF validation + DNS pinning + error classification).
+_connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT)
+
+
+def _http_get(url, **kwargs):
+    """Fetch *url* through the shared Connector."""
+    return _connector.get(url, **kwargs)
 
 
 class ProviderUpdates:
@@ -51,7 +59,8 @@ class ProviderUpdates:
 
         for provider, url in sources.items():
             try:
-                resp = requests.get(url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
+                # raise_on_status=False: non-200 pages are logged and skipped
+                resp = _http_get(url, headers=headers, raise_on_status=False)
                 if resp.status_code != 200:
                     self.logger.warning(
                         "fetch_model_releases: HTTP %d for %s (%s)",

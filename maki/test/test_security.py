@@ -598,7 +598,7 @@ class TestRateLimiter(unittest.TestCase):
         ])
         fake_response.raise_for_status = MagicMock()
 
-        with patch.object(llm._session, 'post', return_value=fake_response):
+        with patch.object(llm._http._session, 'post', return_value=fake_response):
             try:
                 llm.chat("hello")
             except Exception:

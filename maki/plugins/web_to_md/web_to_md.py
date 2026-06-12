@@ -13,8 +13,6 @@ A regex-based fallback is used if either library is unavailable.
 import logging
 import re
 import time
-import requests
-from requests.adapters import HTTPAdapter
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -24,6 +22,8 @@ from maki.config import (
     DEFAULT_HTTP_READ_TIMEOUT,
     DEFAULT_WEB_USER_AGENT,
 )
+from maki.connector import Connector
+from maki.exceptions import MakiError, MakiNetworkError
 from maki.plugins.file_writer.file_writer import FileWriter
 
 _BROWSER_HEADERS = {
@@ -41,15 +41,6 @@ _BROWSER_HEADERS = {
 
 _MAX_RETRIES = 3
 _RETRY_DELAYS = (2.0, 5.0, 10.0)  # seconds between attempts
-_RETRYABLE_ERRORS = (
-    "RemoteDisconnected",
-    "ConnectionAborted",
-    "ConnectionReset",
-    "ConnectionError",
-    "ChunkedEncodingError",
-    "ReadTimeout",
-    "Timeout",
-)
 
 # Optional dependencies — imported once at module load so the cost is paid
 # only when the module is first imported, not on every call.
@@ -152,7 +143,7 @@ class WebToMd:
             else:
                 result["error"] = f"Failed to write file: {write_result['error']}"
 
-        except requests.exceptions.RequestException as exc:
+        except MakiError as exc:
             result["error"] = f"Request failed: {exc}"
             self.logger.error("Request failed for %s: %s", url, exc, exc_info=True)
         except Exception as exc:
@@ -172,33 +163,34 @@ class WebToMd:
             "content": "", "error": msg, "status_code": None,
         }
 
-    def _fetch_with_retry(self, url: str) -> requests.Response:
+    def _fetch_with_retry(self, url: str):
         """
-        Fetch *url* with browser-like headers, retrying on transient connection
-        errors (RemoteDisconnected, ConnectionAborted, etc.).
+        Fetch *url* with browser-like headers through the hardened HTTP
+        layer (SSRF validation + DNS pinning), retrying on transient
+        network errors. Non-transient failures (e.g. a blocked private
+        address) raise immediately.
 
         Raises the last exception if all attempts are exhausted.
         """
-        session = requests.Session()
-        session.headers.update(_BROWSER_HEADERS)
+        connector = Connector(
+            timeout=(DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT),
+            headers=_BROWSER_HEADERS,
+        )
         # Add a Referer that looks organic for news sites
         parsed = urlparse(url)
-        session.headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+        headers = {"Referer": f"{parsed.scheme}://{parsed.netloc}/"}
 
         last_exc: Exception = RuntimeError("No attempts made")
         for attempt, delay in enumerate((*_RETRY_DELAYS, None), start=1):
             try:
-                response = session.get(url, timeout=(DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT), allow_redirects=True)
-                return response
-            except Exception as exc:
-                last_exc = exc
-                exc_name = type(exc).__name__
-                cause_name = type(exc.__cause__).__name__ if exc.__cause__ else ""
-                is_retryable = any(
-                    r in exc_name or r in cause_name or r in str(exc)
-                    for r in _RETRYABLE_ERRORS
+                # raise_on_status=False: callers inspect status_code themselves
+                return connector.get(
+                    url, headers=headers, allow_redirects=True,
+                    raise_on_status=False,
                 )
-                if not is_retryable or delay is None:
+            except MakiNetworkError as exc:  # transient (includes timeouts)
+                last_exc = exc
+                if delay is None:
                     raise
                 self.logger.warning(
                     "fetch attempt %d/%d failed for %s (%s) — retrying in %.0fs",

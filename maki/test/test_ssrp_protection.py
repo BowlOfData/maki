@@ -48,35 +48,28 @@ class TestSSRFProtection(unittest.TestCase):
         with self.assertRaises(ValueError):
             Utils._validate_domain("255.255.255.255")
 
-    def test_compose_url_with_protocols(self):
-        """Test that compose_url handles URLs with protocols properly"""
-        # This should work - localhost with protocol
-        url = Utils.compose_url("http://localhost", "11434", "generate")
-        self.assertEqual(url, "http://localhost:11434/api/generate")
+    def test_validate_domain_with_allocated_public_space(self):
+        """128.0.0.0/16 is allocated public space and must not be blocked"""
+        Utils._validate_domain("128.0.0.1")
+        Utils._validate_domain("128.0.255.254")
 
-        # This should work - public domain with protocol
-        url = Utils.compose_url("https://api.example.com", "443", "generate")
-        self.assertEqual(url, "https://api.example.com:443/api/generate")
-
-    def test_compose_url_with_ipv6(self):
-        """Test that compose_url handles IPv6 addresses"""
-        # This should work
-        url = Utils.compose_url("::1", "11434", "generate")
-        self.assertEqual(url, "http://[::1]:11434/api/generate")
-
-        # This should work with IPv6 address
-        url = Utils.compose_url("[2001:db8::1]", "11434", "generate")
-        self.assertEqual(url, "http://[2001:db8::1]:11434/api/generate")
-
-    def test_compose_url_with_invalid_inputs(self):
-        """Test that compose_url validates inputs properly"""
-        # Test with invalid action
+    def test_validate_domain_blocks_benchmarking_range(self):
+        """198.18.0.0/15 (RFC 2544 benchmarking) stays blocked"""
         with self.assertRaises(ValueError):
-            Utils.compose_url("localhost", "11434", "")
-
-        # Test with invalid port
+            Utils._validate_domain("198.18.0.1")
         with self.assertRaises(ValueError):
-            Utils.compose_url("localhost", "abc", "generate")
+            Utils._validate_domain("198.19.255.254")
+
+    def test_validate_domain_allow_private(self):
+        """allow_private permits private IPs for operator-configured endpoints"""
+        Utils._validate_domain("192.168.1.10", allow_private=True)
+        Utils._validate_domain("10.0.0.5", allow_private=True)
+        # Blacklisted literals stay blocked even with allow_private
+        with self.assertRaises(ValueError):
+            Utils._validate_domain("0.0.0.0", allow_private=True)
+        # Format checks still apply
+        with self.assertRaises(ValueError):
+            Utils._validate_domain("bad domain!", allow_private=True)
 
     def test_convert64_with_absolute_paths(self):
         """Test that convert64 accepts absolute paths"""

@@ -1,22 +1,24 @@
 """
 Phase 3 tests: AgentProxy and DistributedAgentManager.
 
-Strategy: patch httpx.Client so no real network is required.
-The mock transport routes calls through the real FastAPI app via a custom
-httpx transport, giving end-to-end coverage of both proxy logic and
-server routing without spinning up a real process.
+Strategy: patch the proxy's Connector so no real network is required.
+The app adapter routes the Connector's requests-session traffic through
+the real FastAPI app via Starlette's TestClient, giving end-to-end
+coverage of both proxy logic and server routing without spinning up a
+real process.
 """
-import json
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
+
+import requests
 
 pytest = __import__("pytest")
-httpx = pytest.importorskip("httpx", reason="httpx not installed")
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
 from fastapi.testclient import TestClient as _TestClient
 
 from maki.agents import Agent
+from maki.connector import Connector
 from maki.objects import LLMResponse
 from maki.exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
 from maki.distributed.server import create_app
@@ -40,29 +42,50 @@ def _mock_backend(content="remote result"):
     return m
 
 
-class _AppTransport(httpx.BaseTransport):
-    """Routes httpx requests to a Starlette app without a real network."""
+class _AppAdapter(requests.adapters.BaseAdapter):
+    """Routes a requests session's traffic to a Starlette app without a network."""
 
     def __init__(self, app):
         self._client = _TestClient(app, raise_server_exceptions=False)
 
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        method = request.method
-        url = str(request.url)
-        headers = dict(request.headers)
-        content = request.content
-
+    def send(self, request, stream=False, timeout=None, verify=True,
+             cert=None, proxies=None):
         resp = self._client.request(
-            method=method,
-            url=url,
-            content=content,
-            headers=headers,
+            method=request.method,
+            url=request.url,
+            content=request.body,
+            headers=dict(request.headers),
         )
-        return httpx.Response(
-            status_code=resp.status_code,
-            headers=dict(resp.headers),
-            content=resp.content,
-        )
+        out = requests.Response()
+        out.status_code = resp.status_code
+        out.headers = requests.structures.CaseInsensitiveDict(resp.headers)
+        out._content = resp.content
+        out._content_consumed = True  # iter_lines reads from _content, not raw
+        out.url = request.url
+        out.request = request
+        return out
+
+    def close(self):
+        pass
+
+
+def _make_connector(app, timeout=10.0):
+    """Real Connector whose session is wired to an in-process app."""
+    conn = Connector(timeout=timeout, allow_private=True)
+    adapter = _AppAdapter(app)
+    conn._session.mount("http://", adapter)
+    conn._session.mount("https://", adapter)
+    return conn
+
+
+def _mock_info_response():
+    return MagicMock(
+        status_code=200,
+        json=lambda: {
+            "agent_id": "x", "name": "t", "role": "", "plugins": [],
+            "backend": "MockBackend", "model": "test",
+        },
+    )
 
 
 def _make_proxy(content="remote result", api_key=None):
@@ -70,10 +93,9 @@ def _make_proxy(content="remote result", api_key=None):
     backend = _mock_backend(content)
     agent = Agent("remote-agent", backend, role="analyst", instructions="be precise")
     app = create_app(agent, api_key=api_key)
-    transport = _AppTransport(app)
-    client = httpx.Client(transport=transport, timeout=10.0)
 
-    with patch("maki.distributed.proxy.httpx.Client", return_value=client):
+    with patch("maki.distributed.proxy.Connector",
+               return_value=_make_connector(app)):
         proxy = AgentProxy(endpoint="http://fake-host:8100", api_key=api_key)
 
     return proxy, agent
@@ -117,57 +139,41 @@ class TestAgentProxyExecute(unittest.TestCase):
         self.assertEqual(result, "remote result")
 
     def test_execute_network_error_raises_maki_error(self):
-        from maki.exceptions import MakiNetworkError
         backend = _mock_backend()
         backend.chat.side_effect = MakiNetworkError("backend down")
         agent = Agent("err-agent", backend)
         app = create_app(agent)
-        transport = _AppTransport(app)
-        client = httpx.Client(transport=transport)
-        with patch("maki.distributed.proxy.httpx.Client", return_value=client):
+        with patch("maki.distributed.proxy.Connector",
+                   return_value=_make_connector(app)):
             proxy = AgentProxy(endpoint="http://fake:8100")
         with self.assertRaises(MakiNetworkError):
             proxy.execute_task("do something")
 
     def test_execute_api_error_raises_maki_api_error(self):
-        from maki.exceptions import MakiAPIError
         backend = _mock_backend()
         backend.chat.side_effect = MakiAPIError("bad prompt")
         agent = Agent("err-agent", backend)
         app = create_app(agent)
-        transport = _AppTransport(app)
-        client = httpx.Client(transport=transport)
-        with patch("maki.distributed.proxy.httpx.Client", return_value=client):
+        with patch("maki.distributed.proxy.Connector",
+                   return_value=_make_connector(app)):
             proxy = AgentProxy(endpoint="http://fake:8100")
         with self.assertRaises(MakiAPIError):
             proxy.execute_task("do something")
 
     def test_execute_timeout_maps_to_maki_timeout_error(self):
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(
-            status_code=200, is_success=True,
-            json=lambda: {
-                "agent_id": "x", "name": "t", "role": "", "plugins": [],
-                "backend": "MockBackend", "model": "test",
-            },
-        )
-        mock_client.post.side_effect = httpx.TimeoutException("timed out")
-        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = _mock_info_response()
+        mock_conn.post.side_effect = MakiTimeoutError("timed out")
+        with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
             proxy = AgentProxy(endpoint="http://fake:8100")
         with self.assertRaises(MakiTimeoutError):
             proxy.execute_task("slow task")
 
     def test_execute_connection_error_maps_to_maki_network_error(self):
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(
-            status_code=200, is_success=True,
-            json=lambda: {
-                "agent_id": "x", "name": "t", "role": "", "plugins": [],
-                "backend": "MockBackend", "model": "test",
-            },
-        )
-        mock_client.post.side_effect = httpx.ConnectError("refused")
-        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = _mock_info_response()
+        mock_conn.post.side_effect = MakiNetworkError("refused")
+        with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
             proxy = AgentProxy(endpoint="http://fake:8100")
         with self.assertRaises(MakiNetworkError):
             proxy.execute_task("task")
@@ -186,22 +192,16 @@ class TestAgentProxyRetry(unittest.TestCase):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise httpx.ConnectError("first failure")
+                raise MakiNetworkError("first failure")
             return MagicMock(
-                status_code=200, is_success=True,
+                status_code=200,
                 json=lambda: {"result": "ok", "agent_id": "x", "elapsed": 0.1},
             )
 
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(
-            status_code=200, is_success=True,
-            json=lambda: {
-                "agent_id": "x", "name": "t", "role": "", "plugins": [],
-                "backend": "Mock", "model": "t",
-            },
-        )
-        mock_client.post.side_effect = flaky_post
-        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = _mock_info_response()
+        mock_conn.post.side_effect = flaky_post
+        with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
             proxy = AgentProxy(endpoint="http://fake:8100")
 
         result = proxy.execute_task_with_retry("task", max_retries=3, retry_delay=0)
@@ -209,16 +209,10 @@ class TestAgentProxyRetry(unittest.TestCase):
         self.assertEqual(call_count, 2)
 
     def test_retry_exhausted_raises(self):
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(
-            status_code=200, is_success=True,
-            json=lambda: {
-                "agent_id": "x", "name": "t", "role": "", "plugins": [],
-                "backend": "Mock", "model": "t",
-            },
-        )
-        mock_client.post.side_effect = httpx.ConnectError("always down")
-        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = _mock_info_response()
+        mock_conn.post.side_effect = MakiNetworkError("always down")
+        with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
             proxy = AgentProxy(endpoint="http://fake:8100")
         with self.assertRaises(MakiNetworkError):
             proxy.execute_task_with_retry("task", max_retries=2, retry_delay=0)
@@ -229,21 +223,12 @@ class TestAgentProxyRetry(unittest.TestCase):
         def bad_post(url, **kwargs):
             nonlocal call_count
             call_count += 1
-            return MagicMock(
-                status_code=400, is_success=False,
-                text="bad request",
-            )
+            raise MakiAPIError("HTTP client error 400: bad request")
 
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(
-            status_code=200, is_success=True,
-            json=lambda: {
-                "agent_id": "x", "name": "t", "role": "", "plugins": [],
-                "backend": "Mock", "model": "t",
-            },
-        )
-        mock_client.post.side_effect = bad_post
-        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = _mock_info_response()
+        mock_conn.post.side_effect = bad_post
+        with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
             proxy = AgentProxy(endpoint="http://fake:8100")
         with self.assertRaises(MakiAPIError):
             proxy.execute_task_with_retry("task", max_retries=3, retry_delay=0)
@@ -268,30 +253,20 @@ class TestAgentProxyStream(unittest.TestCase):
         self.assertIsInstance(gen, types.GeneratorType)
 
     def test_stream_sse_parse(self):
+        # Byte lines, as requests' iter_lines yields them off the wire
         lines = [
-            'data: {"chunk": "hello"}',
-            'data: {"chunk": " world"}',
-            "data: [DONE]",
+            b'data: {"chunk": "hello"}',
+            b'data: {"chunk": " world"}',
+            b"data: [DONE]",
         ]
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.is_success = True
         mock_response.iter_lines.return_value = iter(lines)
 
-        mock_cm = MagicMock()
-        mock_cm.__enter__.return_value = mock_response
-        mock_cm.__exit__.return_value = False
-
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(
-            status_code=200, is_success=True,
-            json=lambda: {
-                "agent_id": "x", "name": "t", "role": "", "plugins": [],
-                "backend": "Mock", "model": "t",
-            },
-        )
-        mock_client.stream.return_value = mock_cm
-        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = _mock_info_response()
+        mock_conn.post.return_value = mock_response
+        with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
             proxy = AgentProxy(endpoint="http://fake:8100")
         result = list(proxy.stream_task("go"))
         self.assertEqual(result, ["hello", " world"])
@@ -302,62 +277,39 @@ class TestAgentProxyStream(unittest.TestCase):
         rides along in the body."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.is_success = True
-        mock_response.iter_lines.return_value = iter(["data: [DONE]"])
+        mock_response.iter_lines.return_value = iter([b"data: [DONE]"])
 
-        mock_cm = MagicMock()
-        mock_cm.__enter__.return_value = mock_response
-        mock_cm.__exit__.return_value = False
-
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(
-            status_code=200, is_success=True,
-            json=lambda: {
-                "agent_id": "x", "name": "t", "role": "", "plugins": [],
-                "backend": "Mock", "model": "t",
-            },
-        )
-        mock_client.stream.return_value = mock_cm
-        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = _mock_info_response()
+        mock_conn.post.return_value = mock_response
+        with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
             proxy = AgentProxy(endpoint="http://fake:8100")
 
         list(proxy.stream_task("go", context={"key": "value"}))
-        args, kwargs = mock_client.stream.call_args
-        self.assertEqual(args[0], "POST")
+        args, kwargs = mock_conn.post.call_args
+        self.assertTrue(args[0].endswith("/stream"))
+        self.assertTrue(kwargs["stream"])
         self.assertEqual(
             kwargs["json"],
             {"task": "go", "use_plugins": False, "context": {"key": "value"}},
         )
 
     def test_stream_error_status_maps_to_maki_error_and_records_failure(self):
-        """Regression §1.3: a non-2xx streaming response raised
-        httpx.ResponseNotRead (reading .text on an unread stream) instead of
-        the mapped Maki error, and the circuit breaker never saw the failure.
+        """Regression §1.3: a non-2xx streaming response must raise the
+        mapped Maki error and the circuit breaker must record the failure.
         """
         mock_response = MagicMock()
         mock_response.status_code = 500
-        mock_response.is_success = False
         mock_response.text = "internal error"
 
-        mock_cm = MagicMock()
-        mock_cm.__enter__.return_value = mock_response
-        mock_cm.__exit__.return_value = False
-
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(
-            status_code=200, is_success=True,
-            json=lambda: {
-                "agent_id": "x", "name": "t", "role": "", "plugins": [],
-                "backend": "Mock", "model": "t",
-            },
-        )
-        mock_client.stream.return_value = mock_cm
-        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+        mock_conn = MagicMock()
+        mock_conn.get.return_value = _mock_info_response()
+        mock_conn.post.return_value = mock_response
+        with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
             proxy = AgentProxy(endpoint="http://fake:8100")
 
         with self.assertRaises(MakiNetworkError):
             list(proxy.stream_task("go"))
-        mock_response.read.assert_called_once()
         self.assertEqual(proxy._circuit_breaker.failure_count, 1)
 
 
@@ -398,14 +350,9 @@ class TestAgentProxyConversation(unittest.TestCase):
     def test_reset_conversation_clears_history(self):
         proxy, agent = _make_proxy()
         proxy.execute_task("task one")
-        proxy.reset_conversation()
-        # After reset, task history on the server should be empty
-        r = httpx.Client(
-            transport=_AppTransport(create_app(agent))
-        ).get("http://fake-host:8100/history")
-        # We reset the conversation but the history is on a different app instance;
-        # verify the proxy method runs without error (it sends DELETE /history).
+        # Verify the proxy method runs without error (it sends DELETE /history).
         # The real end-to-end check is done in test_agent_server.py.
+        proxy.reset_conversation()
 
 
 class TestAgentProxyAuth(unittest.TestCase):
@@ -420,10 +367,9 @@ class TestAgentProxyAuth(unittest.TestCase):
         backend = _mock_backend()
         agent = Agent("auth-agent", backend)
         app = create_app(agent, api_key="correct-key")
-        transport = _AppTransport(app)
         # Proxy uses the wrong key — /info also fails with 401
-        bad_client = httpx.Client(transport=transport, timeout=5.0)
-        with patch("maki.distributed.proxy.httpx.Client", return_value=bad_client):
+        with patch("maki.distributed.proxy.Connector",
+                   return_value=_make_connector(app)):
             with self.assertRaises(MakiAPIError):
                 AgentProxy(endpoint="http://fake:8100", api_key="wrong-key")
 
@@ -444,10 +390,9 @@ class TestDistributedAgentManager(unittest.TestCase):
         remote_backend = _mock_backend(remote_content)
         remote_agent = Agent("worker", remote_backend, role="worker")
         remote_app = create_app(remote_agent)
-        transport = _AppTransport(remote_app)
-        remote_client = httpx.Client(transport=transport, timeout=10.0)
 
-        with patch("maki.distributed.proxy.httpx.Client", return_value=remote_client):
+        with patch("maki.distributed.proxy.Connector",
+                   return_value=_make_connector(remote_app)):
             manager.register_remote("worker", endpoint="http://worker:8100")
 
         return manager
@@ -463,9 +408,8 @@ class TestDistributedAgentManager(unittest.TestCase):
         remote_backend = _mock_backend()
         remote_agent = Agent("svc", remote_backend)
         app = create_app(remote_agent)
-        transport = _AppTransport(app)
-        client = httpx.Client(transport=transport)
-        with patch("maki.distributed.proxy.httpx.Client", return_value=client):
+        with patch("maki.distributed.proxy.Connector",
+                   return_value=_make_connector(app)):
             proxy = manager.register_remote("svc", endpoint="http://svc:8100")
         self.assertIsInstance(proxy, AgentProxy)
 
@@ -485,9 +429,8 @@ class TestDistributedAgentManager(unittest.TestCase):
         remote_backend = _mock_backend("remote answer")
         remote_agent = Agent("remote", remote_backend)
         app = create_app(remote_agent)
-        transport = _AppTransport(app)
-        client = httpx.Client(transport=transport)
-        with patch("maki.distributed.proxy.httpx.Client", return_value=client):
+        with patch("maki.distributed.proxy.Connector",
+                   return_value=_make_connector(app)):
             manager.register_remote("remote", endpoint="http://remote:8100")
 
         local_result = manager.assign_task("local", "local task")
@@ -503,9 +446,8 @@ class TestDistributedAgentManager(unittest.TestCase):
         remote_backend = _mock_backend("remote contribution")
         remote_agent = Agent("contributor", remote_backend)
         app = create_app(remote_agent)
-        transport = _AppTransport(app)
-        client = httpx.Client(transport=transport)
-        with patch("maki.distributed.proxy.httpx.Client", return_value=client):
+        with patch("maki.distributed.proxy.Connector",
+                   return_value=_make_connector(app)):
             manager.register_remote("contributor", endpoint="http://contrib:8100")
 
         results = manager.coordinate_agents([

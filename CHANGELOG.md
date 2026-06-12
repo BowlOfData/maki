@@ -13,6 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Optional-dependency extras: `gui`, `ftp`, `web`, `trends`, `alpaca`, `distributed-redis`, `all`
 
 ### Changed
+- **Security**: `Connector` reworked into the single hardened HTTP layer for the whole framework — it owns URL validation, DNS resolution with resolved-IP validation and connect-time pinning (a hostname whose records include any private/reserved address is rejected, and the socket connects to the exact validated IP, closing the DNS-rebinding window; TLS still verifies against the original hostname), timeouts from `maki.config` (the hardcoded 180 s is gone), and the mapping of transport/status failures onto the Maki exception tree (transport timeout & HTTP 408/504 → `MakiTimeoutError`, connection failures & 5xx → `MakiNetworkError`, other 4xx → `MakiAPIError`). A new `AsyncConnector` (httpx) covers the async paths with pre-flight validation
+- All outbound HTTP now routes through the hardened layer: `MakiLLama`, `AgentProxy`, and the `web_to_md`, `web_search`, `provider_updates`, `media_search`, and `rag_memory` plugins no longer make raw `requests`/`httpx` calls. Operator-configured endpoints (Ollama base URL, registered remote agents, the RAG embedder) use `allow_private=True` so LAN/loopback deployments keep working; content-derived URLs (web plugins) get the full SSRF treatment
+- Connection pinning falls back through the validated address list, so dual-stack hosts whose service listens on one address family only (e.g. `localhost` → `::1` first, server on IPv4) still connect — every attempted address has passed validation
+- `MakiLLama` HTTP error classes changed with the unified mapping: 5xx responses now raise the retryable `MakiNetworkError` (previously `MakiAPIError`), and `stream()` failures are classified instead of escaping as raw `requests` exceptions
+- `AgentProxy` no longer requires `httpx` (the distributed client now rides on the core `requests`-based layer)
+- `Utils.PRIVATE_IP_RANGES`: removed `128.0.0.0/16` (allocated public space, wrongly blocked for decades' worth of hosts) and corrected the TEST-NET labels (`198.18.0.0/15` is the RFC 2544 benchmarking range, not TEST-NET)
+- `web_to_md` retries on exception *types* (`MakiNetworkError`) instead of matching exception-name substrings
 - **Breaking**: `AgentServer` `/stream` is now `POST` with the same body as `/execute`, so task text stays out of access logs and URL length limits no longer apply; `AgentProxy` updated to match, and its `context` argument — previously dropped by the GET query string — is now forwarded
 - **Security**: `AgentServer` API-key comparison is constant-time (`secrets.compare_digest`)
 - **Security**: `/execute` no longer echoes internal error details to remote callers — validation errors (`MakiValidationError`/`ValueError`) return 400 with the validation message, backend timeouts return 504 (which `AgentProxy` maps back to `MakiTimeoutError`), network failures 502, and everything else a generic 400/500 body with the full exception logged server-side only; the `/stream` SSE error event is sanitized the same way
@@ -26,6 +33,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Plan documents moved from the repo root to `docs/`
 
 ### Fixed
+- `MakiLLama.chat()` computed `elapsed` before checking the response status, and a 200 response with a non-JSON body leaked a raw `json.JSONDecodeError`; both now go through the hardened layer (`MakiAPIError` for invalid JSON)
+- `rag_memory._ollama_embed` called `Connector.post()`, a method that did not exist (the old `Connector` only had `simple`/`version`) — embedding via Ollama would have crashed with `AttributeError`; the reworked instance API makes the call real
 - `LocalStateStore` checkpoint writes are now atomic (temp file + `os.replace`) — a crash mid-save no longer leaves a corrupt checkpoint, which is the scenario checkpointing exists for; applies to both `save_workflow` and `update_task`
 - Workflow IDs that sanitize to the same filename/Redis key (e.g. `a/b` and `a_b`) no longer overwrite each other's state — sanitized IDs get a short hash suffix (IDs that need no sanitization are unchanged)
 - `MakiLLama.pull()` crashed with `TypeError` on the first progress chunk (`log.info(..., end="\r")`); progress is now logged at ~10% intervals
@@ -40,6 +49,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Removed
 - Stale root-level files: `local_llm.py`, `local_llm_v2.py`, `orchestrator.py`, `review.md`, `examples/demo_implementation.py` (all referenced the deleted `Maki` class or were pre-package copies)
+- `Utils.compose_url` (110 lines of URL sanitisation serving no remaining caller), `Utils._validate_port`, and `maki/urls.py` (`Actions` enum, `GENERIC_LLAMA_URL`) — dead since the `Maki` class was removed; the hardened `Connector` is the one place URLs are validated now
+- `Connector.simple()` / `Connector.version()` static methods (unused; replaced by the instance `get`/`post`/`delete` API)
 
 ---
 

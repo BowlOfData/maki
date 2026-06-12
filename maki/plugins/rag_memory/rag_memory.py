@@ -107,7 +107,8 @@ class RagMemory:
             base_url = DEFAULT_OLLAMA_BASE_URL
 
         from maki.connector import Connector
-        connector = Connector()
+        # Operator-configured Ollama endpoint: LAN/private addresses are fine.
+        connector = Connector(allow_private=True)
         url = base_url.rstrip("/") + "/api/embed"
         resp = connector.post(url, json={"model": self._embed_model, "input": text})
         data = resp.json()

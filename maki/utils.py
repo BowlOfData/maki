@@ -4,8 +4,7 @@ import os
 import logging
 import re
 import ipaddress
-from typing import Any, Optional
-from .urls import GENERIC_LLAMA_URL
+from typing import Any, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +23,14 @@ class Utils:
         "192.168.0.0/16",
         "fe80::/10",
         "169.254.0.0/16",  # Link-local addresses
-        "100.64.0.0/10",   # Shared address space
+        "100.64.0.0/10",   # Shared address space (CGNAT)
         "192.0.0.0/24",    # IETF Protocol Assignments
         "192.0.2.0/24",    # TEST-NET-1
-        "198.18.0.0/15",   # TEST-NET-2
-        "198.51.100.0/24", # TEST-NET-3
-        "203.0.113.0/24",  # TEST-NET-4
+        "198.51.100.0/24", # TEST-NET-2
+        "203.0.113.0/24",  # TEST-NET-3
+        "198.18.0.0/15",   # Benchmarking (RFC 2544)
         "240.0.0.0/4",     # Reserved for future use
         "0.0.0.0/8",       # This network
-        "128.0.0.0/16",    # Reserved for future use
         "::/128",          # Unspecified address
         "fc00::/7",        # Unique local addresses
     ]
@@ -44,11 +42,37 @@ class Utils:
     ]
 
     @staticmethod
-    def _validate_domain(domain: str) -> None:
+    def _validate_ip(
+        ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address],
+        label: str,
+    ) -> None:
+        """Reject private/reserved IP addresses (loopback is allowed).
+
+        Args:
+            ip:    The parsed IP address to check.
+            label: Human-readable name for error messages (the original
+                   host string, or "host -> addr" for resolved addresses).
+
+        Raises:
+            ValueError: If the address is private, link-local, or reserved.
+        """
+        if ip.is_loopback:
+            return
+        for ip_range in Utils.PRIVATE_IP_RANGES:
+            if ip in ipaddress.ip_network(ip_range):
+                raise ValueError(f"Access to private IP address '{label}' is not allowed")
+        if ip.is_link_local or ip.is_reserved:
+            raise ValueError(f"Access to special IP address '{label}' is not allowed")
+
+    @staticmethod
+    def _validate_domain(domain: str, allow_private: bool = False) -> None:
         """Validate domain name to prevent SSRF attacks
 
         Args:
             domain: The domain name to validate
+            allow_private: Permit private/reserved IP literals (for
+                operator-configured endpoints such as a LAN Ollama host).
+                Format and blacklist checks still apply.
 
         Raises:
             ValueError: If domain is invalid or potentially malicious
@@ -78,15 +102,9 @@ class Utils:
             is_ip = False
 
         if is_ip:
-            # Loopback addresses are allowed for local development
-            if ip.is_loopback:
-                return
-            for ip_range in Utils.PRIVATE_IP_RANGES:
-                if ip in ipaddress.ip_network(ip_range):
-                    raise ValueError(f"Access to private IP address '{domain}' is not allowed")
-            if ip.is_link_local or ip.is_reserved:
-                raise ValueError(f"Access to special IP address '{domain}' is not allowed")
-            return  # valid public IP
+            if not allow_private:
+                Utils._validate_ip(ip, domain)
+            return  # valid (or explicitly permitted) IP
 
         # Not an IP address — validate as a domain name
         if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$', domain):
@@ -105,133 +123,6 @@ class Utils:
         for label in labels:
             if len(label) > 63:
                 raise ValueError("Domain label too long")
-
-    @staticmethod
-    def _validate_port(port: str) -> None:
-        """Validate port number to prevent invalid values
-
-        Args:
-            port: The port number to validate
-
-        Raises:
-            ValueError: If port is invalid
-        """
-        if not isinstance(port, str) or not port.strip():
-            raise ValueError("Port must be a non-empty string")
-
-        port = port.strip()
-
-        # Check if it's a valid numeric port
-        if not re.match(r'^[0-9]+$', port):
-            raise ValueError("Port must be a valid numeric string")
-
-        port_num = int(port)
-        if port_num < 1 or port_num > 65535:
-            raise ValueError("Port must be between 1 and 65535")
-
-        # Block non-HTTP protocol ports to prevent SSRF probing of internal services
-        if port_num in (21, 22):
-            raise ValueError(f"Port {port_num} is not allowed (non-HTTP service port)")
-
-    @staticmethod
-    def compose_url(url: str, port: str, action: str) -> str:
-        """Compose the full URL for the Ollama API endpoint
-
-        Args:
-            url: the domain or IP address
-            port: the port number
-            action: the API action (e.g., 'generate', 'version')
-
-        Returns:
-            The complete URL string
-
-        Raises:
-            ValueError: If any parameter is invalid
-        """
-        logger = logging.getLogger(__name__)
-
-        # Validate inputs
-        # For URLs with protocols, extract just the domain part for validation
-        original_url = url.strip()
-        if original_url.startswith(('http://', 'https://')):
-            # Extract domain part for validation
-            import urllib.parse
-            parsed = urllib.parse.urlparse(original_url)
-            domain_part = parsed.hostname or parsed.netloc
-            if domain_part:
-                # Handle IPv6 addresses with brackets properly
-                if domain_part.startswith('[') and domain_part.endswith(']'):
-                    # Remove brackets for validation but keep them for later use
-                    domain_part = domain_part[1:-1]
-                Utils._validate_domain(domain_part)
-        else:
-            # If no protocol is provided, default to http:// for better compatibility
-            # with the examples in the README
-            Utils._validate_domain(original_url)
-
-        Utils._validate_port(port)
-
-        if not isinstance(action, str) or not action.strip():
-            raise ValueError("Action must be a non-empty string")
-
-        # Sanitize inputs
-        url = url.strip()
-        port = port.strip()
-        action = action.strip()
-
-        # Extract and preserve any explicit protocol BEFORE sanitization.
-        # The sanitization regex removes '/' characters, which would destroy
-        # 'http://' or 'https://' if left in the url string.
-        import urllib.parse
-        protocol = "http"  # default protocol
-        domain_part = url
-        if url.lower().startswith(('http://', 'https://')):
-            parsed = urllib.parse.urlparse(url)
-            protocol = parsed.scheme  # 'http' or 'https'
-            domain_part = parsed.hostname or parsed.netloc
-            # Strip surrounding brackets from IPv6 addresses (e.g. '[::1]' -> '::1')
-            if domain_part.startswith('[') and domain_part.endswith(']'):
-                domain_part = domain_part[1:-1]
-
-        # Sanitize only the domain portion — keep alphanumerics, dots, hyphens, colons.
-        # Forward slashes are intentionally excluded here; the protocol is handled separately.
-        domain_part = re.sub(r'[^a-zA-Z0-9.\-:]', '', domain_part)
-        action = re.sub(r'[^a-zA-Z0-9\-_/.]', '', action)
-
-        # Guard: path traversal in action
-        if '/../' in action or '..\\' in action or '..' in action:
-            raise ValueError("Action contains invalid path traversal characters")
-
-        # Guard: URL-encoding abuse (% not expected in a bare domain)
-        if '%' in domain_part:
-            raise ValueError("Invalid characters in URL")
-
-        # Guard: port must still be purely numeric after earlier validation
-        if not re.match(r'^[0-9]+$', port):
-            raise ValueError("Port must be a valid numeric string")
-
-        # Guard: ensure the sanitized domain contains only safe characters
-        if not re.match(r'^[a-zA-Z0-9.\-:]+$', domain_part):
-            raise ValueError("Invalid domain format after sanitization")
-
-        try:
-            parsed_ip = ipaddress.ip_address(domain_part)
-            if parsed_ip.version == 6:
-                domain_part = f"[{domain_part}]"
-        except ValueError:
-            pass
-
-        composed = GENERIC_LLAMA_URL.format(domain=domain_part, port=port, action=action)
-        # Always enforce the correct protocol by replacing whatever the template
-        # may already contain (e.g. a hardcoded 'http://') with the protocol that
-        # was explicitly supplied by the caller, or 'http' as the safe default.
-        # Using re.sub + unconditional prepend avoids the bug where a template
-        # already starting with 'http://' silently discards a caller-supplied 'https'.
-        composed = re.sub(r'^https?://', '', composed)  # strip any baked-in protocol
-        composed = f"{protocol}://{composed}"          # prepend the correct one
-
-        logger.debug(f"Composed URL: {composed}")
-        return composed
 
     @staticmethod
     def jsonify(data) -> Any:
