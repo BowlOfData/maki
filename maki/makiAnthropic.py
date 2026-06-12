@@ -228,7 +228,7 @@ class MakiAnthropic(LLMBackend):
         """Async variant of chat()."""
         log.debug("async_chat: %s", prompt[:100])
         if self._rate_limiter:
-            self._rate_limiter.acquire()
+            await self._rate_limiter.async_acquire()
         cfg = config or self.config
         messages = self._build_messages(prompt, history, images=images)
         kwargs = cfg.to_anthropic_kwargs()

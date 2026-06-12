@@ -13,31 +13,21 @@ serve options:
     --tls-key  FILE       TLS private-key file
 """
 import argparse
-import logging
 import sys
 
-from .config import (
-    DEFAULT_LOG_FORMAT,
-    DEFAULT_LOG_LEVEL,
-    DEFAULT_MODEL,
-    DEFAULT_OLLAMA_BASE_URL,
-)
-
+from .config import DEFAULT_MODEL, DEFAULT_OLLAMA_BASE_URL
+from .logging_config import configure_logging
 from .makiLLama import MakiLLama
 from .agents import Agent, AgentManager
 
 __all__ = ['MakiLLama', 'Agent', 'AgentManager']
 
 
-def configure_logging():
-    logging.basicConfig(
-        level=DEFAULT_LOG_LEVEL,
-        format=DEFAULT_LOG_FORMAT,
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
-
-
 def _cmd_serve(args: argparse.Namespace) -> None:
+    if args.tls_key and not args.tls_cert:
+        print("Error: --tls-key requires --tls-cert", file=sys.stderr)
+        sys.exit(1)
+
     try:
         import uvicorn
     except ImportError:
@@ -98,6 +88,7 @@ def main() -> None:
                        help="TLS private-key file (required when --tls-cert is set)")
 
     args = parser.parse_args()
+    configure_logging()
 
     if args.command == "serve":
         _cmd_serve(args)
