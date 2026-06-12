@@ -86,7 +86,6 @@ class MakiLLama(LLMBackend):
         # (loopback Ollama is the common case), so allow_private=True.
         self._http = Connector(timeout=timeout, allow_private=True)
         self._async_http = AsyncConnector(timeout=timeout, allow_private=True)
-        self._verify_connection()
 
     # ------------------------------------------------------------------
     # Connection helpers
@@ -104,8 +103,17 @@ class MakiLLama(LLMBackend):
         except Exception:
             pass
 
-    def _verify_connection(self) -> None:
-        """Ping the Ollama daemon; raise a friendly error if unreachable."""
+    def verify(self) -> None:
+        """Ping the Ollama daemon and log model availability.
+
+        Call this explicitly after construction if you need to confirm the
+        server is reachable before the first inference call.  The constructor
+        no longer blocks on this so that ``maki serve`` can start without
+        Ollama being up.
+
+        Raises:
+            MakiNetworkError: if the Ollama daemon is unreachable or times out.
+        """
         try:
             r = self._http.get(f"{self.base_url}/api/tags", timeout=5)
             available = [m["name"] for m in r.json().get("models", [])]
@@ -118,12 +126,11 @@ class MakiLLama(LLMBackend):
             else:
                 log.info("Connected to Ollama · model=%s", self.model)
         except MakiNetworkError as e:
-            log.error("Cannot reach Ollama at %s", self.base_url)
-            raise RuntimeError(
-                "Cannot reach Ollama at %s.\n"
-                "  → Install Ollama: https://ollama.com\n"
-                "  → Start the daemon: ollama serve" % self.base_url
-            ) from e
+            log.error("Cannot reach Ollama at %s: %s", self.base_url, e)
+            raise
+
+    # Backward-compat alias kept so any callers of the private method still work.
+    _verify_connection = verify
 
     def list_models(self) -> list[str]:
         """Return names of all locally pulled models."""

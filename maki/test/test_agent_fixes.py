@@ -151,8 +151,10 @@ class TestWorkflowTaskIntegration(Base):
             results = self.manager.run_workflow([wt])
 
         mock.assert_not_called()
-        self.assertNotIn("skip_me", results)
-        self.assertEqual(wt.status, TaskStatus.PENDING)
+        self.assertIn("skip_me", results)
+        self.assertTrue(results["skip_me"].get("skipped"))
+        self.assertIsNone(results["skip_me"]["result"])
+        self.assertEqual(wt.status, TaskStatus.SKIPPED)
 
 
 # ---------------------------------------------------------------------------
@@ -397,10 +399,10 @@ class TestRetryBehaviour(Base):
 # ---------------------------------------------------------------------------
 class TestStreamTask(Base):
     def test_stream_task_raises_if_backend_has_no_stream(self):
-        """When stream raises NotImplementedError, stream_task propagates it"""
+        """When stream raises NotImplementedError, stream_task propagates it on first iteration"""
         self.maki.stream.side_effect = NotImplementedError("streaming not supported")
         with self.assertRaises(NotImplementedError):
-            self.agent.stream_task("tell me a story")
+            list(self.agent.stream_task("tell me a story"))
 
     def test_stream_task_delegates_to_backend_stream(self):
         """If maki.stream() exists, stream_task returns its generator"""
