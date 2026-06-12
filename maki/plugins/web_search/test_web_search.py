@@ -325,23 +325,23 @@ class TestFetchRedditHot(unittest.TestCase):
 
     def test_uses_title_when_selftext_is_empty(self):
         fixed_now = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
-        created_utc = fixed_now.timestamp()
+        rss_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<feed xmlns="http://www.w3.org/2005/Atom">'
+            "<title>r/netsec</title>"
+            "<entry>"
+            "<title>New sandbox escape write-up</title>"
+            '<link href="https://www.reddit.com/r/netsec/comments/abc/"/>'
+            "<published>2026-04-17T11:00:00Z</published>"
+            '<content type="html">'
+            '&lt;a href="https://example.com/writeup"&gt;Article&lt;/a&gt;'
+            "</content>"
+            "</entry>"
+            "</feed>"
+        )
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {
-            "data": {
-                "children": [{
-                    "data": {
-                        "title": "New sandbox escape write-up",
-                        "url": "https://example.com/writeup",
-                        "is_self": False,
-                        "score": 20,
-                        "selftext": "",
-                        "created_utc": created_utc,
-                    }
-                }]
-            }
-        }
+        mock_resp.text = rss_xml
 
         with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
              patch("maki.plugins.web_search.web_search._http_get", return_value=mock_resp), \
