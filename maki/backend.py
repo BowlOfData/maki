@@ -10,9 +10,9 @@ class.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Generator
+from typing import Generator, List, Optional
 
-from .objects import LLMResponse
+from .objects import GenerationConfig, LLMResponse, Message
 
 
 class LLMBackend(ABC):
@@ -25,7 +25,9 @@ class LLMBackend(ABC):
       ``__init__``.
     * Implement ``request(prompt)`` to accept a plain-text prompt and return
       an :class:`~maki.objects.LLMResponse`.
-    * Optionally override ``stream(prompt)`` to support token streaming.
+    * Optionally override ``chat()``, ``stream()``, and ``chat_collect()``
+      to support multi-turn conversations, token streaming, and
+      streaming-with-collect respectively.
 
     Everything else (URL handling, HTTP sessions, tokenisers, rate limiting,
     …) is backend-specific and lives in the subclass.
@@ -39,7 +41,28 @@ class LLMBackend(ABC):
         """Send *prompt* to the model and return a fully resolved response."""
         ...
 
-    def stream(self, prompt: str) -> Generator[str, None, None]:
+    def chat(
+        self,
+        prompt: str,
+        history: Optional[List[Message]] = None,
+        config: Optional[GenerationConfig] = None,
+        system: Optional[str] = None,
+        images: Optional[List[str]] = None,
+    ) -> LLMResponse:
+        """Single-turn (or multi-turn with explicit *history*) generation.
+
+        The default implementation ignores all kwargs and delegates to
+        ``request(prompt)``.  Backends with native chat APIs override this.
+        """
+        return self.request(prompt)
+
+    def stream(
+        self,
+        prompt: str,
+        history: Optional[List[Message]] = None,
+        config: Optional[GenerationConfig] = None,
+        system: Optional[str] = None,
+    ) -> Generator[str, None, None]:
         """Stream response tokens for *prompt*.
 
         Backends that support streaming must override this method.
@@ -55,3 +78,21 @@ class LLMBackend(ABC):
             f"Backend '{type(self).__name__}' does not support streaming. "
             "Use MakiLLama or another streaming-capable backend instead."
         )
+
+    def chat_collect(
+        self,
+        prompt: str,
+        history: Optional[List[Message]] = None,
+        config: Optional[GenerationConfig] = None,
+        system: Optional[str] = None,
+        images: Optional[List[str]] = None,
+    ) -> LLMResponse:
+        """Like ``chat()`` but uses HTTP streaming internally when possible.
+
+        The per-chunk timeout applies instead of a single read timeout, so
+        long-running generations complete without hitting the global timeout.
+        The default implementation falls back to ``chat()``.  Backends with
+        native streaming (e.g. MakiLLama) override this.
+        """
+        return self.chat(prompt, history=history, config=config,
+                         system=system, images=images)

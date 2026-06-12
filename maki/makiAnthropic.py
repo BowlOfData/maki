@@ -93,8 +93,23 @@ class MakiAnthropic(LLMBackend):
         msgs: list[dict] = []
         if history:
             for m in history:
-                # Anthropic only accepts "user" / "assistant" roles in messages
-                if m.role in ("user", "assistant"):
+                # Anthropic only accepts "user" / "assistant" roles in messages;
+                # system messages live in the top-level system parameter.
+                if m.role not in ("user", "assistant"):
+                    continue
+                if m.images and m.role == "user":
+                    content: list[dict] = [{"type": "text", "text": m.content}]
+                    for b64 in m.images:
+                        content.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": b64,
+                            },
+                        })
+                    msgs.append({"role": m.role, "content": content})
+                else:
                     msgs.append({"role": m.role, "content": m.content})
         if images:
             content: list[dict] = [{"type": "text", "text": prompt}]

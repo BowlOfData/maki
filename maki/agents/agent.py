@@ -61,7 +61,7 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(instructions, str):
             raise ValueError("Instructions must be a string")
 
-        if not (isinstance(maki_instance, LLMBackend) or hasattr(maki_instance, 'request')):
+        if not isinstance(maki_instance, LLMBackend) and not hasattr(maki_instance, 'request'):
             raise TypeError("maki_instance must implement the LLMBackend interface")
 
         self.agent_id = str(uuid.uuid4())
@@ -106,12 +106,6 @@ class Agent(PluginHandler, ReasoningEngine):
             lines.append(f"Response: {turn['result'][:300]}")
         return "\n\nPrior conversation:\n" + "\n".join(lines)
 
-    def _call_llm(self, prompt: str) -> str:
-        """Send a plain prompt to the backend, routing through chat() when available."""
-        if hasattr(self.maki, 'chat'):
-            return self.maki.chat(prompt).content
-        return self.maki.request(prompt).content
-
     def _build_system_message(self) -> str:
         """Return the system message (role + instructions) for this agent."""
         return f"You are {self.name}, a {self.role}. {self.instructions}".strip()
@@ -128,18 +122,6 @@ class Agent(PluginHandler, ReasoningEngine):
         if history_section:
             parts.append(history_section)
         return "\n\n".join(p for p in parts if p)
-
-    def _build_prompt(self, task: str, context: Optional[Dict], use_plugins: bool) -> str:
-        """Legacy completion-style prompt — kept for non-chat backends."""
-        plugin_section = self.build_plugin_prompt_section() if use_plugins and self.plugins else ""
-        return (
-            f"\n        You are {self.name}, a {self.role}.\n"
-            f"        {self.instructions}{self._build_history_section()}\n\n"
-            f"        Task: {task}\n\n"
-            f"        Context: {json.dumps(context) if context else 'None'}"
-            f"{plugin_section}\n\n"
-            f"        Response:\n        "
-        )
 
     def execute_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False) -> str:
         """
@@ -167,16 +149,12 @@ class Agent(PluginHandler, ReasoningEngine):
         try:
             logger.debug(f"Executing task '{task}' for agent '{self.name}'")
             start_time = time.time()
-            if hasattr(self.maki, 'chat'):
-                system_msg = self._build_system_message()
-                user_msg = self._build_user_message(task, context, use_plugins)
-                if self.use_streaming and hasattr(self.maki, 'chat_collect'):
-                    result = self.maki.chat_collect(user_msg, system=system_msg).content
-                else:
-                    result = self.maki.chat(user_msg, system=system_msg).content
+            system_msg = self._build_system_message()
+            user_msg = self._build_user_message(task, context, use_plugins)
+            if self.use_streaming:
+                result = self.maki.chat_collect(user_msg, system=system_msg).content
             else:
-                prompt = self._build_prompt(task, context, use_plugins)
-                result = self.maki.request(prompt).content
+                result = self.maki.chat(user_msg, system=system_msg).content
             if result is None:
                 raise MakiAPIError(f"Backend returned None content for task '{task}'")
 
@@ -275,13 +253,9 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
-        if hasattr(self.maki, 'chat'):
-            system_msg = self._build_system_message()
-            user_msg = self._build_user_message(task, context, use_plugins)
-            stream_kwargs = {"system": system_msg}
-        else:
-            user_msg = self._build_prompt(task, context, use_plugins)
-            stream_kwargs = {}
+        system_msg = self._build_system_message()
+        user_msg = self._build_user_message(task, context, use_plugins)
+        stream_kwargs = {"system": system_msg}
 
         try:
             raw_stream = self.maki.stream(user_msg, **stream_kwargs)

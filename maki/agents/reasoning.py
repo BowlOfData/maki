@@ -87,6 +87,10 @@ class ReasoningEngine:
         _checked._reasoning_contract_checked = True
         cls.__init__ = _checked
 
+    def _call_llm(self, prompt: str) -> str:
+        """Send a plain prompt to the backend and return the response text."""
+        return self.maki.chat(prompt).content
+
     def _init_reasoning(self) -> None:
         """
         Validate the ReasoningEngine mixin contract.
