@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Optional-dependency extras: `gui`, `ftp`, `web`, `trends`, `alpaca`, `distributed-redis`, `all`
 
 ### Changed
+- **Breaking / security**: plugin tool calls are now **fail-closed** — a plugin exposes only the methods named in its class-level `ALLOWED_METHODS`; a plugin without one exposes nothing to `TOOL:` directives (a warning is logged at load time). Destructive methods listed in a plugin's `DANGEROUS_METHODS` (file writes, FTP uploads/downloads/deletes, trade submission/cancellation) additionally require `Agent(allow_dangerous_tools=True)`
+- `file_reader`, `file_writer`, `directory_reader`, `ftp_client`, and `web_to_md` now declare `ALLOWED_METHODS`; `file_writer`, `ftp_client`, and `alpaca_trading` mark their destructive methods in `DANGEROUS_METHODS`
 - **Packaging**: `pyproject.toml` is the single manifest — `setup.py` and `requirements.txt` removed; version bumped to 0.2.0
 - **Breaking**: `PySide6` and `paramiko` are no longer core dependencies — install `maki[gui]` / `maki[ftp]`; core install is just `requests`, `httpx`, `python-dotenv`
 - `requires-python` raised to `>=3.10` (the code already used 3.9+/3.10+ syntax); CI matrix now 3.10–3.13
@@ -27,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `Utils.cleanup_response` kept no reference to the scheduled `aclose()` task, so the cleanup could be garbage-collected before running
 - `PluginHandler.load_plugin` fell through to calling a module object (always `TypeError`); now raises a clear `MakiValidationError` naming the plugin
 - `ChatSession` streaming lost both turns of history when the consumer abandoned the stream mid-way
+- Ten plugins (`trend_search`, `web_search`, `provider_updates`, `media_search`, `rag_memory`, `obsidian_memory`, and the four `alpaca_*` plugins) declared `ALLOWED_METHODS` only at module level, where tool-call validation (which reads the plugin instance) never saw it — their whitelists were silently ineffective. The lists are now mirrored onto the plugin classes
 
 ### Removed
 - Stale root-level files: `local_llm.py`, `local_llm_v2.py`, `orchestrator.py`, `review.md`, `examples/demo_implementation.py` (all referenced the deleted `Maki` class or were pre-package copies)
