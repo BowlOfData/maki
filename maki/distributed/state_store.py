@@ -15,6 +15,7 @@ Both stores are thread-safe for concurrent task saves within a single workflow.
 RedisStateStore's update_task() is not atomic (load→modify→save), so concurrent
 callers for the *same* workflow_id should use an external lock.
 """
+import hashlib
 import json
 import logging
 import os
@@ -32,12 +33,41 @@ _SAFE_ID = re.compile(r"[^a-zA-Z0-9_\-.]")
 
 
 def _sanitize(workflow_id: str) -> str:
-    """Replace unsafe characters so the ID can be used as a filename or key."""
+    """Replace unsafe characters so the ID can be used as a filename or key.
+
+    When any character is replaced, a short hash of the original ID is
+    appended so distinct IDs that sanitize to the same string (e.g. ``a/b``
+    and ``a_b``) cannot collide on one file/key.
+    """
     result = _SAFE_ID.sub("_", workflow_id)
     # Replace ".." sequences (path traversal defence) until none remain.
     while ".." in result:
         result = result.replace("..", "_")
+    if result != workflow_id:
+        digest = hashlib.sha256(workflow_id.encode("utf-8")).hexdigest()[:8]
+        result = f"{result}-{digest}"
     return result
+
+
+def _atomic_write_json(path: str, data: dict) -> None:
+    """Write *data* as JSON to *path* atomically (temp file + os.replace).
+
+    A crash mid-write leaves the previous file intact instead of a torn
+    checkpoint.
+    """
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 class StateStore(ABC):
@@ -93,8 +123,7 @@ class LocalStateStore(StateStore):
     def save_workflow(self, state: WorkflowState) -> None:
         path = self._path(state.workflow_id)
         with self._lock:
-            with open(path, "w") as f:
-                json.dump(state.to_dict(), f, indent=2)
+            _atomic_write_json(path, state.to_dict())
         logger.debug("Saved workflow '%s' to %s", state.workflow_id, path)
 
     def load_workflow(self, workflow_id: str) -> Optional[WorkflowState]:
@@ -116,8 +145,7 @@ class LocalStateStore(StateStore):
             entry = dict(data.get("tasks", {}).get(task_name, {}))
             entry.update(update)
             data.setdefault("tasks", {})[task_name] = entry
-            with open(path, "w") as f:
-                json.dump(data, f, indent=2)
+            _atomic_write_json(path, data)
 
     def list_workflows(self) -> List[str]:
         with self._lock:

@@ -55,14 +55,29 @@ class TestSanitize(unittest.TestCase):
         self.assertEqual(_sanitize("my_workflow.v2"), "my_workflow.v2")
 
     def test_slash_replaced(self):
-        self.assertEqual(_sanitize("a/b"), "a_b")
+        # Sanitized IDs get a hash suffix so "a/b" can't collide with "a_b".
+        self.assertTrue(_sanitize("a/b").startswith("a_b-"))
 
     def test_dotdot_replaced(self):
         # ../../etc → .._.._etc (slashes replaced) → ____etc (dots replaced)
-        self.assertEqual(_sanitize("../../etc"), "____etc")
+        self.assertTrue(_sanitize("../../etc").startswith("____etc-"))
 
     def test_spaces_replaced(self):
-        self.assertEqual(_sanitize("my workflow"), "my_workflow")
+        self.assertTrue(_sanitize("my workflow").startswith("my_workflow-"))
+
+    def test_sanitized_output_is_safe(self):
+        for unsafe in ("a/b", "../../etc", "my workflow", "x\x00y"):
+            result = _sanitize(unsafe)
+            self.assertNotIn("..", result)
+            self.assertRegex(result, r"^[a-zA-Z0-9_\-.]+$")
+
+    def test_distinct_ids_do_not_collide(self):
+        self.assertNotEqual(_sanitize("a/b"), _sanitize("a_b"))
+        self.assertNotEqual(_sanitize("a/b"), _sanitize("a.b"))
+        self.assertNotEqual(_sanitize("a/b"), _sanitize("a b"))
+
+    def test_sanitize_is_deterministic(self):
+        self.assertEqual(_sanitize("a/b"), _sanitize("a/b"))
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +176,90 @@ class TestLocalStateStore(unittest.TestCase):
         self.assertTrue(any(f.endswith(".json") for f in files))
         for f in files:
             self.assertNotIn("..", f)
+
+    def test_colliding_ids_map_to_distinct_files(self):
+        slash = WorkflowState("a/b")
+        slash.update_task_status("t1", TaskStatus.COMPLETED, result="slash")
+        underscore = WorkflowState("a_b")
+        underscore.update_task_status("t1", TaskStatus.COMPLETED,
+                                      result="underscore")
+        self.store.save_workflow(slash)
+        self.store.save_workflow(underscore)
+
+        files = [f for f in os.listdir(self._tmpdir) if f.endswith(".json")]
+        self.assertEqual(len(files), 2)
+        self.assertEqual(
+            self.store.load_workflow("a/b").tasks["t1"]["result"], "slash")
+        self.assertEqual(
+            self.store.load_workflow("a_b").tasks["t1"]["result"], "underscore")
+
+
+# ---------------------------------------------------------------------------
+# LocalStateStore — crash-safe (atomic) checkpoint writes
+# ---------------------------------------------------------------------------
+
+class TestAtomicCheckpointWrites(unittest.TestCase):
+
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.store = LocalStateStore(base_dir=self._tmpdir)
+
+    def _saved_state(self):
+        state = WorkflowState("wf-atomic")
+        state.update_task_status("t1", TaskStatus.COMPLETED, result="done")
+        self.store.save_workflow(state)
+        return state
+
+    def test_crash_before_rename_preserves_previous_checkpoint(self):
+        self._saved_state()
+        replacement = WorkflowState("wf-atomic")
+        replacement.update_task_status("t1", TaskStatus.FAILED, result="boom")
+        # Simulate a crash between writing the temp file and renaming it.
+        with patch("maki.distributed.state_store.os.replace",
+                   side_effect=OSError("simulated crash")):
+            with self.assertRaises(OSError):
+                self.store.save_workflow(replacement)
+
+        restored = self.store.load_workflow("wf-atomic")
+        self.assertEqual(restored.tasks["t1"]["status"], TaskStatus.COMPLETED)
+        self.assertEqual(restored.tasks["t1"]["result"], "done")
+
+    def test_torn_temp_write_preserves_previous_checkpoint(self):
+        self._saved_state()
+
+        def torn_dump(data, f, **kwargs):
+            f.write('{"workflow_id": "wf-atomic", "tas')  # truncated JSON
+            raise TypeError("simulated mid-write failure")
+
+        with patch("maki.distributed.state_store.json.dump",
+                   side_effect=torn_dump):
+            with self.assertRaises(TypeError):
+                self.store.save_workflow(WorkflowState("wf-atomic"))
+
+        restored = self.store.load_workflow("wf-atomic")
+        self.assertEqual(restored.tasks["t1"]["result"], "done")
+
+    def test_failed_write_leaves_no_temp_file(self):
+        with patch("maki.distributed.state_store.os.replace",
+                   side_effect=OSError("simulated crash")):
+            with self.assertRaises(OSError):
+                self._saved_state()
+        leftovers = [f for f in os.listdir(self._tmpdir) if f.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
+
+    def test_successful_save_leaves_no_temp_file(self):
+        self._saved_state()
+        leftovers = [f for f in os.listdir(self._tmpdir) if f.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
+
+    def test_update_task_is_atomic(self):
+        self._saved_state()
+        with patch("maki.distributed.state_store.os.replace",
+                   side_effect=OSError("simulated crash")):
+            with self.assertRaises(OSError):
+                self.store.update_task("wf-atomic", "t1", {"result": "patched"})
+        restored = self.store.load_workflow("wf-atomic")
+        self.assertEqual(restored.tasks["t1"]["result"], "done")
 
 
 # ---------------------------------------------------------------------------

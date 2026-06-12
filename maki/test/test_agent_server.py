@@ -89,25 +89,55 @@ class TestExecute(unittest.TestCase):
         r = client.post("/execute", json={})
         self.assertEqual(r.status_code, 422)
 
+    @staticmethod
+    def _client_with_error(exc):
+        backend = _mock_backend()
+        backend.chat.side_effect = exc
+        agent = Agent("err-agent", backend)
+        app = create_app(agent)
+        return TestClient(app, raise_server_exceptions=False)
+
     def test_execute_network_error_is_502(self):
         from maki.exceptions import MakiNetworkError
-        backend = _mock_backend()
-        backend.chat.side_effect = MakiNetworkError("connection refused")
-        agent = Agent("err-agent", backend)
-        app = create_app(agent)
-        client = TestClient(app, raise_server_exceptions=False)
+        client = self._client_with_error(MakiNetworkError("connection refused to http://10.0.0.5:11434"))
         r = client.post("/execute", json={"task": "do something"})
         self.assertEqual(r.status_code, 502)
+        # §2.4: internal details (URLs/paths) must not reach remote callers.
+        self.assertNotIn("10.0.0.5", r.json()["detail"])
 
-    def test_execute_api_error_is_400(self):
+    def test_execute_timeout_is_504(self):
+        from maki.exceptions import MakiTimeoutError
+        client = self._client_with_error(MakiTimeoutError("timed out after 180s"))
+        r = client.post("/execute", json={"task": "do something"})
+        self.assertEqual(r.status_code, 504)
+
+    def test_execute_api_error_is_400_with_generic_body(self):
         from maki.exceptions import MakiAPIError
-        backend = _mock_backend()
-        backend.chat.side_effect = MakiAPIError("bad request")
-        agent = Agent("err-agent", backend)
-        app = create_app(agent)
-        client = TestClient(app, raise_server_exceptions=False)
+        client = self._client_with_error(MakiAPIError("upstream said no: http://internal:11434/api"))
         r = client.post("/execute", json={"task": "do something"})
         self.assertEqual(r.status_code, 400)
+        self.assertNotIn("internal", r.json()["detail"])
+
+    def test_execute_validation_error_is_400_with_message(self):
+        from maki.exceptions import MakiValidationError
+        client = self._client_with_error(MakiValidationError("task too long"))
+        r = client.post("/execute", json={"task": "do something"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("task too long", r.json()["detail"])
+
+    def test_execute_value_error_is_400(self):
+        # §2.4 regression: a raw ValueError from the agent used to escape as
+        # an unhandled 500.
+        client = self._client_with_error(ValueError("bad task input"))
+        r = client.post("/execute", json={"task": "do something"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("bad task input", r.json()["detail"])
+
+    def test_execute_unexpected_error_is_500_generic(self):
+        client = self._client_with_error(RuntimeError("secret /etc/internal/path"))
+        r = client.post("/execute", json={"task": "do something"})
+        self.assertEqual(r.status_code, 500)
+        self.assertNotIn("/etc/internal/path", r.json()["detail"])
 
     def test_execute_updates_task_history(self):
         client, agent = _make_client()
@@ -120,7 +150,7 @@ class TestStream(unittest.TestCase):
 
     def test_stream_returns_sse(self):
         client, _ = _make_client()
-        with client.stream("GET", "/stream", params={"task": "tell me a story"}) as r:
+        with client.stream("POST", "/stream", json={"task": "tell me a story"}) as r:
             self.assertEqual(r.status_code, 200)
             self.assertIn("text/event-stream", r.headers["content-type"])
             body = r.read().decode()
@@ -130,12 +160,28 @@ class TestStream(unittest.TestCase):
 
     def test_stream_sse_format(self):
         client, _ = _make_client()
-        with client.stream("GET", "/stream", params={"task": "go"}) as r:
+        with client.stream("POST", "/stream", json={"task": "go"}) as r:
             lines = r.read().decode().strip().splitlines()
         data_lines = [l for l in lines if l.startswith("data: ")]
         self.assertTrue(len(data_lines) >= 2)
         first_event = json.loads(data_lines[0][len("data: "):])
         self.assertIn("chunk", first_event)
+
+    def test_stream_get_is_gone(self):
+        # §2.5: /stream is POST-only so task text stays out of access logs.
+        client, _ = _make_client()
+        r = client.get("/stream", params={"task": "go"})
+        self.assertEqual(r.status_code, 405)
+
+    def test_stream_empty_task_is_422(self):
+        client, _ = _make_client()
+        r = client.post("/stream", json={"task": ""})
+        self.assertEqual(r.status_code, 422)
+
+    def test_stream_requires_auth(self):
+        client, _ = _make_client(api_key="tok")
+        r = client.post("/stream", json={"task": "go"})
+        self.assertEqual(r.status_code, 401)
 
 
 class TestMemory(unittest.TestCase):
@@ -213,18 +259,26 @@ class TestAuth(unittest.TestCase):
 
     def test_correct_key_accepted(self):
         client, _ = _make_client(api_key="secret123")
-        r = client.get("/health", headers={"Authorization": "Bearer secret123"})
+        r = client.get("/info", headers={"Authorization": "Bearer secret123"})
         self.assertEqual(r.status_code, 200)
 
     def test_wrong_key_rejected(self):
         client, _ = _make_client(api_key="secret123")
-        r = client.get("/health", headers={"Authorization": "Bearer wrongkey"})
+        r = client.get("/info", headers={"Authorization": "Bearer wrongkey"})
         self.assertEqual(r.status_code, 401)
 
     def test_missing_key_rejected(self):
         client, _ = _make_client(api_key="secret123")
-        r = client.get("/health")
+        r = client.get("/info")
         self.assertEqual(r.status_code, 401)
+
+    def test_health_is_unauthenticated(self):
+        # §5: /health must stay open for load-balancer/k8s probes even
+        # when an API key is configured.
+        client, _ = _make_client(api_key="secret123")
+        r = client.get("/health")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "ok")
 
     def test_auth_applies_to_execute(self):
         client, _ = _make_client(api_key="tok")
@@ -249,10 +303,10 @@ class TestAuth(unittest.TestCase):
         app_b = create_app(agent_b, api_key="key-b")
         ca = TestClient(app_a, raise_server_exceptions=False)
         cb = TestClient(app_b, raise_server_exceptions=False)
-        self.assertEqual(ca.get("/health", headers={"Authorization": "Bearer key-a"}).status_code, 200)
-        self.assertEqual(ca.get("/health", headers={"Authorization": "Bearer key-b"}).status_code, 401)
-        self.assertEqual(cb.get("/health", headers={"Authorization": "Bearer key-b"}).status_code, 200)
-        self.assertEqual(cb.get("/health", headers={"Authorization": "Bearer key-a"}).status_code, 401)
+        self.assertEqual(ca.get("/info", headers={"Authorization": "Bearer key-a"}).status_code, 200)
+        self.assertEqual(ca.get("/info", headers={"Authorization": "Bearer key-b"}).status_code, 401)
+        self.assertEqual(cb.get("/info", headers={"Authorization": "Bearer key-b"}).status_code, 200)
+        self.assertEqual(cb.get("/info", headers={"Authorization": "Bearer key-a"}).status_code, 401)
 
 
 if __name__ == "__main__":

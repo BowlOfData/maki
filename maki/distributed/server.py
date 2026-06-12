@@ -7,9 +7,11 @@ Install optional dependencies before use:
 Endpoints
 ---------
 GET  /health              Liveness check; returns agent_id, name, role.
+                          Always unauthenticated (load-balancer/k8s probes).
 GET  /info                Agent metadata: plugins, backend class, model.
 POST /execute             Run a task; returns result + elapsed time.
-GET  /stream              SSE token stream for a task (query param: task).
+POST /stream              SSE token stream for a task (same body as /execute;
+                          POST keeps task text out of access logs, §2.5).
 POST /memory/set          Store a key/value in agent memory.
 GET  /memory/{key}        Retrieve a memory value.
 DELETE /memory/{key}      Remove a memory key.
@@ -18,7 +20,8 @@ DELETE /history           Clear conversation and task history.
 
 Authentication
 --------------
-If create_app() receives a non-None api_key, every request must carry:
+If create_app() receives a non-None api_key, every request except GET /health
+must carry:
     Authorization: Bearer <api_key>
 Omit api_key to run in open/trusted-network mode.
 """
@@ -36,12 +39,19 @@ except ImportError as _e:
 
 import json
 import logging
+import secrets
 import time
 import uuid
 from typing import Any, Optional
 
 from ..agents.agent import Agent
-from ..exceptions import MakiAPIError, MakiError, MakiNetworkError, MakiTimeoutError
+from ..exceptions import (
+    MakiAPIError,
+    MakiError,
+    MakiNetworkError,
+    MakiTimeoutError,
+    MakiValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,15 +112,19 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
         key: Optional[str] = request.app.state.api_key
         if key is None:
             return
-        if credentials is None or credentials.credentials != key:
+        if credentials is None or not secrets.compare_digest(
+            credentials.credentials.encode("utf-8"), key.encode("utf-8")
+        ):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     # ------------------------------------------------------------------
     # Health / info
     # ------------------------------------------------------------------
 
+    # /health is deliberately unauthenticated: load-balancer and k8s probes
+    # cannot send credentials, and the body contains no sensitive data.
     @app.get("/health")
-    def health(request: Request, _: None = Depends(_auth)):
+    def health(request: Request):
         ag: Agent = request.app.state.agent
         return {
             "status": "ok",
@@ -141,14 +155,29 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
         trace_id: str = getattr(request.state, "trace_id", str(uuid.uuid4()))
         t0 = time.time()
         logger.debug("[trace=%s] executing task for agent '%s'", trace_id, ag.name)
+        # Client input errors echo the validation message (it describes the
+        # caller's own request); everything else returns a generic body and
+        # is logged in full server-side only, so internal URLs/paths never
+        # reach remote callers.
         try:
             result = ag.execute_task(req.task, req.context, req.use_plugins)
-        except (MakiNetworkError, MakiTimeoutError) as e:
-            raise HTTPException(status_code=502, detail=str(e))
-        except MakiAPIError as e:
+        except (MakiValidationError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except MakiError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        except MakiTimeoutError as e:
+            logger.error("[trace=%s] backend timeout: %s", trace_id, e)
+            raise HTTPException(status_code=504, detail="Agent backend timed out")
+        except MakiNetworkError as e:
+            logger.error("[trace=%s] backend unreachable: %s", trace_id, e)
+            raise HTTPException(status_code=502, detail="Agent backend unavailable")
+        except MakiAPIError as e:
+            logger.error("[trace=%s] backend API error: %s", trace_id, e)
+            raise HTTPException(status_code=400, detail="Agent backend rejected the request")
+        except MakiError:
+            logger.exception("[trace=%s] agent error", trace_id)
+            raise HTTPException(status_code=500, detail="Internal agent error")
+        except Exception:
+            logger.exception("[trace=%s] unexpected error", trace_id)
+            raise HTTPException(status_code=500, detail="Internal server error")
         elapsed = round(time.time() - t0, 3)
         logger.debug("[trace=%s] task completed in %.3fs", trace_id, elapsed)
         return {
@@ -158,16 +187,17 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
             "trace_id": trace_id,
         }
 
-    @app.get("/stream")
-    def stream(task: str, request: Request, use_plugins: bool = False, _: None = Depends(_auth)):
+    @app.post("/stream")
+    def stream(req: ExecuteRequest, request: Request, _: None = Depends(_auth)):
         ag: Agent = request.app.state.agent
 
         def _sse():
             try:
-                for chunk in ag.stream_task(task, use_plugins=use_plugins):
+                for chunk in ag.stream_task(req.task, req.context, use_plugins=req.use_plugins):
                     yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-            except Exception as exc:
-                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            except Exception:
+                logger.exception("stream failed for agent '%s'", ag.name)
+                yield f"data: {json.dumps({'error': 'stream failed; see server logs'})}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_sse(), media_type="text/event-stream")
