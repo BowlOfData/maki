@@ -150,7 +150,7 @@ class TestStream(unittest.TestCase):
 
     def test_stream_returns_sse(self):
         client, _ = _make_client()
-        with client.stream("GET", "/stream", params={"task": "tell me a story"}) as r:
+        with client.stream("POST", "/stream", json={"task": "tell me a story"}) as r:
             self.assertEqual(r.status_code, 200)
             self.assertIn("text/event-stream", r.headers["content-type"])
             body = r.read().decode()
@@ -160,12 +160,28 @@ class TestStream(unittest.TestCase):
 
     def test_stream_sse_format(self):
         client, _ = _make_client()
-        with client.stream("GET", "/stream", params={"task": "go"}) as r:
+        with client.stream("POST", "/stream", json={"task": "go"}) as r:
             lines = r.read().decode().strip().splitlines()
         data_lines = [l for l in lines if l.startswith("data: ")]
         self.assertTrue(len(data_lines) >= 2)
         first_event = json.loads(data_lines[0][len("data: "):])
         self.assertIn("chunk", first_event)
+
+    def test_stream_get_is_gone(self):
+        # §2.5: /stream is POST-only so task text stays out of access logs.
+        client, _ = _make_client()
+        r = client.get("/stream", params={"task": "go"})
+        self.assertEqual(r.status_code, 405)
+
+    def test_stream_empty_task_is_422(self):
+        client, _ = _make_client()
+        r = client.post("/stream", json={"task": ""})
+        self.assertEqual(r.status_code, 422)
+
+    def test_stream_requires_auth(self):
+        client, _ = _make_client(api_key="tok")
+        r = client.post("/stream", json={"task": "go"})
+        self.assertEqual(r.status_code, 401)
 
 
 class TestMemory(unittest.TestCase):

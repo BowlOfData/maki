@@ -296,6 +296,39 @@ class TestAgentProxyStream(unittest.TestCase):
         result = list(proxy.stream_task("go"))
         self.assertEqual(result, ["hello", " world"])
 
+    def test_stream_uses_post_and_forwards_context(self):
+        """§2.5: streaming is POST (task text stays out of access logs) and
+        the context argument — previously dropped by the GET query params —
+        rides along in the body."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.is_success = True
+        mock_response.iter_lines.return_value = iter(["data: [DONE]"])
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_response
+        mock_cm.__exit__.return_value = False
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = MagicMock(
+            status_code=200, is_success=True,
+            json=lambda: {
+                "agent_id": "x", "name": "t", "role": "", "plugins": [],
+                "backend": "Mock", "model": "t",
+            },
+        )
+        mock_client.stream.return_value = mock_cm
+        with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+            proxy = AgentProxy(endpoint="http://fake:8100")
+
+        list(proxy.stream_task("go", context={"key": "value"}))
+        args, kwargs = mock_client.stream.call_args
+        self.assertEqual(args[0], "POST")
+        self.assertEqual(
+            kwargs["json"],
+            {"task": "go", "use_plugins": False, "context": {"key": "value"}},
+        )
+
     def test_stream_error_status_maps_to_maki_error_and_records_failure(self):
         """Regression §1.3: a non-2xx streaming response raised
         httpx.ResponseNotRead (reading .text on an unread stream) instead of

@@ -10,7 +10,8 @@ GET  /health              Liveness check; returns agent_id, name, role.
                           Always unauthenticated (load-balancer/k8s probes).
 GET  /info                Agent metadata: plugins, backend class, model.
 POST /execute             Run a task; returns result + elapsed time.
-GET  /stream              SSE token stream for a task (query param: task).
+POST /stream              SSE token stream for a task (same body as /execute;
+                          POST keeps task text out of access logs, §2.5).
 POST /memory/set          Store a key/value in agent memory.
 GET  /memory/{key}        Retrieve a memory value.
 DELETE /memory/{key}      Remove a memory key.
@@ -186,13 +187,13 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
             "trace_id": trace_id,
         }
 
-    @app.get("/stream")
-    def stream(task: str, request: Request, use_plugins: bool = False, _: None = Depends(_auth)):
+    @app.post("/stream")
+    def stream(req: ExecuteRequest, request: Request, _: None = Depends(_auth)):
         ag: Agent = request.app.state.agent
 
         def _sse():
             try:
-                for chunk in ag.stream_task(task, use_plugins=use_plugins):
+                for chunk in ag.stream_task(req.task, req.context, use_plugins=req.use_plugins):
                     yield f"data: {json.dumps({'chunk': chunk})}\n\n"
             except Exception:
                 logger.exception("stream failed for agent '%s'", ag.name)

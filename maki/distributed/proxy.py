@@ -269,11 +269,13 @@ class AgentProxy:
         use_plugins: bool,
         trace_id: str,
     ) -> Generator[str, None, None]:
-        params: dict = {"task": task, "use_plugins": use_plugins}
+        payload: dict = {"task": task, "use_plugins": use_plugins}
+        if context:
+            payload["context"] = context
         headers = self._headers(trace_id)
         try:
             with self._session.stream(
-                "GET", self._url("/stream"), params=params, headers=headers,
+                "POST", self._url("/stream"), json=payload, headers=headers,
             ) as response:
                 if not response.is_success:
                     # A streaming body must be read before .text is available;
