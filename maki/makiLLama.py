@@ -375,6 +375,8 @@ class MakiLLama(LLMBackend):
     ) -> LLMResponse:
         """Async variant of chat() for use inside asyncio event loops. Supports vision via images."""
         log.debug("async_chat: %s", prompt[:100])
+        if self._rate_limiter:
+            await self._rate_limiter.async_acquire()
         payload = self._build_payload(prompt, history, config, stream=False, images=images, system=system)
         t0 = time.perf_counter()
         r = await self._async_http.post(f"{self.base_url}/api/chat", json=payload)

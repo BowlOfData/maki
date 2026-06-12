@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -217,3 +218,19 @@ class RateLimiter:
                     return
                 wait = (1.0 - self._tokens) / self._refill_rate
             _time.sleep(wait)
+
+    async def async_acquire(self) -> None:
+        """Async variant: yields control to the event loop instead of blocking."""
+        while True:
+            with self._lock:
+                now = _time.monotonic()
+                self._tokens = min(
+                    self._capacity,
+                    self._tokens + (now - self._last_refill) * self._refill_rate,
+                )
+                self._last_refill = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                wait = (1.0 - self._tokens) / self._refill_rate
+            await asyncio.sleep(wait)
