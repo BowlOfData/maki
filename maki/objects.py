@@ -234,3 +234,18 @@ class RateLimiter:
                     return
                 wait = (1.0 - self._tokens) / self._refill_rate
             await asyncio.sleep(wait)
+
+
+@dataclass
+class ToolCall:
+    """One native tool-call request emitted by the model.
+
+    ``id`` carries the per-call identifier used by OpenAI and Anthropic to
+    correlate results; it is an empty string for Ollama which has none.
+    ``name`` uses the ``"plugin__method"`` convention (double-underscore
+    separator) so plugin names that themselves contain underscores remain
+    unambiguous.
+    """
+    id: str
+    name: str
+    args: dict

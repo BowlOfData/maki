@@ -156,17 +156,22 @@ class Agent(PluginHandler, ReasoningEngine):
                 logger.debug(f"Executing task '{task}' for agent '{self.name}'")
                 start_time = time.time()
                 system_msg = self._build_system_message()
-                user_msg = self._build_user_message(task, context, use_plugins)
-                if self.use_streaming:
-                    result = self.maki.chat_collect(user_msg, system=system_msg).content
-                else:
-                    result = self.maki.chat(user_msg, system=system_msg).content
-                if result is None:
-                    raise MakiAPIError(f"Backend returned None content for task '{task}'")
 
-                # Execute any TOOL: directives the LLM emitted
-                if use_plugins and self.plugins:
-                    result = self.handle_plugin_calls(result, task, context)
+                if use_plugins and self.plugins and getattr(self.maki, "supports_native_tools", False) is True:
+                    # Native tool-calling path: backend drives structured tool calls.
+                    result = self.execute_with_native_tools(task, context, system_msg)
+                else:
+                    user_msg = self._build_user_message(task, context, use_plugins)
+                    if self.use_streaming:
+                        result = self.maki.chat_collect(user_msg, system=system_msg).content
+                    else:
+                        result = self.maki.chat(user_msg, system=system_msg).content
+                    if result is None:
+                        raise MakiAPIError(f"Backend returned None content for task '{task}'")
+
+                    # Legacy TOOL: directive path for non-native backends.
+                    if use_plugins and self.plugins:
+                        result = self.handle_plugin_calls(result, task, context)
 
                 execution_time = time.time() - start_time
                 logger.debug(f"Task '{task}' completed in {execution_time:.2f}s for agent '{self.name}'")

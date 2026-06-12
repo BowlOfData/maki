@@ -20,7 +20,7 @@ from .config import (
     OPENAI_API_KEY_ENV,
 )
 from .exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
-from .objects import BackendType, GenerationConfig, LLMResponse, Message, RateLimiter
+from .objects import BackendType, GenerationConfig, LLMResponse, Message, RateLimiter, ToolCall
 from .session import ChatSession
 
 try:
@@ -35,6 +35,8 @@ class MakiOpenAI(LLMBackend):
     """
     OpenAI API backend (chat completions).
 
+    Supports native tool calling via the OpenAI function-calling API.
+
     Usage
     -----
         llm = MakiOpenAI(model="gpt-4o-mini")
@@ -47,6 +49,7 @@ class MakiOpenAI(LLMBackend):
         session = llm.session(system="You are a senior Python engineer.")
         session.say("Explain list comprehensions.")
     """
+    supports_native_tools: bool = True
 
     def __init__(
         self,
@@ -246,6 +249,114 @@ class MakiOpenAI(LLMBackend):
 
     def __repr__(self) -> str:
         return f"MakiOpenAI(model={self.model!r})"
+
+    # ------------------------------------------------------------------
+    # Native tool-calling (OpenAI function-calling API)
+    # ------------------------------------------------------------------
+
+    def to_tool_schemas(self, tool_specs: list) -> list:
+        """Translate backend-agnostic specs to OpenAI tool format."""
+        schemas = []
+        for spec in tool_specs:
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": spec["name"],
+                    "description": spec["description"],
+                    "parameters": spec["parameters"],
+                },
+            })
+        return schemas
+
+    def chat_with_tools(
+        self,
+        messages: list,
+        tools: list,
+        *,
+        system: Optional[str] = None,
+        config: Optional[GenerationConfig] = None,
+    ):
+        """One round of OpenAI native tool-calling.
+
+        Returns ``(LLMResponse, None, messages)`` on a text answer, or
+        ``(None, [ToolCall, ...], messages)`` when tool calls are requested.
+        """
+        import json as _json
+        import time as _t
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
+        cfg = config or self.config
+
+        effective_system = system if system is not None else self.system_prompt
+        full_messages = []
+        if effective_system:
+            full_messages.append({"role": "system", "content": effective_system})
+        full_messages.extend(messages)
+
+        kwargs = cfg.to_openai_kwargs(model_family=self._model_family)
+        if tools:
+            kwargs["tools"] = tools
+
+        t0 = _t.perf_counter()
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=full_messages,
+                **kwargs,
+            )
+        except _openai_sdk.APITimeoutError as e:
+            raise MakiTimeoutError(f"chat_with_tools() timed out: {e}") from e
+        except _openai_sdk.APIConnectionError as e:
+            raise MakiNetworkError(f"chat_with_tools() connection failed: {e}") from e
+        except _openai_sdk.APIStatusError as e:
+            raise MakiAPIError(f"chat_with_tools() HTTP error {e.status_code}: {e}") from e
+        elapsed = _t.perf_counter() - t0
+
+        choice = response.choices[0]
+        msg = choice.message
+
+        # Reconstruct a serializable assistant turn.
+        assistant_entry: dict = {"role": "assistant", "content": msg.content or ""}
+        raw_tool_calls = msg.tool_calls
+        if raw_tool_calls:
+            assistant_entry["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in raw_tool_calls
+            ]
+        updated = list(messages) + [assistant_entry]
+
+        if raw_tool_calls and choice.finish_reason == "tool_calls":
+            tool_calls = []
+            for tc in raw_tool_calls:
+                try:
+                    args = _json.loads(tc.function.arguments)
+                except _json.JSONDecodeError:
+                    args = {}
+                tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, args=args))
+            log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
+            return None, tool_calls, updated
+
+        result = self._parse_response(response, elapsed)
+        log.info("chat_with_tools (text): %.2fs, %d tokens", elapsed, result.total_tokens)
+        return result, None, updated
+
+    def append_tool_results(self, messages: list, results: list) -> list:
+        """Append OpenAI-format tool result messages (one per call)."""
+        updated = list(messages)
+        for tc, result_str in results:
+            updated.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result_str,
+            })
+        return updated
 
 
 # ---------------------------------------------------------------------------

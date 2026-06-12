@@ -20,7 +20,7 @@ from .config import (
     DEFAULT_REQUEST_TIMEOUT,
 )
 from .exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
-from .objects import BackendType, GenerationConfig, LLMResponse, Message, RateLimiter
+from .objects import BackendType, GenerationConfig, LLMResponse, Message, RateLimiter, ToolCall
 from .session import ChatSession
 
 try:
@@ -34,6 +34,8 @@ log = logging.getLogger(__name__)
 class MakiAnthropic(LLMBackend):
     """
     Anthropic API backend (Messages API).
+
+    Supports native tool calling via the Anthropic tool-use API.
 
     Usage
     -----
@@ -50,6 +52,7 @@ class MakiAnthropic(LLMBackend):
     Note: the Anthropic API accepts system prompts as a top-level parameter,
     not as a message in the messages list.
     """
+    supports_native_tools: bool = True
 
     def __init__(
         self,
@@ -265,6 +268,101 @@ class MakiAnthropic(LLMBackend):
 
     def __repr__(self) -> str:
         return f"MakiAnthropic(model={self.model!r})"
+
+    # ------------------------------------------------------------------
+    # Native tool-calling (Anthropic tool-use API)
+    # ------------------------------------------------------------------
+
+    def to_tool_schemas(self, tool_specs: list) -> list:
+        """Translate backend-agnostic specs to Anthropic tool format."""
+        schemas = []
+        for spec in tool_specs:
+            schemas.append({
+                "name": spec["name"],
+                "description": spec["description"],
+                "input_schema": spec["parameters"],
+            })
+        return schemas
+
+    def chat_with_tools(
+        self,
+        messages: list,
+        tools: list,
+        *,
+        system: Optional[str] = None,
+        config: Optional[GenerationConfig] = None,
+    ):
+        """One round of Anthropic native tool-calling.
+
+        Returns ``(LLMResponse, None, messages)`` on a text answer, or
+        ``(None, [ToolCall, ...], messages)`` when tool calls are requested.
+        """
+        import time as _t
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
+        cfg = config or self.config
+        kwargs = cfg.to_anthropic_kwargs()
+        effective_system = self._effective_system(system)
+        if effective_system:
+            kwargs["system"] = effective_system
+        if tools:
+            kwargs["tools"] = tools
+
+        t0 = _t.perf_counter()
+        try:
+            response = self._client.messages.create(
+                model=self.model,
+                messages=messages,
+                **kwargs,
+            )
+        except _anthropic_sdk.APITimeoutError as e:
+            raise MakiTimeoutError(f"chat_with_tools() timed out: {e}") from e
+        except _anthropic_sdk.APIConnectionError as e:
+            raise MakiNetworkError(f"chat_with_tools() connection failed: {e}") from e
+        except _anthropic_sdk.APIStatusError as e:
+            raise MakiAPIError(f"chat_with_tools() HTTP error {e.status_code}: {e}") from e
+        elapsed = _t.perf_counter() - t0
+
+        # Build a serializable assistant content block list.
+        content_blocks = []
+        tool_use_blocks = []
+        for block in response.content:
+            if block.type == "text":
+                content_blocks.append({"type": "text", "text": block.text})
+            elif block.type == "tool_use":
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                })
+                tool_use_blocks.append(block)
+
+        updated = list(messages) + [{"role": "assistant", "content": content_blocks}]
+
+        if response.stop_reason == "tool_use" and tool_use_blocks:
+            tool_calls = [
+                ToolCall(id=b.id, name=b.name, args=b.input)
+                for b in tool_use_blocks
+            ]
+            log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
+            return None, tool_calls, updated
+
+        result = self._parse_response(response, elapsed)
+        log.info("chat_with_tools (text): %.2fs, %d tokens", elapsed, result.total_tokens)
+        return result, None, updated
+
+    def append_tool_results(self, messages: list, results: list) -> list:
+        """Append Anthropic-format tool results (batched into one user message)."""
+        tool_result_blocks = [
+            {
+                "type": "tool_result",
+                "tool_use_id": tc.id,
+                "content": result_str,
+            }
+            for tc, result_str in results
+        ]
+        return list(messages) + [{"role": "user", "content": tool_result_blocks}]
 
 
 # ---------------------------------------------------------------------------
