@@ -2,19 +2,21 @@
 Plugin handling for Maki agents.
 
 Provides the PluginHandler mixin that gives agents the ability to load,
-manage, and invoke plugins via LLM-emitted TOOL: directives.
+manage, and invoke plugins via LLM-emitted TOOL: directives (legacy fallback)
+or via the native tool-calling APIs of capable backends.
 """
 
 import functools
 import importlib
 import importlib.util
+import inspect
 import json
 import logging
 import os
-import re
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..exceptions import MakiValidationError
+from ..objects import ToolCall
 
 if TYPE_CHECKING:
     from .protocols import PluginHostProtocol
@@ -31,13 +33,83 @@ _SAFE_ARG_TYPES = (str, int, float, bool, list, dict, type(None))
 # Attributes the host class must provide before _init_plugins() is called.
 _REQUIRED_ATTRS = ("name", "maki")
 
-# Pre-compiled pattern for TOOL: directives emitted by the LLM.
-_TOOL_PATTERN = re.compile(r'^TOOL:\s*(\{.*\})', re.MULTILINE)
+# Maximum tool-call rounds before forcing a final text answer.
+_MAX_TOOL_ROUNDS = 5
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for TOOL: extraction (regex-free; uses raw_decode)
+# ---------------------------------------------------------------------------
+
+def _extract_tool_calls(text: str) -> List[Tuple[bool, str, object]]:
+    """Extract all TOOL: directives from *text*.
+
+    Uses ``json.JSONDecoder.raw_decode`` so multi-line and pretty-printed JSON
+    is handled correctly, unlike a bare regex.
+
+    Returns a list of ``(success, raw_snippet, value)`` triples where:
+    * ``success=True``: ``value`` is the parsed dict.
+    * ``success=False``: ``value`` is an error message string (fed back to
+      the model so it can self-correct).
+    """
+    results: List[Tuple[bool, str, object]] = []
+    marker = "TOOL:"
+    decoder = json.JSONDecoder()
+    pos = 0
+    while True:
+        idx = text.find(marker, pos)
+        if idx == -1:
+            break
+        json_start = idx + len(marker)
+        # Skip horizontal whitespace between "TOOL:" and the opening brace.
+        while json_start < len(text) and text[json_start] in " \t":
+            json_start += 1
+        try:
+            # raw_decode returns (obj, end) where end is an absolute index in text.
+            obj, end = decoder.raw_decode(text, json_start)
+            raw = text[idx:end]
+            results.append((True, raw, obj))
+            pos = end
+        except json.JSONDecodeError as exc:
+            line_end = text.find("\n", json_start)
+            if line_end == -1:
+                line_end = len(text)
+            raw = text[idx: min(line_end, idx + 200)]
+            results.append((False, raw, f"JSON parse error: {exc}"))
+            pos = idx + len(marker)
+    return results
+
+
+def _strip_tool_calls(text: str, extractions: List[Tuple[bool, str, object]]) -> str:
+    """Remove all TOOL: snippets from *text* (uses positions from *extractions*)."""
+    if not extractions:
+        return text
+    result = text
+    # Remove from back to front to preserve offsets.
+    for _, raw, _ in reversed(extractions):
+        idx = result.rfind(raw)
+        if idx != -1:
+            result = result[:idx] + result[idx + len(raw):]
+    return "\n".join(line for line in result.split("\n") if line.strip()).strip()
 
 
 class PluginHandler:
     """
     Mixin that adds plugin loading and tool-call execution to an agent.
+
+    **Two execution paths:**
+
+    1. **Native** (``backend.supports_native_tools = True``): plugins are
+       translated to the backend's JSON Schema tool format; the backend drives
+       structured tool calls; results are fed back in a bounded loop (max
+       ``_MAX_TOOL_ROUNDS``).
+
+    2. **Legacy TOOL: regex** (fallback): the LLM emits ``TOOL: {...}``
+       directives in plain text; they are parsed with
+       ``json.JSONDecoder.raw_decode`` (handles multi-line JSON), executed,
+       and their results are synthesised in a follow-up prompt — also
+       looping up to ``_MAX_TOOL_ROUNDS`` so the model can chain calls.
+       Parse failures are fed back so the model can self-correct.
 
     Tool calls are **fail-closed**: a plugin exposes only the methods named in
     its class-level ``ALLOWED_METHODS`` whitelist; a plugin without one exposes
@@ -283,23 +355,149 @@ class PluginHandler:
             'TOOL: {"plugin": "<name>", "method": "<method>", "args": {<key>: <value>}}'
         )
 
+    # ------------------------------------------------------------------
+    # Native tool-calling path
+    # ------------------------------------------------------------------
+
+    def _build_tool_specs(self) -> List[dict]:
+        """Build backend-agnostic tool specs from loaded plugins.
+
+        Each spec has keys ``name`` (``"plugin__method"``), ``description``
+        (first docstring line or a fallback), and ``parameters`` (JSON Schema
+        built via ``inspect.signature`` — parameter types are assumed string
+        since Python annotations are not enforced at this layer).
+        """
+        specs: List[dict] = []
+        for plugin_name, plugin in self.plugins.items():
+            for method_name in self._allowed_methods(plugin):
+                method = getattr(plugin, method_name, None)
+                if method is None:
+                    continue
+                raw_doc = inspect.getdoc(method) or ""
+                description = (
+                    raw_doc.splitlines()[0]
+                    if raw_doc
+                    else f"{method_name} from plugin {plugin_name}"
+                )
+                properties: dict = {}
+                required: List[str] = []
+                try:
+                    sig = inspect.signature(method)
+                    for param_name, param in sig.parameters.items():
+                        if param_name == "self":
+                            continue
+                        properties[param_name] = {"type": "string"}
+                        if param.default is inspect.Parameter.empty:
+                            required.append(param_name)
+                except (ValueError, TypeError):
+                    pass
+                specs.append({
+                    "name": f"{plugin_name}__{method_name}",
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                })
+        return specs
+
+    def _execute_tool_call(self, tc: ToolCall) -> str:
+        """Execute one native tool call and return a string result."""
+        try:
+            plugin_name, method_name = tc.name.split("__", 1)
+        except ValueError:
+            return f"Error: tool name '{tc.name}' must be in 'plugin__method' format"
+
+        plugin = self.plugins.get(plugin_name)
+        if plugin is None:
+            return f"Error: plugin '{plugin_name}' not loaded"
+
+        error = self._validate_plugin_call(plugin, plugin_name, method_name, tc.args)
+        if error:
+            logger.warning(
+                "Blocked native tool call %s.%s: %s", plugin_name, method_name, error
+            )
+            return f"Error: {error}"
+
+        try:
+            result = getattr(plugin, method_name)(**tc.args)
+            return str(result)
+        except Exception as exc:
+            logger.warning(
+                "Native tool call %s.%s raised: %s", plugin_name, method_name, exc
+            )
+            return f"Error: {exc}"
+
+    def execute_with_native_tools(
+        self, task: str, context: Optional[Dict], system: str
+    ) -> str:
+        """Drive the native tool-calling loop (up to ``_MAX_TOOL_ROUNDS`` rounds).
+
+        Builds the initial user message without a TOOL: prompt section,
+        then alternates between ``chat_with_tools`` calls and plugin
+        executions.  After the maximum rounds a final call with an empty
+        tools list forces a plain-text answer.
+        """
+        tool_specs = self._build_tool_specs()
+        tools = self.maki.to_tool_schemas(tool_specs)
+
+        # Build the initial user message without the TOOL: prompt section.
+        parts = [task]
+        if context:
+            parts.append(f"Context: {json.dumps(context)}")
+        # Include stateful history if the host agent exposes it.
+        history_section = getattr(self, "_build_history_section", lambda: "")()
+        if history_section:
+            parts.append(history_section)
+        user_content = "\n\n".join(parts)
+        messages = [{"role": "user", "content": user_content}]
+
+        for _ in range(_MAX_TOOL_ROUNDS):
+            response, tool_calls, messages = self.maki.chat_with_tools(
+                messages, tools, system=system
+            )
+            if tool_calls is None:
+                return response.content
+            results = [(tc, self._execute_tool_call(tc)) for tc in tool_calls]
+            messages = self.maki.append_tool_results(messages, results)
+
+        # Max rounds reached — force a text answer by omitting tools.
+        response, _, _ = self.maki.chat_with_tools(messages, [], system=system)
+        return response.content if response else ""
+
+    # ------------------------------------------------------------------
+    # Legacy TOOL: directive path (fallback for non-native backends)
+    # ------------------------------------------------------------------
+
     def handle_plugin_calls(self, llm_response: str, task: str,
                             context: Optional[Dict]) -> str:
         """
-        Parse TOOL: directives from the LLM response, execute them, and synthesise
-        a final answer that incorporates the tool results.
+        Parse TOOL: directives from the LLM response, execute them, and
+        synthesise a final answer incorporating the results.
 
-        The expected format emitted by the LLM is:
+        Loops up to ``_MAX_TOOL_ROUNDS`` so the model can chain multiple
+        tool calls.  Multi-line and pretty-printed JSON is supported via
+        ``json.JSONDecoder.raw_decode``.  Parse failures are included in the
+        synthesis prompt so the model can self-correct its output format.
+
+        The expected format emitted by the LLM is::
+
             TOOL: {"plugin": "<name>", "method": "<method>", "args": {...}}
         """
-        matches = _TOOL_PATTERN.findall(llm_response)
-        if not matches:
-            return llm_response
+        for _ in range(_MAX_TOOL_ROUNDS):
+            extractions = _extract_tool_calls(llm_response)
+            if not extractions:
+                return llm_response
 
-        tool_results = []
-        for match in matches:
-            try:
-                call = json.loads(match)
+            tool_results = []
+            for success, raw_match, value in extractions:
+                if not success:
+                    # Parse failure — feed the error back so the model can fix it.
+                    tool_results.append({"raw": raw_match, "error": value})
+                    continue
+
+                call = value  # already a dict
                 plugin_name = call.get("plugin")
                 method_name = call.get("method")
                 args = call.get("args", {})
@@ -308,7 +506,10 @@ class PluginHandler:
                     tool_results.append({"error": "Tool call missing 'plugin' name"})
                     continue
                 if not isinstance(method_name, str) or not method_name:
-                    tool_results.append({"plugin": plugin_name, "error": "Tool call missing 'method' name"})
+                    tool_results.append({
+                        "plugin": plugin_name,
+                        "error": "Tool call missing 'method' name",
+                    })
                     continue
 
                 plugin = self.plugins.get(plugin_name)
@@ -316,7 +517,7 @@ class PluginHandler:
                     tool_results.append({
                         "plugin": plugin_name,
                         "method": method_name,
-                        "error": f"Plugin '{plugin_name}' not loaded"
+                        "error": f"Plugin '{plugin_name}' not loaded",
                     })
                     continue
 
@@ -331,39 +532,51 @@ class PluginHandler:
                     tool_results.append({
                         "plugin": plugin_name,
                         "method": method_name,
-                        "error": validation_error
+                        "error": validation_error,
                     })
                 elif hasattr(plugin, method_name):
-                    method = getattr(plugin, method_name)
-                    output = method(**args)
-                    tool_results.append({
-                        "plugin": plugin_name,
-                        "method": method_name,
-                        "result": str(output)
-                    })
+                    try:
+                        output = getattr(plugin, method_name)(**args)
+                        tool_results.append({
+                            "plugin": plugin_name,
+                            "method": method_name,
+                            "result": str(output),
+                        })
+                    except Exception as exc:
+                        logger.warning(
+                            f"Plugin call {plugin_name}.{method_name} failed: {exc}",
+                            exc_info=True,
+                        )
+                        tool_results.append({
+                            "plugin": plugin_name,
+                            "method": method_name,
+                            "error": str(exc),
+                        })
                 else:
                     tool_results.append({
                         "plugin": plugin_name,
                         "method": method_name,
-                        "error": f"Method '{method_name}' not found on plugin '{plugin_name}'"
+                        "error": (
+                            f"Method '{method_name}' not found on plugin '{plugin_name}'"
+                        ),
                     })
-            except Exception as e:
-                logger.warning(f"Plugin call failed: {str(e)}", exc_info=True)
-                tool_results.append({"error": str(e)})
 
-        # Strip TOOL: lines from the partial response, then ask for a final answer.
-        # Include the agent's role and instructions so the synthesis prompt retains context.
-        clean_response = _TOOL_PATTERN.sub('', llm_response).strip()
-        role = getattr(self, 'role', '')
-        instructions = getattr(self, 'instructions', '')
-        agent_context = ""
-        if role or instructions:
-            agent_context = f"You are a {role}.\n{instructions}\n\n" if role else f"{instructions}\n\n"
-        follow_up = (
-            f"{agent_context}"
-            f"Task: {task}\n\n"
-            f"Tool results:\n{json.dumps(tool_results, indent=2)}\n\n"
-            f"Previous partial response: {clean_response}\n\n"
-            f"Please provide your final answer incorporating the tool results."
-        )
-        return self._call_llm(follow_up)
+            clean_response = _strip_tool_calls(llm_response, extractions)
+            role = getattr(self, "role", "")
+            instructions = getattr(self, "instructions", "")
+            agent_context = (
+                f"You are a {role}.\n{instructions}\n\n"
+                if role
+                else (f"{instructions}\n\n" if instructions else "")
+            )
+            follow_up = (
+                f"{agent_context}"
+                f"Task: {task}\n\n"
+                f"Tool results:\n{json.dumps(tool_results, indent=2)}\n\n"
+                f"Previous partial response: {clean_response}\n\n"
+                f"Please continue. If you need more tool calls, emit TOOL: directives. "
+                f"Otherwise, provide your final answer."
+            )
+            llm_response = self._call_llm(follow_up)
+
+        return llm_response

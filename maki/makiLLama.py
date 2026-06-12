@@ -27,7 +27,7 @@ from .config import (
 )
 from .connector import AsyncConnector, Connector
 from .utils import Utils
-from .objects import LLMResponse, Message, GenerationConfig, RateLimiter, BackendType
+from .objects import LLMResponse, Message, GenerationConfig, RateLimiter, BackendType, ToolCall
 from .session import ChatSession
 from .exceptions import MakiNetworkError
 
@@ -43,6 +43,10 @@ log = logging.getLogger(__name__)
 class MakiLLama(LLMBackend):
     """
     A flexible wrapper around the Ollama HTTP API.
+
+    Supports native tool calling via Ollama's ``tools=`` parameter.
+    Set ``agent.use_plugins=True`` and the agent layer will prefer the
+    native path over the legacy ``TOOL:`` directive fallback.
 
     Usage
     -----
@@ -61,6 +65,7 @@ class MakiLLama(LLMBackend):
     """
 
     OLLAMA_BASE_URL = DEFAULT_OLLAMA_BASE_URL
+    supports_native_tools: bool = True
 
     def __init__(
         self,
@@ -429,6 +434,97 @@ class MakiLLama(LLMBackend):
 
     def __repr__(self) -> str:
         return f"LocalLLM(model={self.model!r}, base_url={self.base_url!r})"
+
+    # ------------------------------------------------------------------
+    # Native tool-calling (Ollama tools= API)
+    # ------------------------------------------------------------------
+
+    def to_tool_schemas(self, tool_specs: list) -> list:
+        """Translate backend-agnostic specs to the Ollama/OpenAI-compatible format."""
+        schemas = []
+        for spec in tool_specs:
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": spec["name"],
+                    "description": spec["description"],
+                    "parameters": spec["parameters"],
+                },
+            })
+        return schemas
+
+    def chat_with_tools(
+        self,
+        messages: list,
+        tools: list,
+        *,
+        system: Optional[str] = None,
+        config: Optional[GenerationConfig] = None,
+    ):
+        """One round of Ollama native tool-calling.
+
+        Returns ``(LLMResponse, None, messages)`` on a text answer, or
+        ``(None, [ToolCall, ...], messages)`` when tool calls are requested.
+        """
+        import time as _t
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
+        cfg = config or self.config
+        effective_system = system if system is not None else self.system_prompt
+
+        # Build the full messages list (system first, then the conversation).
+        full_messages = []
+        if effective_system:
+            full_messages.append({"role": "system", "content": effective_system})
+        full_messages.extend(messages)
+
+        payload: dict = {
+            "model": self.model,
+            "messages": full_messages,
+            "stream": False,
+            "options": cfg.to_ollama_options(),
+        }
+        if tools:
+            payload["tools"] = tools
+        if self.think is not None:
+            payload["think"] = self.think
+
+        t0 = _t.perf_counter()
+        r = self._http.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+        elapsed = _t.perf_counter() - t0
+        data = Connector.json_or_raise(r)
+
+        msg = data.get("message", {})
+        raw_tool_calls = msg.get("tool_calls")
+
+        # Append the assistant turn to the conversation.
+        updated = list(messages) + [msg]
+
+        if raw_tool_calls:
+            tool_calls = []
+            for tc in raw_tool_calls:
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                args = fn.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
+                tool_calls.append(ToolCall(id="", name=name, args=args))
+            log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
+            return None, tool_calls, updated
+
+        response = self._parse_response(data, elapsed)
+        log.info("chat_with_tools (text): %.2fs", elapsed)
+        return response, None, updated
+
+    def append_tool_results(self, messages: list, results: list) -> list:
+        """Append Ollama-format tool result messages."""
+        updated = list(messages)
+        for _tc, result_str in results:
+            updated.append({"role": "tool", "content": result_str})
+        return updated
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ from . import config
 
 __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
            "HFBackend", "MakiOpenAI", "MakiAnthropic", "LLMResponse", "GenerationConfig",
-           "Message", "RateLimiter", "BackendType", "config"]
+           "Message", "RateLimiter", "BackendType", "ToolCall", "config"]
 
 _LAZY_EXPORTS = {
     "LLMBackend":     (".backend",       "LLMBackend"),
@@ -25,6 +25,7 @@ _LAZY_EXPORTS = {
     "Message":        (".objects",       "Message"),
     "RateLimiter":    (".objects",       "RateLimiter"),
     "BackendType":    (".objects",       "BackendType"),
+    "ToolCall":       (".objects",       "ToolCall"),
 }
 
 
