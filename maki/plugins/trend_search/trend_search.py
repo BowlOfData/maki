@@ -17,6 +17,10 @@ ALLOWED_METHODS = ["fetch_google_trends"]
 class TrendSearch:
     """Fetch trend signals from external trend-oriented sources."""
 
+    # Mirror the module-level whitelist on the class: tool-call validation
+    # reads ALLOWED_METHODS from the plugin instance, not the module.
+    ALLOWED_METHODS = ALLOWED_METHODS
+
     def __init__(self, maki_instance=None):
         self.maki = maki_instance
         self.logger = logging.getLogger(__name__)

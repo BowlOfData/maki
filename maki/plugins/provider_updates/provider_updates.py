@@ -27,6 +27,10 @@ ALLOWED_METHODS = ["fetch_model_releases"]
 class ProviderUpdates:
     """Fetch provider announcement pages and return cleaned content."""
 
+    # Mirror the module-level whitelist on the class: tool-call validation
+    # reads ALLOWED_METHODS from the plugin instance, not the module.
+    ALLOWED_METHODS = ALLOWED_METHODS
+
     def __init__(self, maki_instance=None):
         self.maki = maki_instance
         self.logger = logging.getLogger(__name__)

@@ -25,6 +25,10 @@ _ALPACA_DATA_URL = "https://data.alpaca.markets"
 
 
 class AlpacaData:
+    # Mirror the module-level whitelist on the class: tool-call validation
+    # reads ALLOWED_METHODS from the plugin instance, not the module.
+    ALLOWED_METHODS = ALLOWED_METHODS
+
     def __init__(self, maki_instance=None):
         try:
             from alpaca.data.historical import CryptoHistoricalDataClient

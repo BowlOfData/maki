@@ -18,6 +18,9 @@ class FileReader:
     for processing by Maki agents.
     """
 
+    # Methods callable by the LLM via TOOL: directives (read-only).
+    ALLOWED_METHODS = ["read_file", "read_file_as_lines", "get_file_info"]
+
     def __init__(self, maki_instance=None, base_dir: str = None):
         """
         Initialize the FileReader plugin.

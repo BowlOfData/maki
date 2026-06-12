@@ -25,6 +25,12 @@ _LIVE_URL = "https://api.alpaca.markets"
 
 
 class AlpacaTrading:
+    # Mirror the module-level whitelist on the class: tool-call validation
+    # reads ALLOWED_METHODS from the plugin instance, not the module.
+    ALLOWED_METHODS = ALLOWED_METHODS
+    # State-changing trade operations require Agent(allow_dangerous_tools=True).
+    DANGEROUS_METHODS = ["submit_order", "cancel_order", "close_position"]
+
     def __init__(self, maki_instance=None):
         try:
             from alpaca.trading import TradingClient

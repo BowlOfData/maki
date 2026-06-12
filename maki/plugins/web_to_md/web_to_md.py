@@ -74,6 +74,10 @@ class WebToMd:
     sidebars, ads) and html2text for clean HTML→Markdown conversion.
     """
 
+    # Methods callable by the LLM via TOOL: directives. File output goes
+    # through FileWriter, whose _safe_path confines writes to its base_dir.
+    ALLOWED_METHODS = ["fetch_and_convert_to_md"]
+
     def __init__(self, maki_instance=None):
         self.maki = maki_instance
         self.logger = logging.getLogger(__name__)
