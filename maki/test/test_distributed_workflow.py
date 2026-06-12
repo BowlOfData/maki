@@ -164,6 +164,74 @@ class TestLocalStateStore(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# LocalStateStore — crash-safe (atomic) checkpoint writes
+# ---------------------------------------------------------------------------
+
+class TestAtomicCheckpointWrites(unittest.TestCase):
+
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.store = LocalStateStore(base_dir=self._tmpdir)
+
+    def _saved_state(self):
+        state = WorkflowState("wf-atomic")
+        state.update_task_status("t1", TaskStatus.COMPLETED, result="done")
+        self.store.save_workflow(state)
+        return state
+
+    def test_crash_before_rename_preserves_previous_checkpoint(self):
+        self._saved_state()
+        replacement = WorkflowState("wf-atomic")
+        replacement.update_task_status("t1", TaskStatus.FAILED, result="boom")
+        # Simulate a crash between writing the temp file and renaming it.
+        with patch("maki.distributed.state_store.os.replace",
+                   side_effect=OSError("simulated crash")):
+            with self.assertRaises(OSError):
+                self.store.save_workflow(replacement)
+
+        restored = self.store.load_workflow("wf-atomic")
+        self.assertEqual(restored.tasks["t1"]["status"], TaskStatus.COMPLETED)
+        self.assertEqual(restored.tasks["t1"]["result"], "done")
+
+    def test_torn_temp_write_preserves_previous_checkpoint(self):
+        self._saved_state()
+
+        def torn_dump(data, f, **kwargs):
+            f.write('{"workflow_id": "wf-atomic", "tas')  # truncated JSON
+            raise TypeError("simulated mid-write failure")
+
+        with patch("maki.distributed.state_store.json.dump",
+                   side_effect=torn_dump):
+            with self.assertRaises(TypeError):
+                self.store.save_workflow(WorkflowState("wf-atomic"))
+
+        restored = self.store.load_workflow("wf-atomic")
+        self.assertEqual(restored.tasks["t1"]["result"], "done")
+
+    def test_failed_write_leaves_no_temp_file(self):
+        with patch("maki.distributed.state_store.os.replace",
+                   side_effect=OSError("simulated crash")):
+            with self.assertRaises(OSError):
+                self._saved_state()
+        leftovers = [f for f in os.listdir(self._tmpdir) if f.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
+
+    def test_successful_save_leaves_no_temp_file(self):
+        self._saved_state()
+        leftovers = [f for f in os.listdir(self._tmpdir) if f.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
+
+    def test_update_task_is_atomic(self):
+        self._saved_state()
+        with patch("maki.distributed.state_store.os.replace",
+                   side_effect=OSError("simulated crash")):
+            with self.assertRaises(OSError):
+                self.store.update_task("wf-atomic", "t1", {"result": "patched"})
+        restored = self.store.load_workflow("wf-atomic")
+        self.assertEqual(restored.tasks["t1"]["result"], "done")
+
+
+# ---------------------------------------------------------------------------
 # RedisStateStore (mocked)
 # ---------------------------------------------------------------------------
 

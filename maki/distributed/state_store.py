@@ -40,6 +40,27 @@ def _sanitize(workflow_id: str) -> str:
     return result
 
 
+def _atomic_write_json(path: str, data: dict) -> None:
+    """Write *data* as JSON to *path* atomically (temp file + os.replace).
+
+    A crash mid-write leaves the previous file intact instead of a torn
+    checkpoint.
+    """
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 class StateStore(ABC):
     """Abstract persistence contract for WorkflowState."""
 
@@ -93,8 +114,7 @@ class LocalStateStore(StateStore):
     def save_workflow(self, state: WorkflowState) -> None:
         path = self._path(state.workflow_id)
         with self._lock:
-            with open(path, "w") as f:
-                json.dump(state.to_dict(), f, indent=2)
+            _atomic_write_json(path, state.to_dict())
         logger.debug("Saved workflow '%s' to %s", state.workflow_id, path)
 
     def load_workflow(self, workflow_id: str) -> Optional[WorkflowState]:
@@ -116,8 +136,7 @@ class LocalStateStore(StateStore):
             entry = dict(data.get("tasks", {}).get(task_name, {}))
             entry.update(update)
             data.setdefault("tasks", {})[task_name] = entry
-            with open(path, "w") as f:
-                json.dump(data, f, indent=2)
+            _atomic_write_json(path, data)
 
     def list_workflows(self) -> List[str]:
         with self._lock:
