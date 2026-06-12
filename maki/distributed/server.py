@@ -7,6 +7,7 @@ Install optional dependencies before use:
 Endpoints
 ---------
 GET  /health              Liveness check; returns agent_id, name, role.
+                          Always unauthenticated (load-balancer/k8s probes).
 GET  /info                Agent metadata: plugins, backend class, model.
 POST /execute             Run a task; returns result + elapsed time.
 GET  /stream              SSE token stream for a task (query param: task).
@@ -18,7 +19,8 @@ DELETE /history           Clear conversation and task history.
 
 Authentication
 --------------
-If create_app() receives a non-None api_key, every request must carry:
+If create_app() receives a non-None api_key, every request except GET /health
+must carry:
     Authorization: Bearer <api_key>
 Omit api_key to run in open/trusted-network mode.
 """
@@ -112,8 +114,10 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
     # Health / info
     # ------------------------------------------------------------------
 
+    # /health is deliberately unauthenticated: load-balancer and k8s probes
+    # cannot send credentials, and the body contains no sensitive data.
     @app.get("/health")
-    def health(request: Request, _: None = Depends(_auth)):
+    def health(request: Request):
         ag: Agent = request.app.state.agent
         return {
             "status": "ok",

@@ -213,18 +213,26 @@ class TestAuth(unittest.TestCase):
 
     def test_correct_key_accepted(self):
         client, _ = _make_client(api_key="secret123")
-        r = client.get("/health", headers={"Authorization": "Bearer secret123"})
+        r = client.get("/info", headers={"Authorization": "Bearer secret123"})
         self.assertEqual(r.status_code, 200)
 
     def test_wrong_key_rejected(self):
         client, _ = _make_client(api_key="secret123")
-        r = client.get("/health", headers={"Authorization": "Bearer wrongkey"})
+        r = client.get("/info", headers={"Authorization": "Bearer wrongkey"})
         self.assertEqual(r.status_code, 401)
 
     def test_missing_key_rejected(self):
         client, _ = _make_client(api_key="secret123")
-        r = client.get("/health")
+        r = client.get("/info")
         self.assertEqual(r.status_code, 401)
+
+    def test_health_is_unauthenticated(self):
+        # §5: /health must stay open for load-balancer/k8s probes even
+        # when an API key is configured.
+        client, _ = _make_client(api_key="secret123")
+        r = client.get("/health")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "ok")
 
     def test_auth_applies_to_execute(self):
         client, _ = _make_client(api_key="tok")
@@ -249,10 +257,10 @@ class TestAuth(unittest.TestCase):
         app_b = create_app(agent_b, api_key="key-b")
         ca = TestClient(app_a, raise_server_exceptions=False)
         cb = TestClient(app_b, raise_server_exceptions=False)
-        self.assertEqual(ca.get("/health", headers={"Authorization": "Bearer key-a"}).status_code, 200)
-        self.assertEqual(ca.get("/health", headers={"Authorization": "Bearer key-b"}).status_code, 401)
-        self.assertEqual(cb.get("/health", headers={"Authorization": "Bearer key-b"}).status_code, 200)
-        self.assertEqual(cb.get("/health", headers={"Authorization": "Bearer key-a"}).status_code, 401)
+        self.assertEqual(ca.get("/info", headers={"Authorization": "Bearer key-a"}).status_code, 200)
+        self.assertEqual(ca.get("/info", headers={"Authorization": "Bearer key-b"}).status_code, 401)
+        self.assertEqual(cb.get("/info", headers={"Authorization": "Bearer key-b"}).status_code, 200)
+        self.assertEqual(cb.get("/info", headers={"Authorization": "Bearer key-a"}).status_code, 401)
 
 
 if __name__ == "__main__":
