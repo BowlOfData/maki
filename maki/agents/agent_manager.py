@@ -19,6 +19,9 @@ from .workflow import WorkflowTask, WorkflowState, TaskStatus
 logger = logging.getLogger(__name__)
 
 
+_WORKFLOW_MAX_WORKERS = 4
+
+
 class AgentManager:
     """Manages a collection of agents and facilitates their coordination."""
 
@@ -327,7 +330,7 @@ class AgentManager:
                     return step_name, {'agent': agent_name, 'task': task, 'result': result}
 
                 base_idx = len(results)
-                with ThreadPoolExecutor() as pool:
+                with ThreadPoolExecutor(max_workers=_WORKFLOW_MAX_WORKERS) as pool:
                     futures = {
                         pool.submit(_run_step, step, base_idx + i): step
                         for i, step in enumerate(batch)
@@ -446,10 +449,15 @@ class AgentManager:
                 if not pending:
                     continue
 
-                def _run_wf_task(wt: WorkflowTask):
-                    return self._execute_workflow_task(wt, results, state)
+                # Snapshot results before submitting so all tasks in this batch
+                # evaluate conditions against the same consistent state, not a
+                # partially-updated dict from concurrently finishing siblings.
+                results_snapshot = dict(results)
 
-                with ThreadPoolExecutor() as pool:
+                def _run_wf_task(wt: WorkflowTask, _snap=results_snapshot):
+                    return self._execute_workflow_task(wt, _snap, state)
+
+                with ThreadPoolExecutor(max_workers=_WORKFLOW_MAX_WORKERS) as pool:
                     futures = {pool.submit(_run_wf_task, wt): wt for wt in pending}
                     for future in as_completed(futures):
                         name, value = future.result()
@@ -466,7 +474,11 @@ class AgentManager:
                     results[name] = value
                 _persist()
 
-        state.status = "completed"
+        any_skipped = any(
+            t.get("status") == TaskStatus.SKIPPED
+            for t in state.tasks.values()
+        )
+        state.status = "completed_with_skips" if any_skipped else "completed"
         state.end_time = time.time()
         if state_store is not None:
             state_store.save_workflow(state)
@@ -483,11 +495,23 @@ class AgentManager:
         free-text strings.  The text ``result`` of each dependency is also
         included under ``<dep_name>__result`` for backward compatibility.
         """
-        # Evaluate conditions; skip if any returns False
-        if not wt.should_execute(results):
-            logger.info(f"WorkflowTask '{wt.name}' skipped (conditions not met)")
-            wt.status = TaskStatus.PENDING
-            return wt.name, None
+        # Propagate skip: a SKIPPED dependency skips this task transitively.
+        skipped_dep = next(
+            (dep for dep in wt.dependencies if results.get(dep, {}).get("skipped")),
+            None,
+        )
+        if skipped_dep is not None or not wt.should_execute(results):
+            reason = (
+                f"dependency '{skipped_dep}' was skipped"
+                if skipped_dep is not None
+                else "conditions not met"
+            )
+            logger.info(f"WorkflowTask '{wt.name}' skipped ({reason})")
+            wt.status = TaskStatus.SKIPPED
+            state.update_task_status(wt.name, TaskStatus.SKIPPED, f"Skipped: {reason}")
+            return wt.name, {
+                "agent": wt.agent, "task": wt.task, "result": None, "data": None, "skipped": True
+            }
 
         agent = self.get_agent(wt.agent)
         if not agent:
@@ -498,11 +522,11 @@ class AgentManager:
             logger.error(f"WorkflowTask '{wt.name}' failed: {err}")
             return wt.name, None
 
-        # Build context from dependency outputs
+        # Build context from completed (non-skipped) dependency outputs.
         context: dict = {}
         for dep in wt.dependencies:
             dep_result = results.get(dep)
-            if dep_result:
+            if dep_result and not dep_result.get("skipped"):
                 if dep_result.get("data") is not None:
                     context[dep] = dep_result["data"]
                 if dep_result.get("result") is not None:

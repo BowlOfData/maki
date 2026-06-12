@@ -98,6 +98,8 @@ def _make_proxy(content="remote result", api_key=None):
                return_value=_make_connector(app)):
         proxy = AgentProxy(endpoint="http://fake-host:8100", api_key=api_key)
 
+    # Explicitly connect so name/role/agent_id are populated for tests that inspect them.
+    proxy.connect()
     return proxy, agent
 
 
@@ -367,11 +369,12 @@ class TestAgentProxyAuth(unittest.TestCase):
         backend = _mock_backend()
         agent = Agent("auth-agent", backend)
         app = create_app(agent, api_key="correct-key")
-        # Proxy uses the wrong key — /info also fails with 401
+        # Proxy uses the wrong key — /info returns 401 on connect()
         with patch("maki.distributed.proxy.Connector",
                    return_value=_make_connector(app)):
-            with self.assertRaises(MakiAPIError):
-                AgentProxy(endpoint="http://fake:8100", api_key="wrong-key")
+            proxy = AgentProxy(endpoint="http://fake:8100", api_key="wrong-key")
+        with self.assertRaises(MakiAPIError):
+            proxy.connect()
 
 
 # ---------------------------------------------------------------------------

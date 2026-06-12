@@ -10,6 +10,7 @@ from collections import deque
 from typing import Dict, Any, Optional
 import json
 import logging
+import threading
 import time
 import uuid
 
@@ -87,6 +88,10 @@ class Agent(PluginHandler, ReasoningEngine):
         # window size independently of the total retention limit.
         self._stateful_context_window = 10
 
+        # One in-flight task at a time; acquired by execute_task / stream_task so
+        # concurrent callers (workflow thread pools, FastAPI handlers) are serialized.
+        self._execution_lock = threading.Lock()
+
         # Validate and initialise mixin contracts (must come after all attrs are set).
         self._init_reasoning()
         self._init_plugins()
@@ -146,42 +151,43 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
-        try:
-            logger.debug(f"Executing task '{task}' for agent '{self.name}'")
-            start_time = time.time()
-            system_msg = self._build_system_message()
-            user_msg = self._build_user_message(task, context, use_plugins)
-            if self.use_streaming:
-                result = self.maki.chat_collect(user_msg, system=system_msg).content
-            else:
-                result = self.maki.chat(user_msg, system=system_msg).content
-            if result is None:
-                raise MakiAPIError(f"Backend returned None content for task '{task}'")
+        with self._execution_lock:
+            try:
+                logger.debug(f"Executing task '{task}' for agent '{self.name}'")
+                start_time = time.time()
+                system_msg = self._build_system_message()
+                user_msg = self._build_user_message(task, context, use_plugins)
+                if self.use_streaming:
+                    result = self.maki.chat_collect(user_msg, system=system_msg).content
+                else:
+                    result = self.maki.chat(user_msg, system=system_msg).content
+                if result is None:
+                    raise MakiAPIError(f"Backend returned None content for task '{task}'")
 
-            # Execute any TOOL: directives the LLM emitted
-            if use_plugins and self.plugins:
-                result = self.handle_plugin_calls(result, task, context)
+                # Execute any TOOL: directives the LLM emitted
+                if use_plugins and self.plugins:
+                    result = self.handle_plugin_calls(result, task, context)
 
-            execution_time = time.time() - start_time
-            logger.debug(f"Task '{task}' completed in {execution_time:.2f}s for agent '{self.name}'")
-        except (MakiError, ValueError, TypeError) as e:
-            logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error executing task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
-            raise MakiError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}") from e
+                execution_time = time.time() - start_time
+                logger.debug(f"Task '{task}' completed in {execution_time:.2f}s for agent '{self.name}'")
+            except (MakiError, ValueError, TypeError) as e:
+                logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error executing task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
+                raise MakiError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}") from e
 
-        # Record the task execution in history
-        self.task_history.append({
-            'task': task,
-            'context': context,
-            'result': result,
-            'timestamp': time.time()
-        })
+            # Record the task execution in history
+            self.task_history.append({
+                'task': task,
+                'context': context,
+                'result': result,
+                'timestamp': time.time()
+            })
 
-        # Maintain stateful conversation history
-        if self.stateful:
-            self._conversation_history.append({'task': task, 'result': result})
+            # Maintain stateful conversation history
+            if self.stateful:
+                self._conversation_history.append({'task': task, 'result': result})
 
         return result
 
@@ -257,32 +263,32 @@ class Agent(PluginHandler, ReasoningEngine):
         user_msg = self._build_user_message(task, context, use_plugins)
         stream_kwargs = {"system": system_msg}
 
-        try:
-            raw_stream = self.maki.stream(user_msg, **stream_kwargs)
-        except NotImplementedError as e:
-            raise NotImplementedError(
-                f"Backend '{type(self.maki).__name__}' does not support streaming. "
-                "Use MakiLLama or another streaming-capable backend instead."
-            ) from e
-
         def _tracked():
             chunks = []
-            try:
-                for chunk in raw_stream:
-                    chunks.append(chunk)
-                    yield chunk
-            finally:
-                # Always record whatever was produced, even on early abandonment.
-                if chunks:
-                    full_result = "".join(chunks)
-                    self.task_history.append({
-                        'task': task,
-                        'context': context,
-                        'result': full_result,
-                        'timestamp': time.time(),
-                    })
-                    if self.stateful:
-                        self._conversation_history.append({'task': task, 'result': full_result})
+            with self._execution_lock:
+                try:
+                    raw_stream = self.maki.stream(user_msg, **stream_kwargs)
+                except NotImplementedError as e:
+                    raise NotImplementedError(
+                        f"Backend '{type(self.maki).__name__}' does not support streaming. "
+                        "Use MakiLLama or another streaming-capable backend instead."
+                    ) from e
+                try:
+                    for chunk in raw_stream:
+                        chunks.append(chunk)
+                        yield chunk
+                finally:
+                    # Always record whatever was produced, even on early abandonment.
+                    if chunks:
+                        full_result = "".join(chunks)
+                        self.task_history.append({
+                            'task': task,
+                            'context': context,
+                            'result': full_result,
+                            'timestamp': time.time(),
+                        })
+                        if self.stateful:
+                            self._conversation_history.append({'task': task, 'result': full_result})
 
         return _tracked()
 

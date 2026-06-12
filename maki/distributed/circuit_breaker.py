@@ -47,6 +47,9 @@ class CircuitBreaker:
         self._last_failure_time = 0.0
         self._state = CircuitState.CLOSED
         self._lock = threading.Lock()
+        # True while exactly one HALF_OPEN probe is in flight; prevents thundering
+        # herd when multiple threads reach HALF_OPEN at the same time.
+        self._probe_in_flight = False
 
     # ------------------------------------------------------------------
     # Public interface
@@ -69,13 +72,33 @@ class CircuitBreaker:
             return self._failure_count
 
     def allow_request(self) -> bool:
-        """Return True if the caller may proceed with the HTTP request."""
-        return self.state in (CircuitState.CLOSED, CircuitState.HALF_OPEN)
+        """Return True if the caller may proceed with the HTTP request.
+
+        In HALF_OPEN state only one concurrent probe is admitted; all other
+        callers get False until that probe resolves (success or failure).
+        """
+        with self._lock:
+            # Lazy OPEN → HALF_OPEN transition
+            if (
+                self._state == CircuitState.OPEN
+                and time.monotonic() - self._last_failure_time >= self._recovery_timeout
+            ):
+                self._state = CircuitState.HALF_OPEN
+
+            if self._state == CircuitState.CLOSED:
+                return True
+            if self._state == CircuitState.HALF_OPEN:
+                if self._probe_in_flight:
+                    return False  # Another probe is already outstanding
+                self._probe_in_flight = True
+                return True
+            return False  # OPEN
 
     def record_success(self) -> None:
         """Reset the breaker to CLOSED after a successful call."""
         with self._lock:
             self._failure_count = 0
+            self._probe_in_flight = False
             self._state = CircuitState.CLOSED
 
     def record_failure(self) -> None:
@@ -83,6 +106,7 @@ class CircuitBreaker:
         with self._lock:
             self._failure_count += 1
             self._last_failure_time = time.monotonic()
+            self._probe_in_flight = False
             if self._state == CircuitState.HALF_OPEN or self._failure_count >= self._threshold:
                 self._state = CircuitState.OPEN
 

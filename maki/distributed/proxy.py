@@ -89,13 +89,12 @@ class AgentProxy:
             cert=cert,
         )
 
-        # Populated from /info on construction.
+        # Populated lazily on first call to connect() or execute_task().
         self.agent_id: str = ""
         self.name: str = ""
         self.role: str = ""
         self.plugins: dict = {}
-
-        self._refresh_info()
+        self._connected = False
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -123,15 +122,29 @@ class AgentProxy:
     def _delete(self, path: str, trace_id: Optional[str] = None):
         return self._http.delete(self._url(path), headers=self._headers(trace_id))
 
-    def _refresh_info(self) -> None:
-        """Fetch agent metadata from /info (called at construction, no circuit check)."""
+    def connect(self) -> None:
+        """Fetch agent metadata from /info and mark the proxy as connected.
+
+        Called automatically on the first execute_task() / stream_task() so that
+        constructing an AgentProxy does not require the remote server to be up.
+        Call it explicitly if you need the proxy's name/role/plugins fields
+        populated before the first task.
+
+        Raises:
+            MakiNetworkError: if the remote /info endpoint is unreachable.
+        """
         r = self._get("/info")
         data = r.json()
         self.agent_id = data.get("agent_id", "")
         self.name = data.get("name", "")
         self.role = data.get("role", "")
         self.plugins = {p: None for p in data.get("plugins", [])}
+        self._connected = True
         logger.info("AgentProxy connected: %s at %s", self.name, self.endpoint)
+
+    def _refresh_info(self) -> None:
+        """Backward-compat alias for connect()."""
+        self.connect()
 
     # ------------------------------------------------------------------
     # Task execution
@@ -148,6 +161,9 @@ class AgentProxy:
 
         Raises MakiNetworkError immediately if the circuit breaker is open.
         """
+        if not self._connected:
+            self.connect()
+
         if not self._circuit_breaker.allow_request():
             raise MakiNetworkError(
                 f"Circuit breaker OPEN for {self.endpoint}: agent is temporarily unavailable. "
@@ -214,6 +230,9 @@ class AgentProxy:
         returned), so callers get a fast-fail even if they haven't started
         consuming chunks yet.
         """
+        if not self._connected:
+            self.connect()
+
         if not self._circuit_breaker.allow_request():
             raise MakiNetworkError(
                 f"Circuit breaker OPEN for {self.endpoint}: streaming unavailable"
