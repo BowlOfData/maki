@@ -89,25 +89,55 @@ class TestExecute(unittest.TestCase):
         r = client.post("/execute", json={})
         self.assertEqual(r.status_code, 422)
 
+    @staticmethod
+    def _client_with_error(exc):
+        backend = _mock_backend()
+        backend.chat.side_effect = exc
+        agent = Agent("err-agent", backend)
+        app = create_app(agent)
+        return TestClient(app, raise_server_exceptions=False)
+
     def test_execute_network_error_is_502(self):
         from maki.exceptions import MakiNetworkError
-        backend = _mock_backend()
-        backend.chat.side_effect = MakiNetworkError("connection refused")
-        agent = Agent("err-agent", backend)
-        app = create_app(agent)
-        client = TestClient(app, raise_server_exceptions=False)
+        client = self._client_with_error(MakiNetworkError("connection refused to http://10.0.0.5:11434"))
         r = client.post("/execute", json={"task": "do something"})
         self.assertEqual(r.status_code, 502)
+        # §2.4: internal details (URLs/paths) must not reach remote callers.
+        self.assertNotIn("10.0.0.5", r.json()["detail"])
 
-    def test_execute_api_error_is_400(self):
+    def test_execute_timeout_is_504(self):
+        from maki.exceptions import MakiTimeoutError
+        client = self._client_with_error(MakiTimeoutError("timed out after 180s"))
+        r = client.post("/execute", json={"task": "do something"})
+        self.assertEqual(r.status_code, 504)
+
+    def test_execute_api_error_is_400_with_generic_body(self):
         from maki.exceptions import MakiAPIError
-        backend = _mock_backend()
-        backend.chat.side_effect = MakiAPIError("bad request")
-        agent = Agent("err-agent", backend)
-        app = create_app(agent)
-        client = TestClient(app, raise_server_exceptions=False)
+        client = self._client_with_error(MakiAPIError("upstream said no: http://internal:11434/api"))
         r = client.post("/execute", json={"task": "do something"})
         self.assertEqual(r.status_code, 400)
+        self.assertNotIn("internal", r.json()["detail"])
+
+    def test_execute_validation_error_is_400_with_message(self):
+        from maki.exceptions import MakiValidationError
+        client = self._client_with_error(MakiValidationError("task too long"))
+        r = client.post("/execute", json={"task": "do something"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("task too long", r.json()["detail"])
+
+    def test_execute_value_error_is_400(self):
+        # §2.4 regression: a raw ValueError from the agent used to escape as
+        # an unhandled 500.
+        client = self._client_with_error(ValueError("bad task input"))
+        r = client.post("/execute", json={"task": "do something"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("bad task input", r.json()["detail"])
+
+    def test_execute_unexpected_error_is_500_generic(self):
+        client = self._client_with_error(RuntimeError("secret /etc/internal/path"))
+        r = client.post("/execute", json={"task": "do something"})
+        self.assertEqual(r.status_code, 500)
+        self.assertNotIn("/etc/internal/path", r.json()["detail"])
 
     def test_execute_updates_task_history(self):
         client, agent = _make_client()

@@ -44,7 +44,13 @@ import uuid
 from typing import Any, Optional
 
 from ..agents.agent import Agent
-from ..exceptions import MakiAPIError, MakiError, MakiNetworkError, MakiTimeoutError
+from ..exceptions import (
+    MakiAPIError,
+    MakiError,
+    MakiNetworkError,
+    MakiTimeoutError,
+    MakiValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,14 +154,29 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
         trace_id: str = getattr(request.state, "trace_id", str(uuid.uuid4()))
         t0 = time.time()
         logger.debug("[trace=%s] executing task for agent '%s'", trace_id, ag.name)
+        # Client input errors echo the validation message (it describes the
+        # caller's own request); everything else returns a generic body and
+        # is logged in full server-side only, so internal URLs/paths never
+        # reach remote callers.
         try:
             result = ag.execute_task(req.task, req.context, req.use_plugins)
-        except (MakiNetworkError, MakiTimeoutError) as e:
-            raise HTTPException(status_code=502, detail=str(e))
-        except MakiAPIError as e:
+        except (MakiValidationError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except MakiError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        except MakiTimeoutError as e:
+            logger.error("[trace=%s] backend timeout: %s", trace_id, e)
+            raise HTTPException(status_code=504, detail="Agent backend timed out")
+        except MakiNetworkError as e:
+            logger.error("[trace=%s] backend unreachable: %s", trace_id, e)
+            raise HTTPException(status_code=502, detail="Agent backend unavailable")
+        except MakiAPIError as e:
+            logger.error("[trace=%s] backend API error: %s", trace_id, e)
+            raise HTTPException(status_code=400, detail="Agent backend rejected the request")
+        except MakiError:
+            logger.exception("[trace=%s] agent error", trace_id)
+            raise HTTPException(status_code=500, detail="Internal agent error")
+        except Exception:
+            logger.exception("[trace=%s] unexpected error", trace_id)
+            raise HTTPException(status_code=500, detail="Internal server error")
         elapsed = round(time.time() - t0, 3)
         logger.debug("[trace=%s] task completed in %.3fs", trace_id, elapsed)
         return {
@@ -173,8 +194,9 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
             try:
                 for chunk in ag.stream_task(task, use_plugins=use_plugins):
                     yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-            except Exception as exc:
-                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            except Exception:
+                logger.exception("stream failed for agent '%s'", ag.name)
+                yield f"data: {json.dumps({'error': 'stream failed; see server logs'})}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_sse(), media_type="text/event-stream")
