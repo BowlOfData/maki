@@ -12,8 +12,11 @@ model: llama3.2             # optional; falls back to each backend's default
 temperature: 0.7            # optional, default 0.7
 stateful: false             # optional, default false
 use_streaming: false        # optional, default false
-plugins:                    # optional list of built-in plugin names
-  - web_to_md
+allow_dangerous_tools: false  # optional, default false; opt-in to let TOOL:
+                              # directives call methods a plugin marks in
+                              # DANGEROUS_METHODS (file writes, FTP, trades)
+plugins:                    # optional list of built-in plugin names; must be
+  - web_to_md               # registered in maki.plugins.PLUGIN_REGISTRY
   - file_reader
 
 Install optional dependencies before use:
@@ -33,6 +36,7 @@ from typing import Optional
 from ..agents.agent import Agent
 from ..backend import LLMBackend
 from ..objects import GenerationConfig
+from ..plugins import PLUGIN_REGISTRY
 
 
 def _build_backend(cfg: dict) -> LLMBackend:
@@ -84,6 +88,17 @@ def load_agent_from_config(path: str) -> Agent:
     if not cfg or not cfg.get("name"):
         raise ValueError("Agent config must include a 'name' field")
 
+    # Validate plugin names up front (before the backend constructor, which
+    # may touch the network): load_plugin() feeds the name into
+    # importlib.import_module, so only registry names are acceptable (§2.6).
+    plugin_names = cfg.get("plugins") or []
+    unknown = sorted(set(plugin_names) - set(PLUGIN_REGISTRY))
+    if unknown:
+        raise ValueError(
+            f"Unknown plugin(s) in config: {', '.join(unknown)}. "
+            f"Valid plugins: {', '.join(sorted(PLUGIN_REGISTRY))}"
+        )
+
     backend = _build_backend(cfg)
     agent = Agent(
         name=cfg["name"],
@@ -92,9 +107,10 @@ def load_agent_from_config(path: str) -> Agent:
         instructions=cfg.get("instructions", ""),
         stateful=bool(cfg.get("stateful", False)),
         use_streaming=bool(cfg.get("use_streaming", False)),
+        allow_dangerous_tools=bool(cfg.get("allow_dangerous_tools", False)),
     )
 
-    for plugin_name in cfg.get("plugins") or []:
+    for plugin_name in plugin_names:
         agent.load_plugin(plugin_name)
 
     return agent
