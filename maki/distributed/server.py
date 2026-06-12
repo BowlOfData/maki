@@ -36,6 +36,7 @@ except ImportError as _e:
 
 import json
 import logging
+import secrets
 import time
 import uuid
 from typing import Any, Optional
@@ -102,7 +103,9 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
         key: Optional[str] = request.app.state.api_key
         if key is None:
             return
-        if credentials is None or credentials.credentials != key:
+        if credentials is None or not secrets.compare_digest(
+            credentials.credentials.encode("utf-8"), key.encode("utf-8")
+        ):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     # ------------------------------------------------------------------
