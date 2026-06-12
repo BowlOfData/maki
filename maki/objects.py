@@ -47,6 +47,12 @@ class GenerationConfig:
             raise ValueError("temperature must be a number")
         if not (0.0 <= self.temperature <= 2.0):
             raise ValueError("temperature must be between 0.0 and 2.0")
+        if not isinstance(self.top_p, (int, float)) or not (0.0 <= self.top_p <= 1.0):
+            raise ValueError("top_p must be a float in [0.0, 1.0]")
+        if not isinstance(self.top_k, int) or self.top_k < 0:
+            raise ValueError("top_k must be a non-negative integer")
+        if not isinstance(self.max_tokens, int) or self.max_tokens < 1:
+            raise ValueError("max_tokens must be a positive integer")
 
     def to_ollama_options(self) -> dict:
         opts: dict = {
@@ -74,8 +80,20 @@ class GenerationConfig:
             "do_sample": self.do_sample,
         }
 
-    def to_openai_kwargs(self) -> dict:
-        kwargs: dict = {
+    def to_openai_kwargs(self, model_family: str = "chat") -> dict:
+        """Serialise for the OpenAI chat completions API.
+
+        Pass ``model_family="reasoning"`` for o1/o3/o4 models: they require
+        ``max_completion_tokens`` and reject ``temperature`` / ``top_p``.
+        """
+        if model_family == "reasoning":
+            kwargs: dict = {"max_completion_tokens": self.max_tokens}
+            if self.seed != -1:
+                kwargs["seed"] = self.seed
+            if self.stop:
+                kwargs["stop"] = self.stop
+            return kwargs
+        kwargs = {
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,

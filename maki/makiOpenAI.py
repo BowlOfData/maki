@@ -80,6 +80,13 @@ class MakiOpenAI(LLMBackend):
     # Message building
     # ------------------------------------------------------------------
 
+    @property
+    def _model_family(self) -> str:
+        """Return 'reasoning' for o1/o3/o4 models, 'chat' for everything else."""
+        if self.model.startswith(("o1", "o3", "o4")):
+            return "reasoning"
+        return "chat"
+
     def _build_messages(
         self,
         prompt: str,
@@ -92,7 +99,17 @@ class MakiOpenAI(LLMBackend):
         if effective_system:
             msgs.append({"role": "system", "content": effective_system})
         if history:
-            msgs.extend(m.to_dict() for m in history)
+            for m in history:
+                if m.images and m.role == "user":
+                    content: list[dict] = [{"type": "text", "text": m.content}]
+                    for b64 in m.images:
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        })
+                    msgs.append({"role": m.role, "content": content})
+                else:
+                    msgs.append({"role": m.role, "content": m.content})
         if images:
             content: list[dict] = [{"type": "text", "text": prompt}]
             for b64 in images:
@@ -141,7 +158,7 @@ class MakiOpenAI(LLMBackend):
             response = self._client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                **cfg.to_openai_kwargs(),
+                **cfg.to_openai_kwargs(model_family=self._model_family),
             )
         except _openai_sdk.APITimeoutError as e:
             raise MakiTimeoutError(f"chat() timed out: {e}") from e
@@ -172,7 +189,7 @@ class MakiOpenAI(LLMBackend):
                 model=self.model,
                 messages=messages,
                 stream=True,
-                **cfg.to_openai_kwargs(),
+                **cfg.to_openai_kwargs(model_family=self._model_family),
             ) as stream:
                 for chunk in stream:
                     delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -204,7 +221,7 @@ class MakiOpenAI(LLMBackend):
             response = await self._async_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                **cfg.to_openai_kwargs(),
+                **cfg.to_openai_kwargs(model_family=self._model_family),
             )
         except _openai_sdk.APITimeoutError as e:
             raise MakiTimeoutError(f"async_chat() timed out: {e}") from e

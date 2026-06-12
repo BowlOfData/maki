@@ -88,6 +88,10 @@ class PluginHandler:
         _checked._plugin_contract_checked = True
         cls.__init__ = _checked
 
+    def _call_llm(self, prompt: str) -> str:
+        """Send a plain prompt to the backend and return the response text."""
+        return self.maki.chat(prompt).content
+
     def _init_plugins(self) -> None:
         """
         Initialize plugin storage.
