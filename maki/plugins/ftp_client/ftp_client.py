@@ -31,6 +31,22 @@ class FTPClient:
     using both plain FTP and secure SFTP protocols.
     """
 
+    # Methods callable by the LLM via TOOL: directives. Transfers and removal
+    # are destructive/exfiltration vectors and require
+    # Agent(allow_dangerous_tools=True); download_file also writes to an
+    # arbitrary local path.
+    ALLOWED_METHODS = [
+        "connect",
+        "disconnect",
+        "list_directory",
+        "get_file_info",
+        "create_directory",
+        "upload_file",
+        "download_file",
+        "remove_directory",
+    ]
+    DANGEROUS_METHODS = ["upload_file", "download_file", "remove_directory"]
+
     def __init__(self, maki_instance=None):
         """
         Initialize the FTPClient plugin.

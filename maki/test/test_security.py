@@ -140,8 +140,15 @@ class TestPluginSecurity(unittest.TestCase):
         self.agent = Agent("SecurityAgent", self.maki, "tester", "Test security")
 
     def _plain_plugin(self):
-        """A mock plugin with no ALLOWED_METHODS whitelist."""
-        plugin = MagicMock(spec=[])          # no ALLOWED_METHODS attribute
+        """A minimal mock plugin whitelisting just safe_method."""
+        plugin = MagicMock(spec=[])
+        plugin.ALLOWED_METHODS = ["safe_method"]
+        plugin.safe_method = MagicMock(return_value="ok")
+        return plugin
+
+    def _unlisted_plugin(self):
+        """A mock plugin with no ALLOWED_METHODS attribute (exposes nothing)."""
+        plugin = MagicMock(spec=[])
         plugin.safe_method = MagicMock(return_value="ok")
         return plugin
 
@@ -184,10 +191,18 @@ class TestPluginSecurity(unittest.TestCase):
         error = self.agent._validate_plugin_call(plugin, "plug", "safe_method", {})
         self.assertIsNone(error)
 
-    def test_no_whitelist_does_not_block_public_methods(self):
-        plugin = self._plain_plugin()
+    def test_no_whitelist_blocks_all_methods(self):
+        """Fail-closed: a plugin without ALLOWED_METHODS exposes nothing."""
+        plugin = self._unlisted_plugin()
         error = self.agent._validate_plugin_call(plugin, "plug", "safe_method", {})
-        self.assertIsNone(error)
+        self.assertIsNotNone(error)
+        self.assertIn("no ALLOWED_METHODS", error)
+        self.assertIn("plug", error)
+
+    def test_no_whitelist_advertises_no_methods(self):
+        """build_plugin_prompt_section lists nothing for an unlisted plugin."""
+        plugin = self._unlisted_plugin()
+        self.assertEqual(self.agent._allowed_methods(plugin), [])
 
     def test_whitelist_as_set(self):
         plugin = self._plain_plugin()
@@ -285,14 +300,181 @@ class TestPluginSecurity(unittest.TestCase):
         plugin._secret.assert_not_called()
 
     def test_handle_plugin_calls_blocks_whitelisted_violation(self):
-        """TOOL: directive for a method not in ALLOWED_METHODS is blocked."""
+        """TOOL: directive for a method not in ALLOWED_METHODS is blocked,
+        and the rejection is fed back into the synthesis prompt."""
         plugin = self._whitelisted_plugin(["safe_method"])
         self.agent.plugins["plug"] = plugin
 
+        captured = []
+
+        def fake_chat(prompt, **kwargs):
+            captured.append(prompt)
+            return _r("final answer")
+
         directive = 'TOOL: {"plugin": "plug", "method": "other_method", "args": {}}\ntext'
-        with patch.object(self.maki, 'chat', return_value=_r("final answer")):
-            self.agent.handle_plugin_calls(directive, "task", None)
+        with patch.object(self.maki, 'chat', side_effect=fake_chat):
+            result = self.agent.handle_plugin_calls(directive, "task", None)
         plugin.other_method.assert_not_called()
+        self.assertEqual(result, "final answer")
+        self.assertEqual(len(captured), 1)
+        self.assertIn("not in the allowed methods", captured[0])
+
+    def test_handle_plugin_calls_feeds_unlisted_rejection_to_synthesis(self):
+        """A call to a plugin without ALLOWED_METHODS is rejected and the
+        error appears in the synthesis prompt rather than being dropped."""
+        plugin = self._unlisted_plugin()
+        self.agent.plugins["plug"] = plugin
+
+        captured = []
+
+        def fake_chat(prompt, **kwargs):
+            captured.append(prompt)
+            return _r("final answer")
+
+        directive = 'TOOL: {"plugin": "plug", "method": "safe_method", "args": {}}\ntext'
+        with patch.object(self.maki, 'chat', side_effect=fake_chat):
+            self.agent.handle_plugin_calls(directive, "task", None)
+        plugin.safe_method.assert_not_called()
+        self.assertIn("no ALLOWED_METHODS", captured[0])
+
+
+# ---------------------------------------------------------------------------
+# 2b. Dangerous-method gating
+# ---------------------------------------------------------------------------
+class TestDangerousMethodGating(unittest.TestCase):
+    """DANGEROUS_METHODS require Agent(allow_dangerous_tools=True)."""
+
+    def setUp(self):
+        self.maki = MagicMock()
+        self.maki.chat.return_value = _r("mock response")
+
+    def _writer_plugin(self):
+        plugin = MagicMock(spec=[])
+        plugin.ALLOWED_METHODS = ["read_thing", "write_thing"]
+        plugin.DANGEROUS_METHODS = ["write_thing"]
+        plugin.read_thing = MagicMock(return_value="data")
+        plugin.write_thing = MagicMock(return_value="written")
+        return plugin
+
+    def test_dangerous_method_blocked_by_default(self):
+        agent = Agent("A", self.maki, "tester", "t")
+        error = agent._validate_plugin_call(self._writer_plugin(), "plug", "write_thing", {})
+        self.assertIsNotNone(error)
+        self.assertIn("dangerous", error.lower())
+        self.assertIn("allow_dangerous_tools", error)
+
+    def test_safe_method_still_allowed_by_default(self):
+        agent = Agent("A", self.maki, "tester", "t")
+        error = agent._validate_plugin_call(self._writer_plugin(), "plug", "read_thing", {})
+        self.assertIsNone(error)
+
+    def test_dangerous_method_allowed_with_opt_in(self):
+        agent = Agent("A", self.maki, "tester", "t", allow_dangerous_tools=True)
+        error = agent._validate_plugin_call(self._writer_plugin(), "plug", "write_thing", {})
+        self.assertIsNone(error)
+
+    def test_invalid_dangerous_methods_type_blocks_all_calls(self):
+        agent = Agent("A", self.maki, "tester", "t", allow_dangerous_tools=True)
+        plugin = self._writer_plugin()
+        plugin.DANGEROUS_METHODS = {}        # invalid collection type
+        error = agent._validate_plugin_call(plugin, "plug", "read_thing", {})
+        self.assertIsNotNone(error)
+        self.assertIn("DANGEROUS_METHODS", error)
+        self.assertEqual(agent._allowed_methods(plugin), [])
+
+    def test_prompt_section_hides_dangerous_methods_by_default(self):
+        agent = Agent("A", self.maki, "tester", "t")
+        methods = agent._allowed_methods(self._writer_plugin())
+        self.assertEqual(methods, ["read_thing"])
+
+    def test_prompt_section_shows_dangerous_methods_with_opt_in(self):
+        agent = Agent("A", self.maki, "tester", "t", allow_dangerous_tools=True)
+        methods = agent._allowed_methods(self._writer_plugin())
+        self.assertEqual(methods, ["read_thing", "write_thing"])
+
+    def test_handle_plugin_calls_blocks_dangerous_method(self):
+        agent = Agent("A", self.maki, "tester", "t")
+        plugin = self._writer_plugin()
+        agent.plugins["plug"] = plugin
+
+        directive = 'TOOL: {"plugin": "plug", "method": "write_thing", "args": {}}\ntext'
+        with patch.object(self.maki, 'chat', return_value=_r("final")):
+            agent.handle_plugin_calls(directive, "task", None)
+        plugin.write_thing.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 2c. Built-in plugin whitelist contract
+# ---------------------------------------------------------------------------
+class TestBuiltinPluginWhitelists(unittest.TestCase):
+    """Every registered plugin class must declare a class-level whitelist."""
+
+    def test_every_registered_plugin_declares_allowed_methods(self):
+        from maki.plugins import PLUGIN_REGISTRY, get_plugin_class
+
+        for name in PLUGIN_REGISTRY:
+            try:
+                cls = get_plugin_class(name)
+            except ImportError:
+                continue   # optional extra not installed
+            with self.subTest(plugin=name):
+                allowed = cls.__dict__.get("ALLOWED_METHODS") or getattr(
+                    cls, "ALLOWED_METHODS", None
+                )
+                self.assertIsInstance(
+                    allowed, (list, set, tuple, frozenset),
+                    f"{name} must declare a class-level ALLOWED_METHODS",
+                )
+                self.assertTrue(allowed, f"{name} whitelist must not be empty")
+                for method in allowed:
+                    self.assertTrue(
+                        callable(getattr(cls, method, None)),
+                        f"{name}.{method} is whitelisted but not a method",
+                    )
+                dangerous = getattr(cls, "DANGEROUS_METHODS", None)
+                if dangerous is not None:
+                    self.assertTrue(
+                        set(dangerous) <= set(allowed),
+                        f"{name}: DANGEROUS_METHODS must be a subset of ALLOWED_METHODS",
+                    )
+
+    def test_destructive_builtins_are_marked_dangerous(self):
+        from maki.plugins.file_writer.file_writer import FileWriter
+        from maki.plugins.ftp_client.ftp_client import FTPClient
+
+        self.assertIn("write_file", FileWriter.DANGEROUS_METHODS)
+        self.assertIn("append_to_file", FileWriter.DANGEROUS_METHODS)
+        self.assertIn("write_file_lines", FileWriter.DANGEROUS_METHODS)
+        self.assertIn("remove_directory", FTPClient.DANGEROUS_METHODS)
+        self.assertIn("upload_file", FTPClient.DANGEROUS_METHODS)
+        self.assertIn("download_file", FTPClient.DANGEROUS_METHODS)
+
+    def test_load_plugin_warns_when_no_allowed_methods(self):
+        """Loading a plugin without ALLOWED_METHODS logs a warning naming it."""
+        import os
+        import tempfile
+        import textwrap
+
+        agent = Agent("A", MagicMock(), "tester", "t")
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "bareplugin.py"), "w") as f:
+                f.write(textwrap.dedent("""
+                    class BarePlugin:
+                        def __init__(self, maki=None):
+                            self.maki = maki
+
+                        def do_thing(self):
+                            return "x"
+
+
+                    def register_plugin(maki=None):
+                        return BarePlugin(maki)
+                """))
+            with self.assertLogs("maki.agents.plugin_handler", level="WARNING") as cm:
+                agent.load_plugin("bareplugin", plugin_path=tmp)
+        self.assertTrue(any(
+            "bareplugin" in m and "ALLOWED_METHODS" in m for m in cm.output
+        ))
 
 
 # ---------------------------------------------------------------------------

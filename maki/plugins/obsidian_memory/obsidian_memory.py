@@ -33,6 +33,10 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
 class ObsidianMemory:
+    # Mirror the module-level whitelist on the class: tool-call validation
+    # reads ALLOWED_METHODS from the plugin instance, not the module.
+    ALLOWED_METHODS = ALLOWED_METHODS
+
     def __init__(self, maki_instance=None, vault_path: Optional[str] = None):
         import yaml as _yaml
         self._yaml = _yaml

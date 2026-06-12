@@ -18,6 +18,16 @@ class FileWriter:
     options for handling existing files and encoding.
     """
 
+    # Methods callable by the LLM via TOOL: directives. The write methods are
+    # destructive and require Agent(allow_dangerous_tools=True).
+    ALLOWED_METHODS = [
+        "write_file",
+        "append_to_file",
+        "write_file_lines",
+        "get_file_info",
+    ]
+    DANGEROUS_METHODS = ["write_file", "append_to_file", "write_file_lines"]
+
     def __init__(self, maki_instance=None, base_dir: str = None):
         """
         Initialize the FileWriter plugin.

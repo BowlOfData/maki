@@ -21,6 +21,12 @@ class DirectoryReader(FileReader):
     files from a directory, optionally recursively.
     """
 
+    # Methods callable by the LLM via TOOL: directives (read-only).
+    ALLOWED_METHODS = FileReader.ALLOWED_METHODS + [
+        "read_directory",
+        "read_directory_as_text",
+    ]
+
     def __init__(self, maki_instance=None, base_dir: str = None):
         """
         Initialize the DirectoryReader plugin.
