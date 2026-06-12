@@ -17,9 +17,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote as urlquote, urlparse
 
-import requests
-
 from maki.config import DEFAULT_HTTP_TIMEOUT, DEFAULT_WEB_USER_AGENT
+from maki.connector import Connector
 from maki.plugins._web_utils import (
     is_current_week as _is_current_week,
     is_media_url as _is_media_url,
@@ -40,6 +39,15 @@ ALLOWED_METHODS = [
 ]
 
 _DEFAULT_HEADERS = {"User-Agent": DEFAULT_WEB_USER_AGENT}
+
+# All outbound HTTP goes through the hardened Connector layer
+# (SSRF validation + DNS pinning + error classification).
+_connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT)
+
+
+def _http_get(url, **kwargs):
+    """Fetch *url* through the shared Connector; raises Maki errors on failure."""
+    return _connector.get(url, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +90,7 @@ class WebSearch:
         """
         Fetch articles from RSS/Atom feeds, filtered to the current ISO week.
 
-        Feeds are fetched via ``requests`` (plain HTTP) and parsed with
+        Feeds are fetched through the hardened HTTP layer and parsed with
         ``feedparser``, bypassing any search-engine captcha.
 
         Args:
@@ -113,12 +121,7 @@ class WebSearch:
 
         for source, feed_url in feeds.items():
             try:
-                resp = requests.get(
-                    feed_url,
-                    timeout=DEFAULT_HTTP_TIMEOUT,
-                    headers=_DEFAULT_HEADERS,
-                )
-                resp.raise_for_status()
+                resp = _http_get(feed_url, headers=_DEFAULT_HEADERS)
                 feed = feedparser.parse(resp.text)
             except Exception as exc:
                 self.logger.warning("search_rss: failed to fetch '%s' (%s): %s", source, feed_url, exc)
@@ -209,8 +212,7 @@ class WebSearch:
 
         results: List[Dict[str, Any]] = []
         try:
-            resp = requests.get(api_url, timeout=DEFAULT_HTTP_TIMEOUT)
-            resp.raise_for_status()
+            resp = _http_get(api_url)
             for hit in resp.json().get("hits", []):
                 article_url = hit.get("url", "")
                 if not article_url:
@@ -260,8 +262,7 @@ class WebSearch:
 
         results: List[Dict[str, Any]] = []
         try:
-            resp = requests.get(api_url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
-            resp.raise_for_status()
+            resp = _http_get(api_url, headers=headers)
             for item in resp.json().get("items", []):
                 url = item.get("html_url", "")
                 if not url:
@@ -311,12 +312,7 @@ class WebSearch:
         week_start = _week_start_utc(now)
 
         try:
-            resp = requests.get(
-                "https://lobste.rs/rss",
-                timeout=DEFAULT_HTTP_TIMEOUT,
-                headers=_DEFAULT_HEADERS,
-            )
-            resp.raise_for_status()
+            resp = _http_get("https://lobste.rs/rss", headers=_DEFAULT_HEADERS)
             feed = feedparser.parse(resp.text)
         except Exception as exc:
             self.logger.warning("fetch_lobsters: request failed: %s", exc)
@@ -392,8 +388,7 @@ class WebSearch:
             # Reddit's .json API returns 403 — use the RSS feed instead
             url = f"https://www.reddit.com/r/{sub}/hot.rss?limit={max_per_sub + 5}"
             try:
-                resp = requests.get(url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
-                resp.raise_for_status()
+                resp = _http_get(url, headers=headers)
                 feed = feedparser.parse(resp.text)
                 entries = feed.entries
             except Exception as exc:

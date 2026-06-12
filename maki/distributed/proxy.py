@@ -6,8 +6,10 @@ From AgentManager's perspective an AgentProxy is indistinguishable from a
 local Agent: both expose execute_task(), execute_task_with_retry(),
 stream_task(), remember(), recall(), and clear_memory().
 
-New in Phase 5
---------------
+All HTTP goes through the hardened ``maki.connector.Connector`` layer,
+which owns URL validation, timeouts, and the mapping of transport/status
+failures onto the Maki exception tree.
+
 Circuit breaker  — After failure_threshold consecutive transient failures
                    the proxy stops attempting requests and raises immediately.
                    Resets automatically after recovery_timeout seconds.
@@ -20,10 +22,10 @@ Distributed tracing — Every execute_task / stream_task call generates a UUID
 mTLS             — Pass ssl_verify=False or a CA-bundle path, and/or
                    cert=(certfile, keyfile) for mutual TLS.
 
-Exception mapping
------------------
-    httpx timeout              → MakiTimeoutError
-    httpx connection error     → MakiNetworkError
+Exception mapping (performed by Connector)
+------------------------------------------
+    transport timeout          → MakiTimeoutError
+    connection error           → MakiNetworkError
     HTTP 408 / 504             → MakiTimeoutError
     HTTP 5xx                   → MakiNetworkError
     HTTP 4xx                   → MakiAPIError
@@ -35,14 +37,7 @@ import time
 import uuid
 from typing import Any, Dict, Generator, Optional, Union
 
-try:
-    import httpx
-except ImportError as _e:
-    raise ImportError(
-        "AgentProxy requires httpx. "
-        'Install it with: pip install "maki[distributed]"'
-    ) from _e
-
+from ..connector import Connector
 from ..exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
 from .circuit_breaker import CircuitBreaker, CircuitState
 
@@ -86,13 +81,13 @@ class AgentProxy:
         )
         self.last_trace_id: Optional[str] = None
 
-        # Build httpx.Client with optional SSL overrides.
-        client_kwargs: dict = {"timeout": timeout}
-        if ssl_verify is not True:
-            client_kwargs["verify"] = ssl_verify
-        if cert is not None:
-            client_kwargs["cert"] = cert
-        self._session = httpx.Client(**client_kwargs)
+        # Operator-configured endpoint: LAN/private addresses are legitimate.
+        self._http = Connector(
+            timeout=timeout,
+            allow_private=True,
+            verify=ssl_verify,
+            cert=cert,
+        )
 
         # Populated from /info on construction.
         self.agent_id: str = ""
@@ -117,52 +112,16 @@ class AgentProxy:
     def _url(self, path: str) -> str:
         return f"{self.endpoint}{path}"
 
-    def _raise_for_response(self, response: "httpx.Response") -> None:
-        if response.is_success:
-            return
-        code = response.status_code
-        detail = response.text
-        if code in (408, 504):
-            raise MakiTimeoutError(f"Remote agent timeout (HTTP {code}): {detail}")
-        if code >= 500:
-            raise MakiNetworkError(f"Remote agent server error (HTTP {code}): {detail}")
-        raise MakiAPIError(f"Remote agent rejected request (HTTP {code}): {detail}")
+    def _get(self, path: str, trace_id: Optional[str] = None):
+        return self._http.get(self._url(path), headers=self._headers(trace_id))
 
-    def _get(self, path: str, trace_id: Optional[str] = None) -> "httpx.Response":
-        try:
-            r = self._session.get(self._url(path), headers=self._headers(trace_id))
-        except httpx.TimeoutException as e:
-            raise MakiTimeoutError(f"Timeout on GET {path}") from e
-        except httpx.ConnectError as e:
-            raise MakiNetworkError(f"Cannot connect to {self.endpoint}: {e}") from e
-        except httpx.RequestError as e:
-            raise MakiNetworkError(f"Request failed on GET {path}: {e}") from e
-        self._raise_for_response(r)
-        return r
+    def _post(self, path: str, payload: dict, trace_id: Optional[str] = None):
+        return self._http.post(
+            self._url(path), json=payload, headers=self._headers(trace_id)
+        )
 
-    def _post(self, path: str, payload: dict, trace_id: Optional[str] = None) -> "httpx.Response":
-        try:
-            r = self._session.post(self._url(path), json=payload, headers=self._headers(trace_id))
-        except httpx.TimeoutException as e:
-            raise MakiTimeoutError(f"Timeout on POST {path}") from e
-        except httpx.ConnectError as e:
-            raise MakiNetworkError(f"Cannot connect to {self.endpoint}: {e}") from e
-        except httpx.RequestError as e:
-            raise MakiNetworkError(f"Request failed on POST {path}: {e}") from e
-        self._raise_for_response(r)
-        return r
-
-    def _delete(self, path: str, trace_id: Optional[str] = None) -> "httpx.Response":
-        try:
-            r = self._session.delete(self._url(path), headers=self._headers(trace_id))
-        except httpx.TimeoutException as e:
-            raise MakiTimeoutError(f"Timeout on DELETE {path}") from e
-        except httpx.ConnectError as e:
-            raise MakiNetworkError(f"Cannot connect to {self.endpoint}: {e}") from e
-        except httpx.RequestError as e:
-            raise MakiNetworkError(f"Request failed on DELETE {path}: {e}") from e
-        self._raise_for_response(r)
-        return r
+    def _delete(self, path: str, trace_id: Optional[str] = None):
+        return self._http.delete(self._url(path), headers=self._headers(trace_id))
 
     def _refresh_info(self) -> None:
         """Fetch agent metadata from /info (called at construction, no circuit check)."""
@@ -273,42 +232,46 @@ class AgentProxy:
         if context:
             payload["context"] = context
         headers = self._headers(trace_id)
+
         try:
-            with self._session.stream(
-                "POST", self._url("/stream"), json=payload, headers=headers,
-            ) as response:
-                if not response.is_success:
-                    # A streaming body must be read before .text is available;
-                    # otherwise httpx raises ResponseNotRead instead of the
-                    # mapped Maki error.
-                    response.read()
-                self._raise_for_response(response)
-                self._circuit_breaker.record_success()
-                for line in response.iter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    payload = line[len("data: "):]
-                    if payload == "[DONE]":
-                        return
-                    data = json.loads(payload)
-                    if "error" in data:
-                        raise MakiNetworkError(
-                            f"Stream error from remote agent: {data['error']}"
-                        )
-                    if "chunk" in data:
-                        yield data["chunk"]
+            response = self._http.post(
+                self._url("/stream"),
+                json=payload,
+                headers=headers,
+                stream=True,
+                raise_on_status=False,
+            )
         except _RETRYABLE:
             self._circuit_breaker.record_failure()
             raise
-        except httpx.TimeoutException as e:
+
+        try:
+            # Maps non-2xx onto the Maki tree; 4xx (MakiAPIError) does not
+            # trip the breaker, matching execute_task semantics.
+            Connector.raise_for_response(response)
+            self._circuit_breaker.record_success()
+            for raw in Connector.iter_lines(response):
+                line = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+                if not line.startswith("data: "):
+                    continue
+                data_part = line[len("data: "):]
+                if data_part == "[DONE]":
+                    return
+                data = json.loads(data_part)
+                if "error" in data:
+                    raise MakiNetworkError(
+                        f"Stream error from remote agent: {data['error']}"
+                    )
+                if "chunk" in data:
+                    yield data["chunk"]
+        except _RETRYABLE:
             self._circuit_breaker.record_failure()
-            raise MakiTimeoutError("Timeout during streaming") from e
-        except httpx.ConnectError as e:
-            self._circuit_breaker.record_failure()
-            raise MakiNetworkError(f"Cannot connect to {self.endpoint}: {e}") from e
-        except httpx.RequestError as e:
-            self._circuit_breaker.record_failure()
-            raise MakiNetworkError(f"Stream request failed: {e}") from e
+            raise
+        finally:
+            try:
+                response.close()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Memory
@@ -357,6 +320,8 @@ class AgentProxy:
 
     def __del__(self) -> None:
         try:
-            self._session.close()
+            http = getattr(self, "_http", None)
+            if http is not None:
+                http.close()
         except Exception:
             pass

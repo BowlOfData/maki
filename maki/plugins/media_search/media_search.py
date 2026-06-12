@@ -9,12 +9,20 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-import requests
-
 from maki.config import DEFAULT_HTTP_TIMEOUT, PEXELS_API_KEY_ENV
+from maki.connector import Connector
 
 
 ALLOWED_METHODS = ["fetch_pexels_image"]
+
+# All outbound HTTP goes through the hardened Connector layer
+# (SSRF validation + DNS pinning + error classification).
+_connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT)
+
+
+def _http_get(url, **kwargs):
+    """Fetch *url* through the shared Connector; raises Maki errors on failure."""
+    return _connector.get(url, **kwargs)
 
 
 class MediaSearch:
@@ -36,13 +44,11 @@ class MediaSearch:
             return None
 
         try:
-            resp = requests.get(
+            resp = _http_get(
                 "https://api.pexels.com/v1/search",
                 headers={"Authorization": api_key},
                 params={"query": query, "per_page": 1, "orientation": "landscape"},
-                timeout=DEFAULT_HTTP_TIMEOUT,
             )
-            resp.raise_for_status()
             photos = resp.json().get("photos", [])
             if not photos:
                 self.logger.warning("fetch_pexels_image: no results for query '%s'", query)

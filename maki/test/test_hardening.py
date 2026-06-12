@@ -3,10 +3,9 @@ Phase 5 tests: circuit breaker, distributed tracing, mTLS configuration.
 """
 import time
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
-httpx = pytest.importorskip("httpx", reason="httpx not installed")
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
 from fastapi.testclient import TestClient as _TestClient
@@ -18,9 +17,12 @@ from maki.distributed.circuit_breaker import CircuitBreaker, CircuitState
 from maki.distributed.proxy import AgentProxy, TRACE_HEADER
 from maki.distributed.server import create_app
 
+# App-routing helpers shared with test_agent_proxy.py
+from maki.test.test_agent_proxy import _make_connector, _mock_info_response
+
 
 # ---------------------------------------------------------------------------
-# Helpers (shared with test_agent_proxy.py)
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _llm(content="ok"):
@@ -35,32 +37,13 @@ def _mock_backend(content="result"):
     return m
 
 
-class _AppTransport(httpx.BaseTransport):
-    def __init__(self, app):
-        self._client = _TestClient(app, raise_server_exceptions=False)
-
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        resp = self._client.request(
-            method=request.method,
-            url=str(request.url),
-            content=request.content,
-            headers=dict(request.headers),
-        )
-        return httpx.Response(
-            status_code=resp.status_code,
-            headers=dict(resp.headers),
-            content=resp.content,
-        )
-
-
 def _make_proxy(content="result", api_key=None, failure_threshold=5,
                 recovery_timeout=60.0):
     backend = _mock_backend(content)
     agent = Agent("test-agent", backend, role="tester")
     app = create_app(agent, api_key=api_key)
-    transport = _AppTransport(app)
-    client = httpx.Client(transport=transport, timeout=10.0)
-    with patch("maki.distributed.proxy.httpx.Client", return_value=client):
+    with patch("maki.distributed.proxy.Connector",
+               return_value=_make_connector(app)):
         proxy = AgentProxy(
             endpoint="http://fake:8100", api_key=api_key,
             failure_threshold=failure_threshold,
@@ -70,22 +53,16 @@ def _make_proxy(content="result", api_key=None, failure_threshold=5,
 
 
 def _mock_proxy(failure_threshold=5, recovery_timeout=60.0):
-    """Proxy backed by a pure mock client (no real server)."""
-    mock_client = MagicMock()
-    mock_client.get.return_value = MagicMock(
-        status_code=200, is_success=True,
-        json=lambda: {
-            "agent_id": "x", "name": "t", "role": "", "plugins": [],
-            "backend": "Mock", "model": "t",
-        },
-    )
-    with patch("maki.distributed.proxy.httpx.Client", return_value=mock_client):
+    """Proxy backed by a pure mock connector (no real server)."""
+    mock_conn = MagicMock()
+    mock_conn.get.return_value = _mock_info_response()
+    with patch("maki.distributed.proxy.Connector", return_value=mock_conn):
         proxy = AgentProxy(
             endpoint="http://fake:8100",
             failure_threshold=failure_threshold,
             recovery_timeout=recovery_timeout,
         )
-    return proxy, mock_client
+    return proxy, mock_conn
 
 
 # ===========================================================================
@@ -197,7 +174,7 @@ class TestProxyCircuitBreaker(unittest.TestCase):
 
     def test_threshold_failures_open_circuit(self):
         proxy, mock_client = _mock_proxy(failure_threshold=3)
-        mock_client.post.side_effect = httpx.ConnectError("down")
+        mock_client.post.side_effect = MakiNetworkError("down")
         for _ in range(3):
             try:
                 proxy.execute_task("t")
@@ -207,7 +184,7 @@ class TestProxyCircuitBreaker(unittest.TestCase):
 
     def test_open_circuit_raises_without_http_call(self):
         proxy, mock_client = _mock_proxy(failure_threshold=2)
-        mock_client.post.side_effect = httpx.ConnectError("down")
+        mock_client.post.side_effect = MakiNetworkError("down")
         for _ in range(2):
             try:
                 proxy.execute_task("t")
@@ -222,9 +199,8 @@ class TestProxyCircuitBreaker(unittest.TestCase):
 
     def test_api_error_does_not_count_as_failure(self):
         proxy, mock_client = _mock_proxy(failure_threshold=2)
-        mock_client.post.return_value = MagicMock(
-            status_code=400, is_success=False, text="bad request"
-        )
+        # The connector maps 4xx onto MakiAPIError before the proxy sees it
+        mock_client.post.side_effect = MakiAPIError("HTTP client error 400: bad request")
         for _ in range(5):
             try:
                 proxy.execute_task("t")
@@ -235,7 +211,7 @@ class TestProxyCircuitBreaker(unittest.TestCase):
 
     def test_circuit_resets_after_recovery(self):
         proxy, mock_client = _mock_proxy(failure_threshold=2, recovery_timeout=0.02)
-        mock_client.post.side_effect = httpx.ConnectError("down")
+        mock_client.post.side_effect = MakiNetworkError("down")
         for _ in range(2):
             try:
                 proxy.execute_task("t")
@@ -260,7 +236,7 @@ class TestProxyCircuitBreaker(unittest.TestCase):
 
     def test_execute_with_retry_aborts_when_circuit_opens(self):
         proxy, mock_client = _mock_proxy(failure_threshold=2)
-        mock_client.post.side_effect = httpx.ConnectError("down")
+        mock_client.post.side_effect = MakiNetworkError("down")
 
         with self.assertRaises(MakiNetworkError):
             proxy.execute_task_with_retry("t", max_retries=10, retry_delay=0)
@@ -271,7 +247,7 @@ class TestProxyCircuitBreaker(unittest.TestCase):
 
     def test_stream_task_blocked_when_circuit_open(self):
         proxy, mock_client = _mock_proxy(failure_threshold=1)
-        mock_client.post.side_effect = httpx.ConnectError("down")
+        mock_client.post.side_effect = MakiNetworkError("down")
         try:
             proxy.execute_task("t")
         except MakiNetworkError:
@@ -394,49 +370,50 @@ class TestDistributedTracing(unittest.TestCase):
 
 class TestProxySSL(unittest.TestCase):
 
-    def _capture_client_kwargs(self, **proxy_kwargs):
-        """Return the kwargs passed to httpx.Client() constructor."""
+    def _capture_connector_kwargs(self, **proxy_kwargs):
+        """Return the kwargs the proxy passes to the Connector constructor."""
         captured = {}
 
-        def fake_client(**kwargs):
+        def fake_connector(**kwargs):
             captured.update(kwargs)
             mock = MagicMock()
-            mock.get.return_value = MagicMock(
-                status_code=200, is_success=True,
-                json=lambda: {
-                    "agent_id": "x", "name": "n", "role": "", "plugins": [],
-                    "backend": "Mock", "model": "m",
-                },
-            )
+            mock.get.return_value = _mock_info_response()
             return mock
 
-        with patch("maki.distributed.proxy.httpx.Client", side_effect=fake_client):
+        with patch("maki.distributed.proxy.Connector", side_effect=fake_connector):
             AgentProxy(endpoint="http://fake:8100", **proxy_kwargs)
         return captured
 
     def test_default_no_ssl_override(self):
-        kwargs = self._capture_client_kwargs()
-        self.assertNotIn("verify", kwargs)
-        self.assertNotIn("cert", kwargs)
+        kwargs = self._capture_connector_kwargs()
+        self.assertIs(kwargs.get("verify", True), True)
+        self.assertIsNone(kwargs.get("cert"))
 
     def test_ssl_verify_false(self):
-        kwargs = self._capture_client_kwargs(ssl_verify=False)
+        kwargs = self._capture_connector_kwargs(ssl_verify=False)
         self.assertEqual(kwargs.get("verify"), False)
 
     def test_ssl_verify_ca_bundle_path(self):
-        kwargs = self._capture_client_kwargs(ssl_verify="/etc/ssl/ca.pem")
+        kwargs = self._capture_connector_kwargs(ssl_verify="/etc/ssl/ca.pem")
         self.assertEqual(kwargs.get("verify"), "/etc/ssl/ca.pem")
 
     def test_client_cert_tuple(self):
-        kwargs = self._capture_client_kwargs(cert=("/cert.pem", "/key.pem"))
+        kwargs = self._capture_connector_kwargs(cert=("/cert.pem", "/key.pem"))
         self.assertEqual(kwargs.get("cert"), ("/cert.pem", "/key.pem"))
 
     def test_ssl_verify_and_cert_together(self):
-        kwargs = self._capture_client_kwargs(
+        kwargs = self._capture_connector_kwargs(
             ssl_verify="/ca.pem", cert=("/c.pem", "/k.pem")
         )
         self.assertEqual(kwargs.get("verify"), "/ca.pem")
         self.assertEqual(kwargs.get("cert"), ("/c.pem", "/k.pem"))
+
+    def test_connector_applies_tls_options_to_session(self):
+        """The Connector forwards verify/cert onto its requests session."""
+        from maki.connector import Connector
+        conn = Connector(verify="/ca.pem", cert=("/c.pem", "/k.pem"))
+        self.assertEqual(conn._session.verify, "/ca.pem")
+        self.assertEqual(conn._session.cert, ("/c.pem", "/k.pem"))
 
 
 # ===========================================================================

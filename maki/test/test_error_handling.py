@@ -15,22 +15,6 @@ from maki.agents import Agent, AgentManager
 
 class TestErrorHandling(unittest.TestCase):
 
-    def test_utils_compose_url_validation(self):
-        """Test that Utils.compose_url validates parameters"""
-        # Test valid call
-        result = Utils.compose_url("localhost", "11434", "generate")
-        self.assertEqual(result, "http://localhost:11434/api/generate")
-
-        # Test invalid parameters
-        with self.assertRaises(ValueError):
-            Utils.compose_url("", "11434", "generate")
-
-        with self.assertRaises(ValueError):
-            Utils.compose_url("localhost", "", "generate")
-
-        with self.assertRaises(ValueError):
-            Utils.compose_url("localhost", "11434", "")
-
     def test_utils_jsonify_validation(self):
         """Test that Utils.jsonify validates input"""
         # Test valid JSON

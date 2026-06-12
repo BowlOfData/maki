@@ -158,10 +158,10 @@ class TestSearchRss(unittest.TestCase):
         def fake_get(url, **kwargs):
             entries = entries_by_url.get(url, [])
             return _mock_feed_response(entries)
-        return patch("maki.plugins.web_search.web_search.requests.get", side_effect=fake_get)
+        return patch("maki.plugins.web_search.web_search._http_get", side_effect=fake_get)
 
     def test_returns_list(self):
-        with patch("maki.plugins.web_search.web_search.requests.get",
+        with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=_mock_feed_response([])):
             results = self.ws.search_rss({"TestFeed": "https://example.com/rss"})
         self.assertIsInstance(results, list)
@@ -234,7 +234,7 @@ class TestSearchRss(unittest.TestCase):
                 {"title": "OK", "link": "https://good.com/a", "pubDate": self.today_rfc, "description": ""}
             ])
 
-        with patch("maki.plugins.web_search.web_search.requests.get", side_effect=fake_get):
+        with patch("maki.plugins.web_search.web_search._http_get", side_effect=fake_get):
             with patch("maki.plugins.web_search.web_search.time.sleep"):
                 results = self.ws.search_rss({
                     "Bad":  "https://bad.com/rss",
@@ -260,7 +260,7 @@ class TestSearchHackerNews(unittest.TestCase):
         self.ws = WebSearch()
 
     def test_returns_list_on_http_error(self):
-        with patch("maki.plugins.web_search.web_search.requests.get", side_effect=Exception("timeout")):
+        with patch("maki.plugins.web_search.web_search._http_get", side_effect=Exception("timeout")):
             results = self.ws.search_hackernews("python")
         self.assertIsInstance(results, list)
         self.assertEqual(results, [])
@@ -278,7 +278,7 @@ class TestSearchHackerNews(unittest.TestCase):
         mock_resp.raise_for_status = MagicMock()
 
         with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
-             patch("maki.plugins.web_search.web_search.requests.get", return_value=mock_resp):
+             patch("maki.plugins.web_search.web_search._http_get", return_value=mock_resp):
             results = self.ws.search_hackernews("test")
 
         self.assertEqual(len(results), 1)
@@ -294,7 +294,7 @@ class TestSearchHackerNews(unittest.TestCase):
         mock_resp.raise_for_status = MagicMock()
 
         with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
-             patch("maki.plugins.web_search.web_search.requests.get", return_value=mock_resp):
+             patch("maki.plugins.web_search.web_search._http_get", return_value=mock_resp):
             results = self.ws.search_hackernews("test")
 
         self.assertEqual(len(results), 1)
@@ -311,7 +311,7 @@ class TestSearchHackerNews(unittest.TestCase):
             mock_resp.raise_for_status = MagicMock()
             return mock_resp
 
-        with patch("maki.plugins.web_search.web_search.requests.get", side_effect=fake_get):
+        with patch("maki.plugins.web_search.web_search._http_get", side_effect=fake_get):
             self.ws.search_hackernews("test")
 
         week_start_ts = int(_week_start_utc().timestamp())
@@ -344,7 +344,7 @@ class TestFetchRedditHot(unittest.TestCase):
         }
 
         with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
-             patch("maki.plugins.web_search.web_search.requests.get", return_value=mock_resp), \
+             patch("maki.plugins.web_search.web_search._http_get", return_value=mock_resp), \
              patch("maki.plugins.web_search.web_search.time.sleep"):
             results = self.ws.fetch_reddit_hot(["netsec"], max_per_sub=1)
 
@@ -365,7 +365,7 @@ class TestFetchGithubTrending(unittest.TestCase):
         return mock_resp
 
     def test_returns_list_on_http_error(self):
-        with patch("maki.plugins.web_search.web_search.requests.get", side_effect=Exception("timeout")):
+        with patch("maki.plugins.web_search.web_search._http_get", side_effect=Exception("timeout")):
             results = self.ws.fetch_github_trending()
         self.assertIsInstance(results, list)
         self.assertEqual(results, [])
@@ -379,7 +379,7 @@ class TestFetchGithubTrending(unittest.TestCase):
             "stargazers_count": 42,
             "created_at": "2026-05-01T12:00:00Z",
         }
-        with patch("maki.plugins.web_search.web_search.requests.get",
+        with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_github_response([item])):
             results = self.ws.fetch_github_trending()
 
@@ -395,7 +395,7 @@ class TestFetchGithubTrending(unittest.TestCase):
             {"html_url": "", "full_name": "no/url", "description": "", "topics": [], "stargazers_count": 5, "created_at": ""},
             {"html_url": "https://github.com/real/repo", "full_name": "real/repo", "description": "ok", "topics": [], "stargazers_count": 20, "created_at": ""},
         ]
-        with patch("maki.plugins.web_search.web_search.requests.get",
+        with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_github_response(items)):
             results = self.ws.fetch_github_trending()
 
@@ -411,7 +411,7 @@ class TestFetchGithubTrending(unittest.TestCase):
             "stargazers_count": 100,
             "created_at": "",
         }
-        with patch("maki.plugins.web_search.web_search.requests.get",
+        with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_github_response([item])):
             results = self.ws.fetch_github_trending()
 
@@ -431,7 +431,7 @@ class TestFetchGithubTrending(unittest.TestCase):
 
         fixed_now = datetime(2026, 5, 4, 6, 0, 0, tzinfo=timezone.utc)  # Monday 06:00
         with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
-             patch("maki.plugins.web_search.web_search.requests.get", side_effect=fake_get):
+             patch("maki.plugins.web_search.web_search._http_get", side_effect=fake_get):
             self.ws.fetch_github_trending()
 
         self.assertEqual(len(captured), 1)
@@ -470,7 +470,7 @@ class TestFetchLobsters(unittest.TestCase):
         return mock_resp
 
     def test_returns_empty_on_http_error(self):
-        with patch("maki.plugins.web_search.web_search.requests.get", side_effect=Exception("timeout")):
+        with patch("maki.plugins.web_search.web_search._http_get", side_effect=Exception("timeout")):
             results = self.ws.fetch_lobsters()
         self.assertEqual(results, [])
 
@@ -489,7 +489,7 @@ class TestFetchLobsters(unittest.TestCase):
 
     def test_result_structure(self):
         entries = [{"title": "Cool article", "link": "https://example.com/cool", "pubDate": self.today_rfc, "description": "A summary"}]
-        with patch("maki.plugins.web_search.web_search.requests.get",
+        with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_rss_response(entries)):
             results = self.ws.fetch_lobsters()
 
@@ -503,7 +503,7 @@ class TestFetchLobsters(unittest.TestCase):
             {"title": "Old",     "link": "https://example.com/old",  "pubDate": self.last_week_rfc, "description": ""},
             {"title": "Current", "link": "https://example.com/new",  "pubDate": self.today_rfc,     "description": ""},
         ]
-        with patch("maki.plugins.web_search.web_search.requests.get",
+        with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_rss_response(entries)):
             results = self.ws.fetch_lobsters()
 
@@ -516,7 +516,7 @@ class TestFetchLobsters(unittest.TestCase):
             {"title": "Image",   "link": "https://example.com/photo.jpg", "pubDate": self.today_rfc, "description": ""},
             {"title": "Article", "link": "https://example.com/post",       "pubDate": self.today_rfc, "description": "text"},
         ]
-        with patch("maki.plugins.web_search.web_search.requests.get",
+        with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_rss_response(entries)):
             results = self.ws.fetch_lobsters()
 
@@ -529,7 +529,7 @@ class TestFetchLobsters(unittest.TestCase):
             {"title": f"Article {i}", "link": f"https://example.com/{i}", "pubDate": self.today_rfc, "description": ""}
             for i in range(20)
         ]
-        with patch("maki.plugins.web_search.web_search.requests.get",
+        with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_rss_response(entries)):
             results = self.ws.fetch_lobsters(max_results=5)
 

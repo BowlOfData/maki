@@ -25,7 +25,7 @@ class TestMediaSearch(unittest.TestCase):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = {"photos": []}
-        with patch("maki.plugins.media_search.media_search.requests.get", return_value=mock_resp):
+        with patch("maki.plugins.media_search.media_search._http_get", return_value=mock_resp):
             self.assertIsNone(self.plugin.fetch_pexels_image("ai", "key"))
 
     def test_returns_first_large_image_url(self):
@@ -34,6 +34,6 @@ class TestMediaSearch(unittest.TestCase):
         mock_resp.json.return_value = {
             "photos": [{"src": {"large": "https://images.example.com/pic.jpg"}}]
         }
-        with patch("maki.plugins.media_search.media_search.requests.get", return_value=mock_resp):
+        with patch("maki.plugins.media_search.media_search._http_get", return_value=mock_resp):
             result = self.plugin.fetch_pexels_image("ai", "key")
         self.assertEqual(result, "https://images.example.com/pic.jpg")

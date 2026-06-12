@@ -280,7 +280,7 @@ class TestMakiLLamaExceptionWrapping(unittest.TestCase):
         import requests
         from maki.exceptions import MakiTimeoutError
         llm = self._make()
-        llm._session.post = MagicMock(side_effect=requests.exceptions.Timeout)
+        llm._http._session.post = MagicMock(side_effect=requests.exceptions.Timeout)
         with self.assertRaises(MakiTimeoutError):
             llm.chat("hello")
 
@@ -289,7 +289,7 @@ class TestMakiLLamaExceptionWrapping(unittest.TestCase):
         import requests
         from maki.exceptions import MakiNetworkError
         llm = self._make()
-        llm._session.post = MagicMock(side_effect=requests.exceptions.ConnectionError)
+        llm._http._session.post = MagicMock(side_effect=requests.exceptions.ConnectionError)
         with self.assertRaises(MakiNetworkError):
             llm.chat("hello")
 
