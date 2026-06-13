@@ -12,11 +12,11 @@
 ## Example
 
 ```python
-from maki import Maki
+from maki import MakiLLama
 from maki.plugins.json_reader import JsonReader
 
-maki = Maki("http://localhost", 11434, "llama3")
-plugin = JsonReader(maki)
+llm = MakiLLama()
+plugin = JsonReader(llm)
 
 result = plugin.read_json_fields(
     "data/articles.json",
