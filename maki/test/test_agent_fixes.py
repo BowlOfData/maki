@@ -256,7 +256,7 @@ class TestStatefulAgent(Base):
             agent.execute_task("task one")
 
         agent.reset_conversation()
-        self.assertEqual(len(agent._conversation_history), 0)
+        self.assertEqual(len(agent._conversation_memory), 0)
 
         captured = []
         with patch.object(self.maki, 'chat', side_effect=lambda p, **kw: captured.append(p) or _r("r")):

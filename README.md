@@ -4,15 +4,14 @@
 
 # Maki
 
-[![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-405%20passing-brightgreen?logo=pytest)](https://pytest.org/)
+[![Tests](https://img.shields.io/badge/tests-888%20passing-brightgreen?logo=pytest)](https://pytest.org/)
 [![Ollama](https://img.shields.io/badge/LLM-Ollama%20local-lightgrey?logo=ollama)](https://ollama.ai/)
 [![HuggingFace](https://img.shields.io/badge/LLM-HuggingFace-yellow?logo=huggingface)](https://huggingface.co/)
-[![PySide6](https://img.shields.io/badge/GUI-PySide6-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/)
 
-**Maki** is a Python framework for building multi-agent LLM applications. It supports multiple LLM backends (Ollama and HuggingFace), a plugin system with 12 built-in tools, and a workflow engine with dependency resolution and parallel execution.
+**Maki** is a Python framework for building multi-agent LLM applications. It supports multiple LLM backends (Ollama, OpenAI, Anthropic, HuggingFace), a plugin system with 17 built-in tools, a workflow engine with dependency resolution and parallel execution, and a distributed layer for serving agents over HTTP.
 
 ---
 
@@ -25,23 +24,29 @@
 The framework is organized into four layers:
 
 - **Public API** — `maki/__init__.py` lazy-loads all exports on first access
-- **LLM Backends** — `MakiLLama` (Ollama) and `HFBackend` (HuggingFace) both implement the abstract `LLMBackend` contract
+- **LLM Backends** — `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, and `HFBackend` all implement the abstract `LLMBackend` contract
 - **Agent System** — `Agent` composes `PluginHandler` and `ReasoningEngine` mixins; `AgentManager` orchestrates agents via `WorkflowTask` and `WorkflowState`
-- **Infrastructure** — `Connector` (SSRF-protected HTTP), shared data classes, typed exceptions, runtime config, and logging
+- **Distributed Layer** — `AgentServer` (FastAPI) exposes agents over HTTP; `AgentProxy` provides a remote-agent client with circuit-breaking; `DistributedAgentManager` mixes local and remote agents
+- **Infrastructure** — `Connector` (SSRF-protected HTTP with connect-time IP pinning), shared data classes, typed exceptions, runtime config, and structured logging
 
-The Plugin System sits alongside the Agent layer: plugins are loaded on demand and invoked automatically when the LLM emits a `TOOL:` directive.
+The Plugin System sits alongside the Agent layer: plugins are loaded on demand and invoked automatically when the LLM emits a `TOOL:` directive or via native tool-calling APIs (Ollama, OpenAI, Anthropic).
 
 ---
 
 ## Features
 
 - `MakiLLama` — Ollama chat API with synchronous, streaming, async, and vision-capable workflows
+- `MakiOpenAI` — OpenAI chat completions, including reasoning models (o3/o4)
+- `MakiAnthropic` — Anthropic messages API (Claude Sonnet, Haiku, Opus)
 - `HFBackend` — direct HuggingFace Transformers integration with quantization and device selection
-- `Agent` — role-based agents with task execution, memory, reasoning, and plugin support
-- `AgentManager` — multi-agent orchestration: sequential pipelines, collaborative tasks, and dependency-aware workflows
-- Stateful chat sessions and bounded conversation history
-- 12 built-in plugins covering files, directories, JSON, web content, FTP/SFTP, search, image classification, OCR, and media
-- SSRF-protected HTTP connector with error classification and timeout handling
+- `Agent` — role-based agents with task execution, memory, reasoning, and plugin support; per-agent execution lock for concurrent safety
+- `AgentManager` — multi-agent orchestration: sequential pipelines, collaborative tasks, and dependency-aware workflows with parallel batching and checkpoint/resume
+- `ConversationMemory` — token-budgeted, pair-based conversation history shared by `Agent` (stateful mode) and `ChatSession`
+- Native tool-calling for all backends (Ollama `tools=`, OpenAI, Anthropic tool use) with multi-round execution and self-correction
+- 17 built-in plugins covering files, web content, search, trading, memory, and media
+- Distributed agent serving: `maki serve` exposes any agent over HTTP; `AgentProxy` consumes remote agents transparently
+- SSRF-protected HTTP connector with DNS pinning, error classification, and configurable timeouts
+- Fail-closed plugin security: every plugin declares `ALLOWED_METHODS`; destructive methods require explicit opt-in
 - Explicit logging setup and a typed exception hierarchy
 
 ---
@@ -49,26 +54,28 @@ The Plugin System sits alongside the Agent layer: plugins are loaded on demand a
 ## Installation
 
 ```bash
-pip install .
+pip install -e .
 ```
 
 For development tools:
 
 ```bash
-pip install ".[dev]"
+pip install -e ".[dev]"
 ```
 
 Some built-in plugins and backends rely on optional extras (defined in [pyproject.toml](pyproject.toml)):
 
 - `maki[web]` — `feedparser`, `readability-lxml`, `html2text` (web search / web-to-Markdown)
 - `maki[trends]` — `pytrends` (Google Trends)
-- `maki[alpaca]` — `alpaca-py` (market data, news, trading)
+- `maki[alpaca]` — `alpaca-py` (market data, news, trading, streaming)
 - `maki[ftp]` — `paramiko` (FTP/SFTP)
 - `maki[gui]` — `PySide6` (desktop GUI)
-- `maki[openai]` / `maki[anthropic]` — hosted LLM backends
-- `maki[distributed]` / `maki[distributed-redis]` — agent server, proxies, Redis checkpoints
+- `maki[openai]` — `openai` (OpenAI backend)
+- `maki[anthropic]` — `anthropic` (Anthropic backend)
+- `maki[distributed]` — `fastapi`, `uvicorn`, `pyyaml` (agent server and proxies)
+- `maki[distributed-redis]` — `redis` (Redis workflow checkpoints)
 
-Install everything with `pip install ".[all]"`.
+Install everything with `pip install -e ".[all]"`.
 
 ---
 
@@ -138,18 +145,18 @@ response = session.say("What should we verify before publishing a Python package
 print(response.content)
 ```
 
-### Vision call
+### Hosted backends
 
 ```python
-import base64
-from maki import MakiLLama
+from maki import MakiOpenAI, MakiAnthropic
 
-llm = MakiLLama(model="gemma4:26b")
-with open("image.png", "rb") as f:
-    image_b64 = base64.b64encode(f.read()).decode("utf-8")
+# OpenAI
+llm = MakiOpenAI(model="gpt-4o")
+response = llm.chat("What is the capital of France?")
 
-response = llm.chat_with_image("Describe this image.", image_b64=image_b64)
-print(response.content)
+# Anthropic
+llm = MakiAnthropic(model="claude-sonnet-4-5")
+response = llm.chat("Summarize this code in one sentence.")
 ```
 
 ---
@@ -208,8 +215,6 @@ result = agent.execute_task("Rank these 50 articles by relevance: ...")
 print(result)
 ```
 
-Use this whenever the task involves a large prompt or a long expected output — ranking, summarisation of many items, code generation, etc.
-
 ---
 
 ## Agent Manager and Workflows
@@ -255,24 +260,61 @@ Supported manager patterns:
 
 ---
 
+## Distributed Layer
+
+Serve any agent over HTTP with `maki serve`:
+
+```bash
+maki serve --config agent.yaml --host 127.0.0.1 --port 8100
+```
+
+```yaml
+# agent.yaml
+name: MyAgent
+model: gemma4:27b
+role: assistant
+plugins:
+  - web_search
+  - file_reader
+```
+
+Connect to a remote agent from another process:
+
+```python
+from maki.distributed.proxy import AgentProxy
+
+agent = AgentProxy(name="MyAgent", base_url="http://127.0.0.1:8100")
+result = agent.execute_task("Summarize the latest AI news.")
+```
+
+`DistributedAgentManager` lets you mix local and remote agents in the same workflow.
+
+---
+
 ## Plugins
 
 Built-in plugins are registered in [maki/plugins/\_\_init\_\_.py](maki/plugins/__init__.py):
 
-| Plugin | Description |
-|---|---|
-| `directory_reader` | List and inspect directory contents |
-| `file_reader` | Read files from disk |
-| `file_writer` | Write files to disk |
-| `ftp_client` | FTP/SFTP file transfers |
-| `image_classifier` | Classify images via a local model |
-| `json_reader` | Parse and query JSON files |
-| `media_search` | Search media sources |
-| `ocr` | Extract text from images |
-| `provider_updates` | Fetch provider news and updates |
-| `trend_search` | Google Trends queries via `pytrends` |
-| `web_search` | Web search integration |
-| `web_to_md` | Fetch a URL and convert to Markdown |
+| Plugin | Description | Extra |
+|---|---|---|
+| `directory_reader` | List and inspect directory contents | — |
+| `file_reader` | Read files from disk | — |
+| `file_writer` | Write files to disk | — |
+| `json_reader` | Parse and query JSON files | — |
+| `image_classifier` | Classify images via a local model | — |
+| `ocr` | Extract text from images | — |
+| `web_search` | RSS, HackerNews, Reddit, GitHub Trending, Lobste.rs | `web` |
+| `web_to_md` | Fetch a URL and convert to Markdown | `web` |
+| `provider_updates` | Fetch LLM provider release notes | `web` |
+| `media_search` | Search Pexels for images | `web` |
+| `trend_search` | Google Trends queries | `trends` |
+| `ftp_client` | FTP/SFTP file transfers | `ftp` |
+| `alpaca_data` | Crypto bar and quote data | `alpaca` |
+| `alpaca_news` | Financial news from Alpaca and RSS | `alpaca` |
+| `alpaca_trading` | Submit and manage Alpaca trades | `alpaca` |
+| `alpaca_stream` | Live crypto data stream | `alpaca` |
+| `obsidian_memory` | Persistent note-based memory (Obsidian vault) | — |
+| `rag_memory` | Retrieval-augmented memory with pluggable vector backends | — |
 
 ### Loading a plugin in an agent
 
@@ -291,7 +333,7 @@ result = agent.execute_task(
 print(result)
 ```
 
-When `use_plugins=True`, the agent prompt exposes available plugin methods and the model can emit `TOOL:` directives that Maki validates and executes automatically.
+When `use_plugins=True` (or the backend supports native tool-calling), available plugin methods are advertised to the model and executed automatically. Destructive methods (file writes, trades, FTP deletes) require `Agent(allow_dangerous_tools=True)`.
 
 ---
 
@@ -315,15 +357,12 @@ Supports quantization and device selection (`cpu`, `cuda`, `mps`).
 
 Top-level imports exposed by `maki`:
 
-- `MakiLLama`
-- `HFBackend`
-- `Agent`
-- `AgentManager`
-- `LLMBackend`
-- `GenerationConfig`
-- `LLMResponse`
-- `Message`
-- `RateLimiter`
+- `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `HFBackend`
+- `LLMBackend`, `BackendType`
+- `Agent`, `AgentManager`
+- `GenerationConfig`, `LLMResponse`, `Message`, `ToolCall`
+- `ConversationMemory`, `RateLimiter`
+- `Connector`, `Utils`
 - `config`
 
 All exports are lazy-loaded on first access.
@@ -332,7 +371,7 @@ All exports are lazy-loaded on first access.
 
 ## Desktop App
 
-The repository includes a PySide6/QML desktop shell:
+The repository includes a PySide6/QML desktop shell (requires `maki[gui]`):
 
 ```bash
 maki-gui
@@ -346,7 +385,7 @@ maki-gui
 pytest
 ```
 
-405 tests covering backends, agents, workflows, plugins, connectors, and security-related behaviour.
+888 tests covering backends, agents, workflows, plugins, connectors, distributed layer, and security-related behaviour. Tests marked `@pytest.mark.network` (requiring live external services) are excluded by default; run them explicitly with `pytest -m network`.
 
 ---
 

@@ -30,6 +30,139 @@ class Message:
         return cls(role=data["role"], content=data["content"], images=data.get("images"))
 
 
+class ConversationMemory:
+    """
+    Token-budgeted conversation history shared by ChatSession and Agent.
+
+    Stores Message objects in user/assistant pairs.  Oldest pairs are
+    evicted when the total estimated token count exceeds ``token_budget``
+    or the ``max_entries`` hard cap is reached.  Token estimate: len(text)//4
+    (no tokenizer dependency).
+
+    Always append messages in user/assistant order; the class does not
+    validate role alternation, but mixing roles will produce garbled output
+    from ``format_as_text``.
+    """
+
+    DEFAULT_TOKEN_BUDGET: int = 4096   # ≈ 16 K chars of conversation
+    DEFAULT_MAX_ENTRIES: int = 200     # individual Message objects (= 100 turns)
+
+    def __init__(
+        self,
+        token_budget: int = DEFAULT_TOKEN_BUDGET,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+    ) -> None:
+        if not isinstance(token_budget, int) or token_budget < 1:
+            raise ValueError("token_budget must be a positive integer")
+        if not isinstance(max_entries, int) or max_entries < 2:
+            raise ValueError("max_entries must be an integer >= 2")
+        self._token_budget = token_budget
+        self._max_entries = max_entries
+        self._messages: list = []   # list[Message]
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def token_budget(self) -> int:
+        return self._token_budget
+
+    @token_budget.setter
+    def token_budget(self, value: int) -> None:
+        if not isinstance(value, int) or value < 1:
+            raise ValueError("token_budget must be a positive integer")
+        self._token_budget = value
+        self._trim()
+
+    @property
+    def max_entries(self) -> int:
+        return self._max_entries
+
+    @max_entries.setter
+    def max_entries(self, value: int) -> None:
+        if not isinstance(value, int) or value < 2:
+            raise ValueError("max_entries must be an integer >= 2")
+        self._max_entries = value
+        self._trim()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        return max(1, len(text) // 4)
+
+    def _total_tokens(self) -> int:
+        return sum(self._estimate_tokens(m.content) for m in self._messages)
+
+    def _trim(self) -> None:
+        """Evict oldest pairs until both max_entries and token_budget are satisfied.
+
+        We always keep at least the most recent pair (>=4 messages required before
+        eviction starts), so a single large exchange is never silently dropped.
+        """
+        while len(self._messages) > self._max_entries and len(self._messages) >= 4:
+            del self._messages[0]
+            del self._messages[0]
+        while self._total_tokens() > self._token_budget and len(self._messages) >= 4:
+            del self._messages[0]
+            del self._messages[0]
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def append(self, message: 'Message') -> None:
+        """Append a message and evict oldest pairs if over budget or cap."""
+        self._messages.append(message)
+        self._trim()
+
+    def messages(self) -> list:
+        """Return a snapshot of all stored messages (list[Message])."""
+        return list(self._messages)
+
+    def format_as_text(self) -> str:
+        """Format stored pairs as a text block for Agent stateful prompts."""
+        if not self._messages:
+            return ""
+        lines = []
+        i = 0
+        while i + 1 < len(self._messages):
+            lines.append(f"Task: {self._messages[i].content}")
+            lines.append(f"Response: {self._messages[i + 1].content}")
+            i += 2
+        return "\n\nPrior conversation:\n" + "\n".join(lines) if lines else ""
+
+    def clear(self) -> None:
+        self._messages.clear()
+
+    def __len__(self) -> int:
+        return len(self._messages)
+
+    # ------------------------------------------------------------------
+    # Serialisation
+    # ------------------------------------------------------------------
+
+    def to_list(self) -> list:
+        """Serialize to a JSON-compatible list of message dicts."""
+        return [m.to_dict() for m in self._messages]
+
+    @classmethod
+    def from_list(
+        cls,
+        entries: list,
+        token_budget: int = DEFAULT_TOKEN_BUDGET,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+    ) -> 'ConversationMemory':
+        """Restore from a list of message dicts produced by ``to_list()``."""
+        mem = cls(token_budget=token_budget, max_entries=max_entries)
+        for d in entries:
+            mem._messages.append(Message.from_dict(d))
+        return mem
+
+
 @dataclass
 class GenerationConfig:
     """Sampling / generation hyper-parameters forwarded to Ollama or HuggingFace."""

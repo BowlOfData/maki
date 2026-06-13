@@ -133,7 +133,7 @@ class TestAgentSerialization(unittest.TestCase):
         self.assertTrue(restored.stateful)
         self.assertEqual(restored.memory, {})
         self.assertEqual(len(restored.task_history), 0)
-        self.assertEqual(len(restored._conversation_history), 0)
+        self.assertEqual(len(restored._conversation_memory), 0)
 
     def test_roundtrip_preserves_memory(self):
         backend = _mock_backend()
@@ -161,8 +161,13 @@ class TestAgentSerialization(unittest.TestCase):
         agent.execute_task("first task")
         data = _roundtrip(agent)
         restored = Agent.from_dict(data, backend)
-        self.assertEqual(len(restored._conversation_history), 1)
-        self.assertEqual(restored._conversation_history[0]['task'], "first task")
+        # Conversation stored as Message pairs: user turn then assistant turn
+        msgs = restored._conversation_memory.messages()
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(msgs[0].role, "user")
+        self.assertEqual(msgs[0].content, "first task")
+        self.assertEqual(msgs[1].role, "assistant")
+        self.assertEqual(msgs[1].content, "ok")
 
     def test_roundtrip_max_history_entries(self):
         backend = _mock_backend()
@@ -172,14 +177,15 @@ class TestAgentSerialization(unittest.TestCase):
         restored = Agent.from_dict(data, backend)
         self.assertEqual(restored._max_history_entries, 50)
         self.assertEqual(restored.task_history.maxlen, 50)
+        self.assertEqual(restored._conversation_memory.max_entries, 50)
 
-    def test_roundtrip_stateful_context_window(self):
+    def test_roundtrip_conversation_token_budget(self):
         backend = _mock_backend()
-        agent = Agent("ctx-test", backend)
-        agent._stateful_context_window = 5
+        agent = Agent("budget-test", backend)
+        agent._conversation_memory.token_budget = 8192
         data = _roundtrip(agent)
         restored = Agent.from_dict(data, backend)
-        self.assertEqual(restored._stateful_context_window, 5)
+        self.assertEqual(restored._conversation_memory.token_budget, 8192)
 
     def test_to_dict_excludes_backend(self):
         agent = Agent("no-backend-test", _mock_backend())
