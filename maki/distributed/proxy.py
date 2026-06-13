@@ -303,7 +303,7 @@ class AgentProxy:
         try:
             r = self._get(f"/memory/{key}")
         except MakiAPIError as e:
-            if "404" in str(e):
+            if e.status_code == 404:
                 return None
             raise
         return r.json()["value"]

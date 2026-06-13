@@ -198,7 +198,8 @@ class Agent(PluginHandler, ReasoningEngine):
         self._conversation_memory.clear()
 
     def execute_task_with_retry(self, task: str, context: Optional[Dict] = None,
-                               max_retries: int = 3, retry_delay: float = 1.0) -> str:
+                               max_retries: int = 3, retry_delay: float = 1.0,
+                               use_plugins: bool = False) -> str:
         """
         Execute a task with retry logic.
 
@@ -219,7 +220,7 @@ class Agent(PluginHandler, ReasoningEngine):
         """
         for attempt in range(max_retries):
             try:
-                return self.execute_task(task, context)
+                return self.execute_task(task, context, use_plugins=use_plugins)
             except _RETRYABLE_ERRORS as e:
                 if attempt == max_retries - 1:
                     raise

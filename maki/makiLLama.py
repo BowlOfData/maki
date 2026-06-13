@@ -271,6 +271,7 @@ class MakiLLama(LLMBackend):
         history: Optional[list[Message]] = None,
         config: Optional[GenerationConfig] = None,
         system: Optional[str] = None,
+        images: Optional[list[str]] = None,
     ) -> Generator[str, None, None]:
         """
         Streaming generation — yields text chunks as they arrive.
@@ -282,7 +283,7 @@ class MakiLLama(LLMBackend):
         log.debug("stream: %s", prompt[:100])
         if self._rate_limiter:
             self._rate_limiter.acquire()
-        payload = self._build_payload(prompt, history, config, stream=True, system=system)
+        payload = self._build_payload(prompt, history, config, stream=True, system=system, images=images)
         response = None
         try:
             response = self._http.post(

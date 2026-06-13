@@ -35,7 +35,6 @@ class AgentManager:
         """
         self.maki = maki_instance
         self.agents: Dict[str, Agent] = {}
-        self.task_queue: List[Dict] = []
 
         logger.info("AgentManager initialized")
 
@@ -310,6 +309,11 @@ class AgentManager:
         """
         if not workflow:
             return {}
+        first_type = type(workflow[0])
+        if not all(type(item) is first_type for item in workflow):
+            raise ValueError(
+                "run_workflow requires a homogeneous list: all dicts or all WorkflowTask objects"
+            )
         if isinstance(workflow[0], WorkflowTask):
             return self._run_workflow_tasks(
                 workflow, workflow_id=workflow_id, state_store=state_store
@@ -549,6 +553,7 @@ class AgentManager:
         wt.status = TaskStatus.IN_PROGRESS
         wt.attempts += 1
         start = time.time()
+        wt.timestamp = start
 
         try:
             result = agent.execute_task_with_retry(

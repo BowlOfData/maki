@@ -320,7 +320,7 @@ class Connector:
             raise MakiTimeoutError(f"HTTP {status} (timeout): {detail}")
         if status >= 500:
             raise MakiNetworkError(f"HTTP server error {status}: {detail}")
-        raise MakiAPIError(f"HTTP client error {status}: {detail}")
+        raise MakiAPIError(f"HTTP client error {status}: {detail}", status_code=status)
 
     @staticmethod
     def iter_lines(response, **kwargs):

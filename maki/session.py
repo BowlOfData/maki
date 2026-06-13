@@ -76,9 +76,9 @@ class ChatSession:
         """Pretty-print the full conversation."""
         for msg in self._memory.messages():
             color = "cyan" if msg.role == "user" else "green"
-            log.info(f"[bold {color}]{msg.role.upper()}[/bold {color}]")
-            log.info(msg.content)
-            log.info("")
+            print(f"\033[1m{msg.role.upper()}\033[0m")
+            print(msg.content)
+            print()
 
     @property
     def history(self) -> list:
