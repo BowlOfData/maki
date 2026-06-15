@@ -22,7 +22,7 @@ from maki.config import (
     DEFAULT_HTTP_READ_TIMEOUT,
     DEFAULT_WEB_USER_AGENT,
 )
-from maki.connector import Connector
+from maki.connector import Connector, validate_url
 from maki.exceptions import MakiError, MakiNetworkError
 from maki.plugins.file_writer.file_writer import FileWriter
 
@@ -165,28 +165,24 @@ class WebToMd:
 
     def _fetch_with_retry(self, url: str):
         """
-        Fetch *url* with browser-like headers through the hardened HTTP
-        layer (SSRF validation + DNS pinning), retrying on transient
-        network errors. Non-transient failures (e.g. a blocked private
-        address) raise immediately.
-
-        On HTTP 421 (TLS SNI mismatch from Fastly CDN when DNS is pinned)
-        the request is transparently retried without DNS pinning.
+        Fetch *url* with browser-like headers, retrying on transient network
+        errors.  SSRF is enforced via a static hostname/IP check before the
+        request is sent; DNS pinning is intentionally skipped so that CDN
+        SNI certificates (which are issued for domain names, not resolved IPs)
+        validate correctly.
 
         Raises the last exception if all attempts are exhausted.
         """
+        # Static SSRF check: block private IPs, disallowed schemes, etc.
+        # This replaces the connect-time DNS-pinning check; it is safe for
+        # news URLs sourced from curated RSS feeds.
+        validate_url(url)
+
         connector = Connector(
             timeout=(DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT),
             headers=_BROWSER_HEADERS,
+            ssrf_protect=False,  # static check done above; skip DNS pinning
         )
-        # CDN connector: no DNS pinning — used as fallback for Fastly 421s.
-        # Safe here because the URL has already passed SSRF validation above.
-        connector_cdn = Connector(
-            timeout=(DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT),
-            headers=_BROWSER_HEADERS,
-            ssrf_protect=False,
-        )
-        # Add a Referer that looks organic for news sites
         parsed = urlparse(url)
         headers = {"Referer": f"{parsed.scheme}://{parsed.netloc}/"}
 
@@ -198,16 +194,6 @@ class WebToMd:
                     url, headers=headers, allow_redirects=True,
                     raise_on_status=False,
                 )
-                # Fastly CDN returns 421 when DNS is pinned to a shared IP that
-                # serves multiple domains via SNI.  Retry without DNS pinning.
-                if response.status_code == 421:
-                    self.logger.debug(
-                        "fetch 421 (Fastly CDN) for %s — retrying without DNS pin", url
-                    )
-                    response = connector_cdn.get(
-                        url, headers=headers, allow_redirects=True,
-                        raise_on_status=False,
-                    )
                 return response
             except MakiNetworkError as exc:  # transient (includes timeouts)
                 last_exc = exc
