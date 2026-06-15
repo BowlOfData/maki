@@ -154,14 +154,14 @@ class TestSearchRss(unittest.TestCase):
         )
 
     def _patch_requests(self, entries_by_url):
-        """Patch requests.get to return different entries per feed URL."""
+        """Patch the CDN getter (used by search_rss) to return mock feed entries."""
         def fake_get(url, **kwargs):
             entries = entries_by_url.get(url, [])
             return _mock_feed_response(entries)
-        return patch("maki.plugins.web_search.web_search._http_get", side_effect=fake_get)
+        return patch("maki.plugins.web_search.web_search._cdn_get", side_effect=fake_get)
 
     def test_returns_list(self):
-        with patch("maki.plugins.web_search.web_search._http_get",
+        with patch("maki.plugins.web_search.web_search._cdn_get",
                    return_value=_mock_feed_response([])):
             results = self.ws.search_rss({"TestFeed": "https://example.com/rss"})
         self.assertIsInstance(results, list)
@@ -185,9 +185,9 @@ class TestSearchRss(unittest.TestCase):
             with patch("maki.plugins.web_search.web_search.time.sleep"):
                 results = self.ws.search_rss({"X": "https://x.com/rss"})
 
-        if results:
-            expected_keys = {"title", "url", "snippet", "source", "published"}
-            self.assertEqual(set(results[0].keys()), expected_keys)
+        self.assertGreater(len(results), 0, "expected at least one result from mocked feed")
+        expected_keys = {"title", "url", "snippet", "source", "published"}
+        self.assertEqual(set(results[0].keys()), expected_keys)
 
     def test_filters_old_articles(self):
         entries = [
@@ -234,7 +234,7 @@ class TestSearchRss(unittest.TestCase):
                 {"title": "OK", "link": "https://good.com/a", "pubDate": self.today_rfc, "description": ""}
             ])
 
-        with patch("maki.plugins.web_search.web_search._http_get", side_effect=fake_get):
+        with patch("maki.plugins.web_search.web_search._cdn_get", side_effect=fake_get):
             with patch("maki.plugins.web_search.web_search.time.sleep"):
                 results = self.ws.search_rss({
                     "Bad":  "https://bad.com/rss",
@@ -250,8 +250,8 @@ class TestSearchRss(unittest.TestCase):
             with patch("maki.plugins.web_search.web_search.time.sleep"):
                 results = self.ws.search_rss({"TechCrunch": "https://tc.com/rss"})
 
-        if results:
-            self.assertEqual(results[0]["source"], "TechCrunch")
+        self.assertGreater(len(results), 0, "expected at least one result from mocked feed")
+        self.assertEqual(results[0]["source"], "TechCrunch")
 
 
 class TestSearchHackerNews(unittest.TestCase):
@@ -344,7 +344,7 @@ class TestFetchRedditHot(unittest.TestCase):
         mock_resp.text = rss_xml
 
         with patch("maki.plugins.web_search.web_search._now_utc", return_value=fixed_now), \
-             patch("maki.plugins.web_search.web_search._http_get", return_value=mock_resp), \
+             patch("maki.plugins.web_search.web_search._cdn_get", return_value=mock_resp), \
              patch("maki.plugins.web_search.web_search.time.sleep"):
             results = self.ws.fetch_reddit_hot(["netsec"], max_per_sub=1)
 
