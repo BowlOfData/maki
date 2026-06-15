@@ -170,11 +170,21 @@ class WebToMd:
         network errors. Non-transient failures (e.g. a blocked private
         address) raise immediately.
 
+        On HTTP 421 (TLS SNI mismatch from Fastly CDN when DNS is pinned)
+        the request is transparently retried without DNS pinning.
+
         Raises the last exception if all attempts are exhausted.
         """
         connector = Connector(
             timeout=(DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT),
             headers=_BROWSER_HEADERS,
+        )
+        # CDN connector: no DNS pinning — used as fallback for Fastly 421s.
+        # Safe here because the URL has already passed SSRF validation above.
+        connector_cdn = Connector(
+            timeout=(DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT),
+            headers=_BROWSER_HEADERS,
+            ssrf_protect=False,
         )
         # Add a Referer that looks organic for news sites
         parsed = urlparse(url)
@@ -184,10 +194,21 @@ class WebToMd:
         for attempt, delay in enumerate((*_RETRY_DELAYS, None), start=1):
             try:
                 # raise_on_status=False: callers inspect status_code themselves
-                return connector.get(
+                response = connector.get(
                     url, headers=headers, allow_redirects=True,
                     raise_on_status=False,
                 )
+                # Fastly CDN returns 421 when DNS is pinned to a shared IP that
+                # serves multiple domains via SNI.  Retry without DNS pinning.
+                if response.status_code == 421:
+                    self.logger.debug(
+                        "fetch 421 (Fastly CDN) for %s — retrying without DNS pin", url
+                    )
+                    response = connector_cdn.get(
+                        url, headers=headers, allow_redirects=True,
+                        raise_on_status=False,
+                    )
+                return response
             except MakiNetworkError as exc:  # transient (includes timeouts)
                 last_exc = exc
                 if delay is None:

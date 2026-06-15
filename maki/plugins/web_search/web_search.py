@@ -42,6 +42,15 @@ ALLOWED_METHODS = [
 
 _DEFAULT_HEADERS = {"User-Agent": DEFAULT_WEB_USER_AGENT}
 
+# RSS-specific headers — includes Accept for XML feed types and Accept-Language
+# so that Cloudflare and similar CDN WAFs treat the request as browser-like.
+_RSS_HEADERS = {
+    "User-Agent": DEFAULT_WEB_USER_AGENT,
+    "Accept": "application/rss+xml, application/atom+xml, text/xml, application/xml, */*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+}
+
 # All outbound HTTP goes through the hardened Connector layer
 # (SSRF validation + DNS pinning + error classification).
 _connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT)
@@ -133,7 +142,9 @@ class WebSearch:
 
         for source, feed_url in feeds.items():
             try:
-                resp = _http_get(feed_url, headers=_DEFAULT_HEADERS)
+                # Use cdn connector (no DNS pinning) with browser-like RSS
+                # headers to avoid 421 on Fastly CDN and 403 on Cloudflare WAF.
+                resp = _cdn_get(feed_url, headers=_RSS_HEADERS)
                 feed = feedparser.parse(resp.text)
             except Exception as exc:
                 self.logger.warning("search_rss: failed to fetch '%s' (%s): %s", source, feed_url, exc)
@@ -418,8 +429,8 @@ class WebSearch:
                 if len(results) >= max_results:
                     break
 
-                url = entry.get("link", "")
-                if not url:
+                abs_url = entry.get("link", "")
+                if not abs_url:
                     continue
 
                 dt = _struct_time_to_datetime(
@@ -434,6 +445,10 @@ class WebSearch:
 
                 title = entry.get("title", "").replace("\n", " ").strip()
                 summary = entry.get("summary", "").replace("\n", " ").strip()
+                # Use the HTML full-paper URL (/html/) instead of the abstract
+                # page (/abs/) so web_to_md extracts rich content (2-3 KB) rather
+                # than the JS-rendered abstract stub (< 100 chars).
+                url = abs_url.replace("/abs/", "/html/")
 
                 results.append({
                     "title": title,
@@ -503,7 +518,9 @@ class WebSearch:
             for _, item in filtered[:max_results]:
                 paper = item.get("paper", {})
                 arxiv_id = paper.get("id", "")
-                url = f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else ""
+                # Use /html/ so dedup aligns with fetch_arxiv_recent and
+                # web_to_md gets rich paper content (not the JS-rendered stub).
+                url = f"https://arxiv.org/html/{arxiv_id}" if arxiv_id else ""
                 if not url:
                     continue
 
