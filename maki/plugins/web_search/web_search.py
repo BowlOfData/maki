@@ -372,7 +372,12 @@ class WebSearch:
             excluded.
         """
         import feedparser
+        import random
         import re as _re
+
+        _MAX_RETRIES = 4
+        _BASE_DELAY = 2.0   # seconds between subreddits (Reddit RSS ~2 req/s for bots)
+        _JITTER = 1.0        # max extra random seconds added to every sleep
 
         now = _now_utc()
         week_start = _week_start_utc(now)
@@ -387,14 +392,42 @@ class WebSearch:
         for sub in subreddits:
             # Reddit's .json API returns 403 — use the RSS feed instead
             url = f"https://www.reddit.com/r/{sub}/hot.rss?limit={max_per_sub + 5}"
-            try:
-                resp = _http_get(url, headers=headers)
-                feed = feedparser.parse(resp.text)
-                entries = feed.entries
-            except Exception as exc:
-                self.logger.warning("fetch_reddit_hot: r/%s failed: %s", sub, exc)
-                time.sleep(0.5)
-                continue
+            entries = []
+
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    # raise_on_status=False so we can inspect 429 before raising
+                    resp = _http_get(url, headers=headers, raise_on_status=False)
+
+                    if resp.status_code == 429:
+                        retry_after = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
+                        wait = retry_after + random.uniform(0, _JITTER)
+                        self.logger.warning(
+                            "fetch_reddit_hot: r/%s rate-limited (429), "
+                            "waiting %.1fs before retry %d/%d",
+                            sub, wait, attempt + 1, _MAX_RETRIES,
+                        )
+                        time.sleep(wait)
+                        continue
+
+                    from maki.connector import Connector
+                    Connector.raise_for_response(resp)
+                    entries = feedparser.parse(resp.text).entries
+                    break
+
+                except Exception as exc:
+                    if attempt < _MAX_RETRIES - 1:
+                        wait = (2 ** attempt) + random.uniform(0, _JITTER)
+                        self.logger.warning(
+                            "fetch_reddit_hot: r/%s error (attempt %d/%d): %s — retrying in %.1fs",
+                            sub, attempt + 1, _MAX_RETRIES, exc, wait,
+                        )
+                        time.sleep(wait)
+                    else:
+                        self.logger.warning(
+                            "fetch_reddit_hot: r/%s failed after %d attempts: %s",
+                            sub, _MAX_RETRIES, exc,
+                        )
 
             count = 0
             for entry in entries:
@@ -440,7 +473,7 @@ class WebSearch:
                 count += 1
 
             self.logger.debug("fetch_reddit_hot: r/%s → %d posts", sub, count)
-            time.sleep(0.75)  # polite pause between subreddit requests
+            time.sleep(_BASE_DELAY + random.uniform(0, _JITTER))
 
         self.logger.info(
             "fetch_reddit_hot: %d total posts from %d subreddits",
