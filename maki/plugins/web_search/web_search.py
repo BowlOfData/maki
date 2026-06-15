@@ -33,9 +33,11 @@ logger = logging.getLogger(__name__)
 ALLOWED_METHODS = [
     "search_rss",
     "search_hackernews",
-    "fetch_reddit_hot",
+    "fetch_arxiv_recent",
+    "fetch_huggingface_papers",
     "fetch_github_trending",
     "fetch_lobsters",
+    "fetch_reddit_hot",
 ]
 
 _DEFAULT_HEADERS = {"User-Agent": DEFAULT_WEB_USER_AGENT}
@@ -358,6 +360,177 @@ class WebSearch:
             })
 
         self.logger.info("fetch_lobsters: %d articles found", len(results))
+        return results
+
+    def fetch_arxiv_recent(
+        self,
+        categories: Optional[List[str]] = None,
+        max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch recent AI/ML papers from arXiv via the public Atom API.
+
+        No authentication required. Papers are filtered to the current ISO
+        calendar week (Monday 00:00 UTC through now).
+
+        Args:
+            categories:  arXiv category codes (e.g. ``["cs.AI", "cs.LG"]``).
+                         Defaults to cs.AI, cs.LG, cs.CL, cs.CV.
+            max_results: Maximum papers to return (default 10).
+
+        Returns:
+            List of article dicts with keys:
+            ``title``, ``url``, ``snippet``, ``source``, ``published``.
+        """
+        try:
+            import feedparser
+        except ImportError:
+            self.logger.error('feedparser is not installed. Run: pip install "maki[web]"')
+            return []
+
+        if categories is None:
+            categories = ["cs.AI", "cs.LG", "cs.CL", "cs.CV"]
+
+        now = _now_utc()
+        # Rolling 7-day window instead of the ISO week boundary: arXiv does not
+        # publish on weekends, so early-week (Monday) runs would return zero
+        # papers if we used the ISO Monday boundary.
+        since = now - timedelta(days=7)
+
+        # Fetch a larger batch (sorted by submission date, descending) so
+        # client-side week filtering still leaves enough results.
+        cat_query = "+OR+".join(f"cat:{c}" for c in categories)
+        api_url = (
+            "https://export.arxiv.org/api/query"
+            f"?search_query={cat_query}"
+            f"&start=0&max_results={max_results * 5}"
+            "&sortBy=submittedDate&sortOrder=descending"
+        )
+
+        results: List[Dict[str, Any]] = []
+        try:
+            # arXiv's export endpoint is Fastly-hosted — use cdn connector to
+            # avoid HTTP 421 from DNS-pinned TLS certificate mismatch.
+            resp = _cdn_get(api_url, headers=_DEFAULT_HEADERS)
+            feed = feedparser.parse(resp.text)
+
+            for entry in feed.entries:
+                if len(results) >= max_results:
+                    break
+
+                url = entry.get("link", "")
+                if not url:
+                    continue
+
+                dt = _struct_time_to_datetime(
+                    entry.get("published_parsed") or entry.get("updated_parsed")
+                )
+                if dt is None:
+                    raw_date = entry.get("published", "") or entry.get("updated", "")
+                    dt = _parse_published(raw_date)
+
+                if dt is not None and not (since <= dt <= now):
+                    continue
+
+                title = entry.get("title", "").replace("\n", " ").strip()
+                summary = entry.get("summary", "").replace("\n", " ").strip()
+
+                results.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": summary[:400].strip() if summary else "",
+                    "source": "arXiv",
+                    "published": entry.get("published", ""),
+                })
+
+        except Exception as exc:
+            self.logger.warning("fetch_arxiv_recent: request failed: %s", exc)
+
+        self.logger.info("fetch_arxiv_recent: %d papers found this week", len(results))
+        return results
+
+    def fetch_huggingface_papers(
+        self,
+        max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch trending ML papers from HuggingFace Daily Papers.
+
+        HuggingFace Daily Papers is the successor to Papers With Code's trending
+        papers feed.  Uses the public API (no authentication required). Papers
+        are filtered to a rolling 7-day window and ranked by upvotes so the
+        highest-community-signal papers surface first. The arXiv abstract URL
+        is used as the canonical URL so duplicates with ``fetch_arxiv_recent``
+        are caught during URL-level deduplication in the pipeline.
+
+        Returns:
+            List of article dicts with keys:
+            ``title``, ``url``, ``snippet``, ``source``, ``published``.
+        """
+        from datetime import datetime as _dt
+
+        now = _now_utc()
+        since = now - timedelta(days=7)
+
+        api_url = (
+            "https://huggingface.co/api/daily_papers"
+            f"?limit={max_results * 5}"
+        )
+
+        results: List[Dict[str, Any]] = []
+        try:
+            resp = _cdn_get(
+                api_url,
+                headers={**_DEFAULT_HEADERS, "Accept": "application/json"},
+            )
+            items = resp.json()
+
+            # Filter to 7-day window, sort by upvotes descending
+            filtered = []
+            for item in items:
+                paper = item.get("paper", {})
+                published_str = paper.get("publishedAt", "")
+                try:
+                    pub_date = _dt.fromisoformat(published_str.replace("Z", "+00:00"))
+                    if not (since <= pub_date <= now):
+                        continue
+                except (ValueError, AttributeError):
+                    pass
+                filtered.append((paper.get("upvotes", 0), item))
+
+            filtered.sort(key=lambda x: x[0], reverse=True)
+
+            for _, item in filtered[:max_results]:
+                paper = item.get("paper", {})
+                arxiv_id = paper.get("id", "")
+                url = f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else ""
+                if not url:
+                    continue
+
+                title = paper.get("title", "")
+                abstract = (paper.get("summary") or "").strip()
+                upvotes = paper.get("upvotes", 0)
+                stars = paper.get("githubStars") or 0
+                published_str = paper.get("publishedAt", "")
+
+                snippet_parts = [abstract[:350]] if abstract else []
+                if upvotes:
+                    snippet_parts.append(f"({upvotes} HF upvotes)")
+                if stars:
+                    snippet_parts.append(f"({stars} GitHub stars)")
+
+                results.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": "  ".join(snippet_parts)[:400],
+                    "source": "HuggingFace Papers",
+                    "published": published_str,
+                })
+
+        except Exception as exc:
+            self.logger.warning("fetch_huggingface_papers: request failed: %s", exc)
+
+        self.logger.info("fetch_huggingface_papers: %d papers found this week", len(results))
         return results
 
     def fetch_reddit_hot(
