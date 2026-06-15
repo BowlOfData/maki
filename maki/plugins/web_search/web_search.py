@@ -44,10 +44,20 @@ _DEFAULT_HEADERS = {"User-Agent": DEFAULT_WEB_USER_AGENT}
 # (SSRF validation + DNS pinning + error classification).
 _connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT)
 
+# Connector without DNS pinning for CDN-hosted endpoints (Reddit/GitHub) whose
+# Fastly edge nodes serve mixed-domain TLS certs that trigger HTTP 421 when a
+# specific IP is pinned.  Safe because all URLs in these paths are hardcoded.
+_cdn_connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT, ssrf_protect=False)
+
 
 def _http_get(url, **kwargs):
     """Fetch *url* through the shared Connector; raises Maki errors on failure."""
     return _connector.get(url, **kwargs)
+
+
+def _cdn_get(url, **kwargs):
+    """Fetch CDN-hosted URLs without DNS pinning to avoid HTTP 421 misdirects."""
+    return _cdn_connector.get(url, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -396,8 +406,9 @@ class WebSearch:
 
             for attempt in range(_MAX_RETRIES):
                 try:
-                    # raise_on_status=False so we can inspect 429 before raising
-                    resp = _http_get(url, headers=headers, raise_on_status=False)
+                    # raise_on_status=False so we can inspect 429 before raising.
+                    # _cdn_get bypasses DNS pinning to avoid HTTP 421 from Fastly.
+                    resp = _cdn_get(url, headers=headers, raise_on_status=False)
 
                     if resp.status_code == 429:
                         retry_after = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))

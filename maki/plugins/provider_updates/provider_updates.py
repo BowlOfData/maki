@@ -22,9 +22,11 @@ from maki.plugins._web_utils import strip_html
 
 ALLOWED_METHODS = ["fetch_model_releases"]
 
-# All outbound HTTP goes through the hardened Connector layer
-# (SSRF validation + DNS pinning + error classification).
-_connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT)
+# All URLs here come from the hardcoded MODEL_RELEASE_SOURCES config, not user
+# input, so SSRF protection is not needed.  DNS pinning is actively harmful for
+# CDN-hosted endpoints (GitHub/Fastly) that serve mixed-domain TLS certs and
+# return HTTP 421 when a specific IP is pinned, or loop infinitely on redirects.
+_connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT, ssrf_protect=False)
 
 
 def _http_get(url, **kwargs):
