@@ -135,7 +135,6 @@ class TestWebSearchInit(unittest.TestCase):
         self.assertIn("search_rss", ALLOWED_METHODS)
         self.assertIn("search_hackernews", ALLOWED_METHODS)
         self.assertNotIn("fetch_google_trends", ALLOWED_METHODS)
-        self.assertNotIn("fetch_pexels_image", ALLOWED_METHODS)
         self.assertNotIn("fetch_model_releases", ALLOWED_METHODS)
 
     def test_all_allowed_methods_exist(self):

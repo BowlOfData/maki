@@ -7,8 +7,9 @@ from importlib import import_module
 from . import config
 
 __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
-           "HFBackend", "MakiOpenAI", "MakiAnthropic", "LLMResponse", "GenerationConfig",
-           "Message", "ConversationMemory", "RateLimiter", "BackendType", "ToolCall", "config"]
+           "HFBackend", "MakiOpenAI", "MakiAnthropic", "MakiOpenRouter", "LLMResponse",
+           "GenerationConfig", "Message", "ConversationMemory", "RateLimiter", "BackendType",
+           "ToolCall", "config"]
 
 _LAZY_EXPORTS = {
     "LLMBackend":     (".backend",       "LLMBackend"),
@@ -20,6 +21,7 @@ _LAZY_EXPORTS = {
     "HFBackend":      (".makiHG",        "HFBackend"),
     "MakiOpenAI":     (".makiOpenAI",    "MakiOpenAI"),
     "MakiAnthropic":  (".makiAnthropic", "MakiAnthropic"),
+    "MakiOpenRouter": (".makiOpenRouter", "MakiOpenRouter"),
     "LLMResponse":    (".objects",       "LLMResponse"),
     "GenerationConfig": (".objects",     "GenerationConfig"),
     "Message":        (".objects",       "Message"),

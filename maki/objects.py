@@ -7,10 +7,11 @@ import time as _time
 
 
 class BackendType(str, Enum):
-    OLLAMA    = "ollama"
-    OPENAI    = "openai"
-    ANTHROPIC = "anthropic"
-    HF        = "huggingface"
+    OLLAMA     = "ollama"
+    OPENAI     = "openai"
+    ANTHROPIC  = "anthropic"
+    HF         = "huggingface"
+    OPENROUTER = "openrouter"
 
 
 @dataclass

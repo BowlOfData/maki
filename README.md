@@ -306,7 +306,6 @@ Built-in plugins are registered in [maki/plugins/\_\_init\_\_.py](maki/plugins/_
 | `web_search` | RSS, HackerNews, Reddit, GitHub Trending, Lobste.rs | `web` |
 | `web_to_md` | Fetch a URL and convert to Markdown | `web` |
 | `provider_updates` | Fetch LLM provider release notes | `web` |
-| `media_search` | Search Pexels for images | `web` |
 | `trend_search` | Google Trends queries | `trends` |
 | `ftp_client` | FTP/SFTP file transfers | `ftp` |
 | `alpaca_data` | Crypto bar and quote data | `alpaca` |

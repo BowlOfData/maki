@@ -540,7 +540,7 @@ class WebSearch:
                     "title": title,
                     "url": url,
                     "snippet": "  ".join(snippet_parts)[:400],
-                    "source": "HuggingFace Papers",
+                    "source": "arXiv" if "arxiv.org" in url else "HuggingFace Papers",
                     "published": published_str,
                 })
 

@@ -40,6 +40,9 @@ openai = [
 anthropic = [
     "anthropic>=0.20",
 ]
+openrouter = [
+    "openai>=1.0",
+]
 distributed = [
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
@@ -67,7 +70,7 @@ alpaca = [
     "feedparser>=6.0",
 ]
 all = [
-    "maki[openai,anthropic,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
+    "maki[openai,anthropic,openrouter,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
 ]
 
 [project.scripts]
