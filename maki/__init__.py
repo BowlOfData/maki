@@ -3,13 +3,19 @@ Public package interface for Maki.
 """
 
 from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 from . import config
+
+try:
+    __version__ = _pkg_version("maki")
+except PackageNotFoundError:  # pragma: no cover - running from source, not installed
+    __version__ = "0.0.0.dev0"
 
 __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
            "HFBackend", "MakiOpenAI", "MakiAnthropic", "MakiOpenRouter", "LLMResponse",
            "GenerationConfig", "Message", "ConversationMemory", "RateLimiter", "BackendType",
-           "ToolCall", "config"]
+           "ToolCall", "config", "__version__"]
 
 _LAZY_EXPORTS = {
     "LLMBackend":     (".backend",       "LLMBackend"),

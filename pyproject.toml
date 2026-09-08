@@ -83,6 +83,7 @@ where = ["."]
 include = ["maki*", "maki_gui*"]
 
 [tool.setuptools.package-data]
+"maki" = ["py.typed"]
 "maki_gui" = ["ui/qml/*.qml"]
 
 [tool.pytest.ini_options]
