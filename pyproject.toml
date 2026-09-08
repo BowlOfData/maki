@@ -80,7 +80,6 @@ maki-gui = "maki_gui.app:run"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["maki*", "maki_gui*"]
-exclude = ["maki_newsletter*"]
 
 [tool.setuptools.package-data]
 "maki_gui" = ["ui/qml/*.qml"]

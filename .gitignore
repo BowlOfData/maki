@@ -220,7 +220,7 @@ news_letter_plan.md
 maki_gui/*
 maki_newsletter/output/*
 plugin_ocr.md
-IDEAS/startup_investor_report.md
+docs/IDEAS_startup_investor_report.md
 ARCHITECTURE_REVIEW.md
 DISTRIBUTED_PLAN.md
 PLAN_openai_anthropic_backends.md

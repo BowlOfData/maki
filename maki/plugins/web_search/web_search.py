@@ -585,7 +585,7 @@ class WebSearch:
         headers = {
             "User-Agent": os.getenv(
                 "MAKI_REDDIT_USER_AGENT",
-                "python:maki_newsletter:v1.0 (by /u/maki_bot)",
+                "python:maki:v1.0 (github.com/BowlOfData/maki)",
             )
         }
 

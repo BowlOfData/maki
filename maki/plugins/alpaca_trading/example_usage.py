@@ -2,7 +2,8 @@
 Example usage of the AlpacaTrading plugin.
 
 Requires environment variables: APCA_API_KEY_ID, APCA_API_SECRET_KEY
-Runs in paper mode by default. Set TRANDING_ALLOW_LIVE=1 for live trading.
+Runs in paper mode by default. Set MAKI_ALPACA_ALLOW_LIVE=1 for live trading
+(TRANDING_ALLOW_LIVE=1 is still honored as a deprecated alias).
 """
 
 from maki.plugins.alpaca_trading.alpaca_trading import AlpacaTrading

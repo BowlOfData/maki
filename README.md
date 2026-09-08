@@ -392,7 +392,7 @@ pytest
 
 Contributions are welcome: bug fixes, documentation improvements, new plugins, and feature suggestions all help move the project forward. Open an issue or submit a pull request on GitHub.
 
-If you are interested in this line of research, consider joining [Bowl of Data](https://bowlofdata.netlify.app/), an open-source AI research community.
+If you are interested in this line of research, consider joining [Bowl of Data](https://bowlofdata.net/), an open-source AI research community.
 
 ---
 

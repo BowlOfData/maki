@@ -1,6 +1,6 @@
 # Alpaca Trading Plugin
 
-Submits and manages orders via Alpaca's `TradingClient`. Runs in **paper mode by default**; live trading requires `TRANDING_ALLOW_LIVE=1`.
+Submits and manages orders via Alpaca's `TradingClient`. Runs in **paper mode by default**; live trading requires `MAKI_ALPACA_ALLOW_LIVE=1`.
 
 ## Requirements
 
@@ -9,7 +9,8 @@ APCA_API_KEY_ID=<your alpaca api key>
 APCA_API_SECRET_KEY=<your alpaca secret key>
 
 # Optional — enable live trading (real money at risk)
-TRANDING_ALLOW_LIVE=1
+MAKI_ALPACA_ALLOW_LIVE=1
+# TRANDING_ALLOW_LIVE=1  # deprecated alias, still honored
 ```
 
 ## Usage

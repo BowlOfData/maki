@@ -2,7 +2,8 @@
 Alpaca trading plugin for Maki.
 
 Wraps alpaca-py's TradingClient. Paper-only by default.
-Live trading requires TRANDING_ALLOW_LIVE=1 AND runtime CLI confirmation.
+Live trading requires MAKI_ALPACA_ALLOW_LIVE=1 (or the deprecated
+TRANDING_ALLOW_LIVE=1) AND runtime CLI confirmation.
 """
 
 import logging
@@ -42,7 +43,16 @@ class AlpacaTrading:
         api_key = os.environ.get("APCA_API_KEY_ID")
         api_secret = os.environ.get("APCA_API_SECRET_KEY")
 
-        allow_live = os.environ.get("TRANDING_ALLOW_LIVE", "0").strip() == "1"
+        tranding_legacy = os.environ.get("TRANDING_ALLOW_LIVE")
+        if tranding_legacy is not None:
+            import warnings
+            warnings.warn(
+                "TRANDING_ALLOW_LIVE is deprecated; use MAKI_ALPACA_ALLOW_LIVE instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        raw_allow_live = os.environ.get("MAKI_ALPACA_ALLOW_LIVE", tranding_legacy or "0")
+        allow_live = raw_allow_live.strip() == "1"
         if allow_live:
             logger.warning("LIVE trading mode enabled — real money at risk")
             self._paper = False
