@@ -18,6 +18,9 @@ except ImportError as e:
         'feedparser is not installed. Run: pip install "maki[alpaca]"'
     ) from e
 
+from maki.config import DEFAULT_HTTP_TIMEOUT, DEFAULT_WEB_USER_AGENT
+from maki.connector import Connector
+
 logger = logging.getLogger(__name__)
 
 ALLOWED_METHODS = ["get_news", "get_rss_news", "get_all_news"]
@@ -28,6 +31,21 @@ FREE_RSS_FEEDS = {
     "CryptoPanic": "https://cryptopanic.com/news/rss/",
     "CoinTelegraph": "https://cointelegraph.com/rss",
 }
+
+# All outbound HTTP goes through the hardened Connector layer (SSRF validation,
+# DNS pinning, timeouts, error classification) instead of feedparser's own
+# unbounded fetch. DNS pinning is disabled because these are CDN-hosted feeds
+# behind shared edge IPs; safe because every URL above is a hardcoded constant.
+_connector = Connector(timeout=DEFAULT_HTTP_TIMEOUT, ssrf_protect=False)
+_RSS_HEADERS = {
+    "User-Agent": DEFAULT_WEB_USER_AGENT,
+    "Accept": "application/rss+xml, application/atom+xml, text/xml, application/xml, */*;q=0.8",
+}
+
+
+def _cdn_get(url, **kwargs):
+    """Fetch CDN-hosted RSS feed URLs through the shared Connector."""
+    return _connector.get(url, **kwargs)
 
 
 class AlpacaNews:
@@ -91,7 +109,8 @@ class AlpacaNews:
         articles = []
         for source_name, url in FREE_RSS_FEEDS.items():
             try:
-                feed = feedparser.parse(url)
+                resp = _cdn_get(url, headers=_RSS_HEADERS)
+                feed = feedparser.parse(resp.text)
                 for entry in feed.entries:
                     title = getattr(entry, "title", "")
                     summary = getattr(entry, "summary", "")

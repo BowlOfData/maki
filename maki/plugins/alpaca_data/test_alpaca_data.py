@@ -83,3 +83,59 @@ def test_register_plugin_returns_instance():
         result = register_plugin(maki_instance=None)
         from maki.plugins.alpaca_data.alpaca_data import AlpacaData
         assert isinstance(result, AlpacaData)
+
+
+def test_forex_and_equity_methods_are_allowed():
+    from maki.plugins.alpaca_data.alpaca_data import ALLOWED_METHODS
+
+    for method in (
+        "get_forex_bars",
+        "get_forex_latest_quote",
+        "get_equity_bars",
+        "get_equity_latest_quote",
+    ):
+        assert method in ALLOWED_METHODS
+
+
+def test_import_yfinance_missing_raises_helpful_error():
+    import builtins
+    from maki.plugins.alpaca_data.alpaca_data import _import_yfinance
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "yfinance":
+            raise ImportError("no module named yfinance")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=fake_import):
+        with pytest.raises(ImportError, match='pip install "maki\\[alpaca\\]"'):
+            _import_yfinance()
+
+
+def test_get_equity_bars_returns_ohlcv(plugin):
+    bar = _make_bar("2024-01-01T00:00:00+00:00", 190.0, 191.0, 189.0, 190.5, 1000.0)
+    mock_bars = MagicMock()
+    mock_bars.data = {"AAPL": [bar]}
+    mock_client = MagicMock()
+    mock_client.get_stock_bars.return_value = mock_bars
+
+    with patch("alpaca.data.historical.StockHistoricalDataClient", return_value=mock_client), \
+         patch("alpaca.data.requests.StockBarsRequest", MagicMock()), \
+         patch("alpaca.data.timeframe.TimeFrame", MagicMock()), \
+         patch("alpaca.data.timeframe.TimeFrameUnit", MagicMock()):
+        result = plugin.get_equity_bars("AAPL", timeframe="1Day", lookback=1)
+
+    assert len(result) == 1
+    assert result[0]["o"] == 190.0
+    assert result[0]["c"] == 190.5
+
+
+def test_get_equity_latest_quote_no_quote_raises(plugin):
+    mock_client = MagicMock()
+    mock_client.get_stock_latest_quote.return_value = {}
+
+    with patch("alpaca.data.historical.StockHistoricalDataClient", return_value=mock_client), \
+         patch("alpaca.data.requests.StockLatestQuoteRequest", MagicMock()):
+        with pytest.raises(RuntimeError, match="No quote available"):
+            plugin.get_equity_latest_quote("AAPL")

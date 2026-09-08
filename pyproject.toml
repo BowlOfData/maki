@@ -68,6 +68,7 @@ trends = [
 alpaca = [
     "alpaca-py>=0.43.0",
     "feedparser>=6.0",
+    "yfinance>=0.2.40",
 ]
 all = [
     "maki[openai,anthropic,openrouter,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",

@@ -39,6 +39,45 @@ def test_parse_feed_date_none():
     assert result is None
 
 
+def test_get_rss_news_fetches_via_connector():
+    """RSS feeds must be fetched through the hardened Connector (not feedparser's
+    own unbounded network fetch) so timeouts/SSRF validation apply."""
+    with patch("maki.plugins.alpaca_news.alpaca_news.AlpacaNews.__init__", lambda self, *a, **kw: None):
+        from maki.plugins.alpaca_news.alpaca_news import AlpacaNews
+        plugin = AlpacaNews.__new__(AlpacaNews)
+
+    rss_xml = """<?xml version="1.0"?>
+    <rss version="2.0"><channel>
+        <item>
+            <title>Bitcoin surges past new high</title>
+            <summary>Market update</summary>
+            <link>https://example.com/a</link>
+        </item>
+    </channel></rss>"""
+    mock_resp = MagicMock()
+    mock_resp.text = rss_xml
+
+    with patch("maki.plugins.alpaca_news.alpaca_news._cdn_get", return_value=mock_resp) as mock_get:
+        results = plugin.get_rss_news(symbols=["BTC/USD"], since_hours=999999, limit=5)
+
+    assert mock_get.called
+    fetched_urls = {call.args[0] for call in mock_get.call_args_list}
+    from maki.plugins.alpaca_news.alpaca_news import FREE_RSS_FEEDS
+    assert fetched_urls == set(FREE_RSS_FEEDS.values())
+    assert any("Bitcoin" in a["headline"] for a in results)
+
+
+def test_get_rss_news_feed_failure_is_skipped_not_raised():
+    with patch("maki.plugins.alpaca_news.alpaca_news.AlpacaNews.__init__", lambda self, *a, **kw: None):
+        from maki.plugins.alpaca_news.alpaca_news import AlpacaNews
+        plugin = AlpacaNews.__new__(AlpacaNews)
+
+    with patch("maki.plugins.alpaca_news.alpaca_news._cdn_get", side_effect=Exception("network down")):
+        results = plugin.get_rss_news(symbols=None, since_hours=6, limit=5)
+
+    assert results == []
+
+
 def test_get_all_news_deduplicates():
     with patch("maki.plugins.alpaca_news.alpaca_news.AlpacaNews.__init__", lambda self, *a, **kw: None):
         from maki.plugins.alpaca_news.alpaca_news import AlpacaNews

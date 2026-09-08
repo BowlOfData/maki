@@ -2,8 +2,8 @@
 Alpaca market-data plugin for Maki.
 
 Wraps alpaca-py's CryptoHistoricalDataClient for crypto bar/quote fetching,
-and StockHistoricalDataClient for forex bar/quote fetching.
-Equity methods raise NotImplementedError (enabled in v2).
+and StockHistoricalDataClient for equity bar/quote fetching. Forex bars/quotes
+are served via Yahoo Finance (yfinance) since Alpaca does not offer FX data.
 """
 
 import logging
@@ -18,6 +18,8 @@ ALLOWED_METHODS = [
     "get_crypto_latest_quote",
     "get_forex_bars",
     "get_forex_latest_quote",
+    "get_equity_bars",
+    "get_equity_latest_quote",
     "list_crypto_assets",
 ]
 
@@ -40,7 +42,7 @@ class AlpacaData:
         api_key = os.environ.get("APCA_API_KEY_ID")
         api_secret = os.environ.get("APCA_API_SECRET_KEY")
         self._client = CryptoHistoricalDataClient(api_key=api_key, secret_key=api_secret)
-        logger.info("AlpacaData plugin initialised (crypto + forex)")
+        logger.info("AlpacaData plugin initialised (crypto + equities + forex)")
 
     def get_crypto_bars(
         self,
@@ -132,7 +134,7 @@ class AlpacaData:
         lookback: int = 60,
     ) -> List[Dict[str, Any]]:
         """Return the last *lookback* OHLCV bars for a forex pair via Yahoo Finance."""
-        import yfinance as yf
+        yf = _import_yfinance()
 
         yf_sym = self._yf_symbol(symbol)
         interval = self._yf_interval(timeframe)
@@ -167,7 +169,7 @@ class AlpacaData:
 
         Raises RuntimeError when no quote is available.
         """
-        import yfinance as yf
+        yf = _import_yfinance()
 
         yf_sym = self._yf_symbol(symbol)
         ticker = yf.Ticker(yf_sym)
@@ -187,7 +189,7 @@ class AlpacaData:
         }
 
     # ------------------------------------------------------------------
-    # Equities stubs — v2
+    # Equities
     # ------------------------------------------------------------------
 
     def get_equity_bars(
@@ -257,3 +259,13 @@ def register_plugin(maki_instance=None):
 
 def _tf_minutes(tf: str) -> int:
     return {"1Min": 1, "5Min": 5, "15Min": 15, "1Hour": 60, "1Day": 1440}.get(tf, 1)
+
+
+def _import_yfinance():
+    try:
+        import yfinance as yf
+    except ImportError as e:
+        raise ImportError(
+            'yfinance is not installed. Run: pip install "maki[alpaca]"'
+        ) from e
+    return yf
