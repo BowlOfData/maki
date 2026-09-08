@@ -7,7 +7,7 @@ LocalStateStore   — JSON files in a local directory (default: ~/.maki/workflow
                     No extra dependencies.  Good for single-machine dev.
 
 RedisStateStore   — JSON blobs in Redis with an optional TTL.
-                    Requires redis-py: pip install "maki[distributed-redis]"
+                    Requires redis-py: pip install "maki-framework[distributed-redis]"
                     Suitable for multi-node deployments where the orchestrator
                     may restart mid-workflow and needs to resume.
 
@@ -167,7 +167,7 @@ class RedisStateStore(StateStore):
     """
     Stores each workflow as a JSON string in Redis with an optional TTL.
 
-    Requires redis-py: ``pip install "maki[distributed-redis]"``
+    Requires redis-py: ``pip install "maki-framework[distributed-redis]"``
 
     Args:
         redis_url:  Redis connection string (default: ``redis://localhost:6379``).
@@ -191,7 +191,7 @@ class RedisStateStore(StateStore):
             except ImportError as e:
                 raise ImportError(
                     "RedisStateStore requires redis-py. "
-                    'Install it with: pip install "maki[distributed-redis]"'
+                    'Install it with: pip install "maki-framework[distributed-redis]"'
                 ) from e
             self._redis = redis.from_url(redis_url, decode_responses=True)
         self._ttl = ttl

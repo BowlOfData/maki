@@ -14,7 +14,7 @@ APCA_API_SECRET_KEY=<your alpaca secret key>
 ```
 
 Forex methods additionally require `yfinance` (installed automatically with
-`pip install "maki[alpaca]"`).
+`pip install "maki-framework[alpaca]"`).
 
 ## Usage
 

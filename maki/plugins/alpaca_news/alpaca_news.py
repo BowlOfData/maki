@@ -15,7 +15,7 @@ try:
     import feedparser
 except ImportError as e:
     raise ImportError(
-        'feedparser is not installed. Run: pip install "maki[alpaca]"'
+        'feedparser is not installed. Run: pip install "maki-framework[alpaca]"'
     ) from e
 
 from maki.config import DEFAULT_HTTP_TIMEOUT, DEFAULT_WEB_USER_AGENT
@@ -58,7 +58,7 @@ class AlpacaNews:
             from alpaca.data.historical import NewsClient
         except ImportError as e:
             raise ImportError(
-                'alpaca-py is not installed. Run: pip install "maki[alpaca]"'
+                'alpaca-py is not installed. Run: pip install "maki-framework[alpaca]"'
             ) from e
 
         api_key = os.environ.get("APCA_API_KEY_ID")

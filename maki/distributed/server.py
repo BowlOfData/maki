@@ -2,7 +2,7 @@
 AgentServer: FastAPI application that exposes a single Maki Agent over HTTP.
 
 Install optional dependencies before use:
-    pip install "maki[distributed]"
+    pip install "maki-framework[distributed]"
 
 Endpoints
 ---------
@@ -34,7 +34,7 @@ try:
 except ImportError as _e:
     raise ImportError(
         "Distributed server requires optional dependencies. "
-        'Install them with: pip install "maki[distributed]"'
+        'Install them with: pip install "maki-framework[distributed]"'
     ) from _e
 
 import json

@@ -31,7 +31,7 @@ def _cmd_serve(args: argparse.Namespace) -> None:
     try:
         import uvicorn
     except ImportError:
-        print("Error: uvicorn is required. Install with: pip install 'maki[distributed]'",
+        print("Error: uvicorn is required. Install with: pip install 'maki-framework[distributed]'",
               file=sys.stderr)
         sys.exit(1)
 

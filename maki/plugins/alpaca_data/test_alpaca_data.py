@@ -109,7 +109,7 @@ def test_import_yfinance_missing_raises_helpful_error():
         return real_import(name, *args, **kwargs)
 
     with patch("builtins.__import__", side_effect=fake_import):
-        with pytest.raises(ImportError, match='pip install "maki\\[alpaca\\]"'):
+        with pytest.raises(ImportError, match='pip install "maki-framework\\[alpaca\\]"'):
             _import_yfinance()
 
 

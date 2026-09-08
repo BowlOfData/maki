@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Packaging**: PyPI distribution renamed from `maki` to `maki-framework` — the name `maki` was already taken on PyPI by an unrelated abandoned package. The import path is unchanged (`import maki` still works); only the `pip install` target and extras syntax change (e.g. `pip install "maki-framework[alpaca]"`)
+
 ### Added
 - RAG support and initial refactoring toward a provider-agnostic architecture
 - Equity market data support

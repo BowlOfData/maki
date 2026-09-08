@@ -20,14 +20,14 @@ plugins:                    # optional list of built-in plugin names; must be
   - file_reader
 
 Install optional dependencies before use:
-    pip install "maki[distributed]"
+    pip install "maki-framework[distributed]"
 """
 try:
     import yaml
 except ImportError as _e:
     raise ImportError(
         "Config loading requires PyYAML. "
-        'Install it with: pip install "maki[distributed]"'
+        'Install it with: pip install "maki-framework[distributed]"'
     ) from _e
 
 import os

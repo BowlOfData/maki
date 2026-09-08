@@ -6,7 +6,7 @@ Readability algorithm (readability-lxml), then converts the result to clean
 Markdown (html2text).  Navigation bars, footers, sidebars, ads, and other
 page chrome are discarded before conversion.
 
-readability-lxml and html2text are provided by the ``maki[web]`` extra.
+readability-lxml and html2text are provided by the ``maki-framework[web]`` extra.
 A regex-based fallback is used if either library is unavailable.
 """
 

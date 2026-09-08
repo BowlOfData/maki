@@ -36,7 +36,7 @@ class AlpacaData:
             from alpaca.data.historical import CryptoHistoricalDataClient
         except ImportError as e:
             raise ImportError(
-                'alpaca-py is not installed. Run: pip install "maki[alpaca]"'
+                'alpaca-py is not installed. Run: pip install "maki-framework[alpaca]"'
             ) from e
 
         api_key = os.environ.get("APCA_API_KEY_ID")
@@ -266,6 +266,6 @@ def _import_yfinance():
         import yfinance as yf
     except ImportError as e:
         raise ImportError(
-            'yfinance is not installed. Run: pip install "maki[alpaca]"'
+            'yfinance is not installed. Run: pip install "maki-framework[alpaca]"'
         ) from e
     return yf

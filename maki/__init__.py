@@ -8,7 +8,7 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from . import config
 
 try:
-    __version__ = _pkg_version("maki")
+    __version__ = _pkg_version("maki-framework")
 except PackageNotFoundError:  # pragma: no cover - running from source, not installed
     __version__ = "0.0.0.dev0"
 

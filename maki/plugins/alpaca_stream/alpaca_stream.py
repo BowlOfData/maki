@@ -34,7 +34,7 @@ class AlpacaStream:
             from alpaca.data.live import CryptoDataStream
         except ImportError as e:
             raise ImportError(
-                'alpaca-py is not installed. Run: pip install "maki[alpaca]"'
+                'alpaca-py is not installed. Run: pip install "maki-framework[alpaca]"'
             ) from e
 
         api_key = os.environ.get("APCA_API_KEY_ID")

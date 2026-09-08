@@ -171,7 +171,7 @@ class FTPClient:
                 'success': False,
                 'connection_type': None,
                 'host': host,
-                'error': 'FTP/SFTP libraries not available. Install with: pip install "maki[ftp]"'
+                'error': 'FTP/SFTP libraries not available. Install with: pip install "maki-framework[ftp]"'
             }
 
         if not isinstance(host, str) or not host.strip():

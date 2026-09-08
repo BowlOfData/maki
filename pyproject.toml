@@ -3,7 +3,7 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "maki"
+name = "maki-framework"
 version = "0.2.0"
 authors = [
   {name="Bowl of Data", email="bowlofdata@gmail.com"},
@@ -71,7 +71,7 @@ alpaca = [
     "yfinance>=0.2.40",
 ]
 all = [
-    "maki[openai,anthropic,openrouter,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
+    "maki-framework[openai,anthropic,openrouter,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
 ]
 
 [project.scripts]

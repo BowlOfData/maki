@@ -131,7 +131,7 @@ class WebSearch:
         except ImportError:
             self.logger.error(
                 "feedparser is not installed. "
-                'Run: pip install "maki[web]"'
+                'Run: pip install "maki-framework[web]"'
             )
             return []
 
@@ -327,7 +327,7 @@ class WebSearch:
             import feedparser
         except ImportError:
             self.logger.error(
-                'feedparser is not installed. Run: pip install "maki[web]"'
+                'feedparser is not installed. Run: pip install "maki-framework[web]"'
             )
             return []
 
@@ -396,7 +396,7 @@ class WebSearch:
         try:
             import feedparser
         except ImportError:
-            self.logger.error('feedparser is not installed. Run: pip install "maki[web]"')
+            self.logger.error('feedparser is not installed. Run: pip install "maki-framework[web]"')
             return []
 
         if categories is None:

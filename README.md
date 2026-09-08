@@ -11,7 +11,7 @@
 [![HuggingFace](https://img.shields.io/badge/LLM-HuggingFace-yellow?logo=huggingface)](https://huggingface.co/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/)
 
-**Maki** is a Python framework for building multi-agent LLM applications. It supports multiple LLM backends (Ollama, OpenAI, Anthropic, HuggingFace), a plugin system with 17 built-in tools, a workflow engine with dependency resolution and parallel execution, and a distributed layer for serving agents over HTTP.
+**Maki** is a Python framework for building multi-agent LLM applications. It supports multiple LLM backends (Ollama, OpenAI, Anthropic, HuggingFace), a plugin system with 16 built-in tools, a workflow engine with dependency resolution and parallel execution, and a distributed layer for serving agents over HTTP.
 
 ---
 
@@ -43,7 +43,7 @@ The Plugin System sits alongside the Agent layer: plugins are loaded on demand a
 - `AgentManager` — multi-agent orchestration: sequential pipelines, collaborative tasks, and dependency-aware workflows with parallel batching and checkpoint/resume
 - `ConversationMemory` — token-budgeted, pair-based conversation history shared by `Agent` (stateful mode) and `ChatSession`
 - Native tool-calling for all backends (Ollama `tools=`, OpenAI, Anthropic tool use) with multi-round execution and self-correction
-- 17 built-in plugins covering files, web content, search, trading, memory, and media
+- 16 built-in plugins covering files, web content, search, trading, and memory
 - Distributed agent serving: `maki serve` exposes any agent over HTTP; `AgentProxy` consumes remote agents transparently
 - SSRF-protected HTTP connector with DNS pinning, error classification, and configurable timeouts
 - Fail-closed plugin security: every plugin declares `ALLOWED_METHODS`; destructive methods require explicit opt-in
@@ -65,15 +65,15 @@ pip install -e ".[dev]"
 
 Some built-in plugins and backends rely on optional extras (defined in [pyproject.toml](pyproject.toml)):
 
-- `maki[web]` — `feedparser`, `readability-lxml`, `html2text` (web search / web-to-Markdown)
-- `maki[trends]` — `pytrends` (Google Trends)
-- `maki[alpaca]` — `alpaca-py` (market data, news, trading, streaming)
-- `maki[ftp]` — `paramiko` (FTP/SFTP)
-- `maki[gui]` — `PySide6` (desktop GUI)
-- `maki[openai]` — `openai` (OpenAI backend)
-- `maki[anthropic]` — `anthropic` (Anthropic backend)
-- `maki[distributed]` — `fastapi`, `uvicorn`, `pyyaml` (agent server and proxies)
-- `maki[distributed-redis]` — `redis` (Redis workflow checkpoints)
+- `maki-framework[web]` — `feedparser`, `readability-lxml`, `html2text` (web search / web-to-Markdown)
+- `maki-framework[trends]` — `pytrends` (Google Trends)
+- `maki-framework[alpaca]` — `alpaca-py` (market data, news, trading, streaming)
+- `maki-framework[ftp]` — `paramiko` (FTP/SFTP)
+- `maki-framework[gui]` — `PySide6` (desktop GUI)
+- `maki-framework[openai]` — `openai` (OpenAI backend)
+- `maki-framework[anthropic]` — `anthropic` (Anthropic backend)
+- `maki-framework[distributed]` — `fastapi`, `uvicorn`, `pyyaml` (agent server and proxies)
+- `maki-framework[distributed-redis]` — `redis` (Redis workflow checkpoints)
 
 Install everything with `pip install -e ".[all]"`.
 
@@ -370,7 +370,7 @@ All exports are lazy-loaded on first access.
 
 ## Desktop App
 
-The repository includes a PySide6/QML desktop shell (requires `maki[gui]`):
+The repository includes a PySide6/QML desktop shell (requires `maki-framework[gui]`):
 
 ```bash
 maki-gui
