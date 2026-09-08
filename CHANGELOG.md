@@ -6,16 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Changed
-- **Packaging**: PyPI distribution renamed from `maki` to `maki-framework` — the name `maki` was already taken on PyPI by an unrelated abandoned package. The import path is unchanged (`import maki` still works); only the `pip install` target and extras syntax change (e.g. `pip install "maki-framework[alpaca]"`)
+## [0.3.0] - 2026-09-08
 
 ### Added
 - RAG support and initial refactoring toward a provider-agnostic architecture
-- Equity market data support
-- Forex market data support
+- Equity market data support (`alpaca_data.get_equity_bars`/`get_equity_latest_quote`) and forex market data support (`get_forex_bars`/`get_forex_latest_quote`, via Yahoo Finance) — all four now exposed to LLM tool-calling via `ALLOWED_METHODS` (previously implemented but unreachable through the tool layer, and forex/equities were undocumented)
 - Optional-dependency extras: `gui`, `ftp`, `web`, `trends`, `alpaca`, `distributed-redis`, `all`
+- `maki/py.typed` marker so downstream type checkers pick up maki's type hints
+- `maki.__version__`, resolved from installed package metadata
+- `LICENSE` file (MIT), matching what `pyproject.toml` and `README.md` already declared
+- `.github/workflows/publish.yml` — PyPI publish workflow via Trusted Publishing (OIDC); requires one-time trusted-publisher setup on pypi.org before it can actually publish
 
 ### Changed
+- **Packaging**: PyPI distribution renamed from `maki` to `maki-framework` — the name `maki` was already taken on PyPI by an unrelated abandoned package. The import path is unchanged (`import maki` still works); only the `pip install` target and extras syntax change (e.g. `pip install "maki-framework[alpaca]"`)
+- `alpaca_trading`'s live-trading gate env var renamed `TRANDING_ALLOW_LIVE` → `MAKI_ALPACA_ALLOW_LIVE` (old name kept as a deprecated, warning-emitting alias)
 - **Security**: `Connector` reworked into the single hardened HTTP layer for the whole framework — it owns URL validation, DNS resolution with resolved-IP validation and connect-time pinning (a hostname whose records include any private/reserved address is rejected, and the socket connects to the exact validated IP, closing the DNS-rebinding window; TLS still verifies against the original hostname), timeouts from `maki.config` (the hardcoded 180 s is gone), and the mapping of transport/status failures onto the Maki exception tree (transport timeout & HTTP 408/504 → `MakiTimeoutError`, connection failures & 5xx → `MakiNetworkError`, other 4xx → `MakiAPIError`). A new `AsyncConnector` (httpx) covers the async paths with pre-flight validation
 - All outbound HTTP now routes through the hardened layer: `MakiLLama`, `AgentProxy`, and the `web_to_md`, `web_search`, `provider_updates`, `media_search`, and `rag_memory` plugins no longer make raw `requests`/`httpx` calls. Operator-configured endpoints (Ollama base URL, registered remote agents, the RAG embedder) use `allow_private=True` so LAN/loopback deployments keep working; content-derived URLs (web plugins) get the full SSRF treatment
 - Connection pinning falls back through the validated address list, so dual-stack hosts whose service listens on one address family only (e.g. `localhost` → `::1` first, server on IPv4) still connect — every attempted address has passed validation
@@ -36,6 +40,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Plan documents moved from the repo root to `docs/`
 
 ### Fixed
+- `alpaca_data`'s forex methods depended on `yfinance`, an undeclared dependency (not listed in the `alpaca` extra) — `pip install "maki-framework[alpaca]"` now installs it, and the import is wrapped with the same friendly-error convention as every other optional dependency
+- `alpaca_news.get_rss_news` fetched feeds via raw `feedparser.parse(url)`, bypassing the hardened `Connector` entirely (no timeout, no SSRF validation, no Maki error classification) — now routed through `Connector` like every other RSS fetch in the codebase
+- `web_search`'s default Reddit User-Agent identified requests as an unrelated downstream project (`maki_newsletter`/`maki_bot`) — now a generic maki identity, still overridable via `MAKI_REDDIT_USER_AGENT`
 - `MakiLLama.chat()` computed `elapsed` before checking the response status, and a 200 response with a non-JSON body leaked a raw `json.JSONDecodeError`; both now go through the hardened layer (`MakiAPIError` for invalid JSON)
 - `rag_memory._ollama_embed` called `Connector.post()`, a method that did not exist (the old `Connector` only had `simple`/`version`) — embedding via Ollama would have crashed with `AttributeError`; the reworked instance API makes the call real
 - `LocalStateStore` checkpoint writes are now atomic (temp file + `os.replace`) — a crash mid-save no longer leaves a corrupt checkpoint, which is the scenario checkpointing exists for; applies to both `save_workflow` and `update_task`
@@ -51,6 +58,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Ten plugins (`trend_search`, `web_search`, `provider_updates`, `media_search`, `rag_memory`, `obsidian_memory`, and the four `alpaca_*` plugins) declared `ALLOWED_METHODS` only at module level, where tool-call validation (which reads the plugin instance) never saw it — their whitelists were silently ineffective. The lists are now mirrored onto the plugin classes
 
 ### Removed
+- Dead `media_search` plugin (a Pexels stock-photo integration, already deleted from `PLUGIN_REGISTRY` in a prior commit) — removed its leftover bytecode artifacts and its stale mention in `CLAUDE.md`
+- Stale `maki_newsletter` packaging exclude in `pyproject.toml`, and business/planning docs (`docs/IDEAS_startup_investor_report.md`, `docs/news_letter_plan.md`) untracked from the repo — content preserved locally, just no longer shipped
 - Stale root-level files: `local_llm.py`, `local_llm_v2.py`, `orchestrator.py`, `review.md`, `examples/demo_implementation.py` (all referenced the deleted `Maki` class or were pre-package copies)
 - `Utils.compose_url` (110 lines of URL sanitisation serving no remaining caller), `Utils._validate_port`, and `maki/urls.py` (`Actions` enum, `GENERIC_LLAMA_URL`) — dead since the `Maki` class was removed; the hardened `Connector` is the one place URLs are validated now
 - `Connector.simple()` / `Connector.version()` static methods (unused; replaced by the instance `get`/`post`/`delete` API)
