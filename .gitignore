@@ -196,7 +196,6 @@ test.md
 ftp_client_plugin_summary.md
 local_llm_v2.py
 maki/plugins/web_to_md/requirements.txt
-install.sh
 test_timeout.py
 launch.sh
 examples/verify_refactor.py

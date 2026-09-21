@@ -17,7 +17,6 @@ ALLOWED_METHODS = [
     "list_positions",
     "get_account",
     "cancel_order",
-    "close_position",
     "get_order",
 ]
 
@@ -30,7 +29,7 @@ class AlpacaTrading:
     # reads ALLOWED_METHODS from the plugin instance, not the module.
     ALLOWED_METHODS = ALLOWED_METHODS
     # State-changing trade operations require Agent(allow_dangerous_tools=True).
-    DANGEROUS_METHODS = ["submit_order", "cancel_order", "close_position"]
+    DANGEROUS_METHODS = ["submit_order", "cancel_order"]
 
     def __init__(self, maki_instance=None):
         try:
@@ -154,10 +153,6 @@ class AlpacaTrading:
         except Exception as e:
             logger.warning(f"Cancel order {order_id} failed: {e}")
             return False
-
-    def close_position(self, symbol: str) -> Dict[str, Any]:
-        order = self._client.close_position(symbol)
-        return _order_to_dict(order)
 
 
 def register_plugin(maki_instance=None):

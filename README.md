@@ -54,6 +54,14 @@ The Plugin System sits alongside the Agent layer: plugins are loaded on demand a
 ## Installation
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/BowlOfData/maki/main/install.sh | bash
+```
+
+This clones the repo into `~/.maki`, installs it into an isolated virtual environment, and symlinks the `maki` command into `~/.local/bin` (override with the `MAKI_INSTALL_DIR` / `MAKI_BIN_DIR` env vars). Re-run it any time to update to the latest `main`.
+
+### From source
+
+```bash
 pip install -e .
 ```
 

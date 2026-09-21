@@ -32,9 +32,6 @@ positions = plugin.list_positions()
 
 # Cancel an order
 plugin.cancel_order(order["id"])
-
-# Close an entire position
-plugin.close_position("BTC/USD")
 ```
 
 ## Methods
@@ -58,7 +55,3 @@ Fetches a single order by ID.
 ### `cancel_order(order_id)`
 
 Cancels an order. Returns `True` on success.
-
-### `close_position(symbol)`
-
-Closes the entire position for `symbol`. Returns the resulting order dict.
