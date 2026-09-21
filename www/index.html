@@ -207,7 +207,7 @@
     <span class="badge">Python 3.10+</span>
     <span class="badge">MIT License</span>
     <span class="badge">16 built-in plugins</span>
-    <span class="badge">Ollama · OpenAI · Anthropic · HuggingFace</span>
+    <span class="badge">Ollama · OpenAI · Anthropic · OpenRouter</span>
   </div>
 </div>
 
@@ -219,7 +219,7 @@
       <div class="card">
         <div class="icon">🧩</div>
         <h3>Multiple LLM backends</h3>
-        <p>Ollama (sync, streaming, async, vision), OpenAI (including reasoning models), Anthropic, and direct HuggingFace Transformers — all behind one <code>LLMBackend</code> contract.</p>
+        <p>Ollama (sync, streaming, async, vision), OpenAI (including reasoning models), Anthropic, OpenRouter, and in-process HuggingFace Transformers — all behind one <code>LLMBackend</code> contract. Run local, hosted, or both with the same agent code.</p>
       </div>
       <div class="card">
         <div class="icon">🤖</div>
@@ -244,7 +244,7 @@
       <div class="card">
         <div class="icon">🛡️</div>
         <h3>Security by default</h3>
-        <p>Every outbound HTTP call — backends, proxies, plugins — routes through a hardened, SSRF-protected connector with DNS pinning and typed error classification.</p>
+        <p>Requests Maki makes itself — Ollama, remote agents, web plugins — go through a hardened connector. URLs from web content are checked against private address ranges at connect time, redirects included, and errors are typed. Plugins are fail-closed, and destructive tools need an explicit opt-in.</p>
       </div>
     </div>
   </div>
@@ -273,7 +273,7 @@
       </div>
       <div class="layer">
         <span class="n">∞</span>
-        <div><h4>Infrastructure</h4><p><code>Connector</code> (SSRF-protected HTTP with connect-time IP pinning), shared data classes, typed exceptions, runtime config, and structured logging — used by every layer above.</p></div>
+        <div><h4>Infrastructure</h4><p><code>Connector</code> (hardened HTTP: URL validation, connect-time IP pinning by default), shared data classes, typed exceptions, runtime config, and structured logging — used by every layer above.</p></div>
       </div>
     </div>
   </div>

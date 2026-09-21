@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+- `web_to_md` now fetches with the full SSRF-protected connector. It previously ran with `ssrf_protect=False`, so only IP *literals* in the first URL were checked: a hostname whose DNS pointed at a private or metadata address (e.g. `169.254.169.254`) was fetched, and redirects (`allow_redirects=True`) were never re-validated, so a public page could bounce the fetch to an internal host. Every hostname, including each redirect hop, is now resolved and validated at connect time
+
+### Fixed
+- Pinned (SSRF-protected) HTTPS connections sent `Host: <ip>` instead of the real hostname: the connect-time IP swap on `conn._dns_host` was never undone, and urllib3 connects HTTPS connections before writing the request. CDNs such as Fastly answered `421 Misdirected Request` (and Cloudflare/GitHub Pages `403`/`404`) because the Host header no longer matched the SNI name. This was the real cause of the "DNS pinning breaks CDN-hosted sites" workaround (`ssrf_protect=False`) used in several plugins. Verified against pypi.org, docs.python.org, raw.githubusercontent.com, reddit.com, theverge.com, bbc.com, blog.cloudflare.com and GitHub Pages, all of which now return 200 with pinning on
+
 ## [0.3.0] - 2026-09-08
 
 ### Added

@@ -6,30 +6,61 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-888%20passing-brightgreen?logo=pytest)](https://pytest.org/)
+[![CI](https://github.com/BowlOfData/maki/actions/workflows/python-package.yml/badge.svg)](https://github.com/BowlOfData/maki/actions/workflows/python-package.yml)
 [![Ollama](https://img.shields.io/badge/LLM-Ollama%20local-lightgrey?logo=ollama)](https://ollama.ai/)
 [![HuggingFace](https://img.shields.io/badge/LLM-HuggingFace-yellow?logo=huggingface)](https://huggingface.co/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/)
 
-**Maki** is a Python framework for building multi-agent LLM applications. It supports multiple LLM backends (Ollama, OpenAI, Anthropic, HuggingFace), a plugin system with 16 built-in tools, a workflow engine with dependency resolution and parallel execution, and a distributed layer for serving agents over HTTP.
+**Maki is a Python framework for multi-agent LLM applications that run wherever your models do: on your own hardware (through Ollama), on a hosted API (OpenAI, Anthropic, OpenRouter), or a mix of both, with the same agent code.**
+
+It is for developers who want to build and run tool-using agents on local models first, keep the option of moving any task to a hosted model by swapping one object, and have guardrails switched on by default while those agents touch files, the web, or a broker account.
 
 ---
 
-## Architecture
+## Why Maki
 
-<p align="center">
-  <img src="img/diagram.png" alt="Maki Architecture Diagram" width="900" />
-</p>
+- **Local and hosted models are equals.** Ollama is a built-in backend, not an add-on, and sits next to OpenAI, Anthropic, and OpenRouter behind the same `LLMBackend` contract. Agents, workflows, and plugins never know which one they are talking to. An in-process HuggingFace Transformers backend is also included (manual install, see [below](#huggingface-backend)).
+- **Guardrails on by default.** Requests Maki makes itself (Ollama, remote agents, web plugins) go through a hardened connector. URLs that come from content, such as pages and feeds, are checked against private and reserved address ranges at connect time (redirect hops included); operator-configured endpoints like a LAN Ollama host are allowed. Plugins are fail-closed: a model can only call methods a plugin explicitly lists, and destructive ones (file writes, FTP transfers, trades) stay disabled until you pass `Agent(allow_dangerous_tools=True)`. The trading plugin runs in paper mode unless you opt in to live.
+- **Small core.** The base install has three dependencies (`requests`, `httpx`, `python-dotenv`). Everything else is an opt-in extra.
+- **Agents as services.** `maki serve` exposes any agent over HTTP, and `AgentProxy` lets another process use it as if it were local, with a circuit breaker and optional bearer-token auth.
+- **Batteries included.** 16 built-in plugins (files, web, market data, memory) and a workflow engine with dependency resolution, retries, parallel execution, and checkpoint/resume.
 
-The framework is organized into four layers:
+### Who it is not for
 
-- **Public API** — `maki/__init__.py` lazy-loads all exports on first access
-- **LLM Backends** — `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, and `HFBackend` all implement the abstract `LLMBackend` contract
-- **Agent System** — `Agent` composes `PluginHandler` and `ReasoningEngine` mixins; `AgentManager` orchestrates agents via `WorkflowTask` and `WorkflowState`
-- **Distributed Layer** — `AgentServer` (FastAPI) exposes agents over HTTP; `AgentProxy` provides a remote-agent client with circuit-breaking; `DistributedAgentManager` mixes local and remote agents
-- **Infrastructure** — `Connector` (SSRF-protected HTTP with connect-time IP pinning), shared data classes, typed exceptions, runtime config, and structured logging
+Maki is young (0.x) and deliberately small. If you need a large catalog of third-party integrations, hosted tracing and observability, or a big community and ecosystem around your framework, one of the larger agent frameworks will serve you better.
 
-The Plugin System sits alongside the Agent layer: plugins are loaded on demand and invoked automatically when the LLM emits a `TOOL:` directive or via native tool-calling APIs (Ollama, OpenAI, Anthropic).
+---
+
+## Backends
+
+| Backend | Where inference runs | Class | Requires |
+|---|---|---|---|
+| Ollama | Your machine or LAN | `MakiLLama` | a running Ollama server |
+| HuggingFace Transformers | In-process, on your CPU/GPU | `HFBackend` | `torch`, `transformers`, `accelerate` (manual install, see [HuggingFace Backend](#huggingface-backend)) |
+| OpenAI | Hosted | `MakiOpenAI` | `maki-framework[openai]` |
+| Anthropic | Hosted | `MakiAnthropic` | `maki-framework[anthropic]` |
+| OpenRouter | Hosted, any vendor-namespaced model | `MakiOpenRouter` | `maki-framework[openrouter]` |
+
+The same agent runs on any of them; only the backend object changes:
+
+```python
+from maki import MakiLLama, MakiOpenAI, MakiAnthropic
+from maki.agents import Agent
+
+def reviewer(llm):
+    return Agent(
+        name="Reviewer",
+        maki_instance=llm,
+        role="code reviewer",
+        instructions="Focus on bugs, regressions, and missing validation.",
+    )
+
+agent = reviewer(MakiLLama(model="gemma4:26b"))              # local, via Ollama
+# agent = reviewer(MakiOpenAI(model="gpt-4o"))               # hosted
+# agent = reviewer(MakiAnthropic(model="claude-sonnet-4-5")) # hosted
+
+print(agent.execute_task("Review this design: a plugin system with file access."))
+```
 
 ---
 
@@ -45,7 +76,7 @@ The Plugin System sits alongside the Agent layer: plugins are loaded on demand a
 - Native tool-calling for all backends (Ollama `tools=`, OpenAI, Anthropic tool use) with multi-round execution and self-correction
 - 16 built-in plugins covering files, web content, search, trading, and memory
 - Distributed agent serving: `maki serve` exposes any agent over HTTP; `AgentProxy` consumes remote agents transparently
-- SSRF-protected HTTP connector with DNS pinning, error classification, and configurable timeouts
+- Hardened HTTP connector: URL validation, private-address blocking, DNS pinning on the default path, typed error classification, and configurable timeouts (hosted-model traffic goes through the vendors' own SDKs)
 - Fail-closed plugin security: every plugin declares `ALLOWED_METHODS`; destructive methods require explicit opt-in
 - Explicit logging setup and a typed exception hierarchy
 
@@ -80,6 +111,7 @@ Some built-in plugins and backends rely on optional extras (defined in [pyprojec
 - `maki-framework[gui]` — `PySide6` (desktop GUI)
 - `maki-framework[openai]` — `openai` (OpenAI backend)
 - `maki-framework[anthropic]` — `anthropic` (Anthropic backend)
+- `maki-framework[openrouter]` — `openai` (OpenRouter backend, via its OpenAI-compatible API)
 - `maki-framework[distributed]` — `fastapi`, `uvicorn`, `pyyaml` (agent server and proxies)
 - `maki-framework[distributed-redis]` — `redis` (Redis workflow checkpoints)
 
@@ -279,7 +311,7 @@ maki serve --config agent.yaml --host 127.0.0.1 --port 8100
 ```yaml
 # agent.yaml
 name: MyAgent
-model: gemma4:27b
+model: gemma4:26b
 role: assistant
 plugins:
   - web_search
@@ -310,13 +342,13 @@ Built-in plugins are registered in [maki/plugins/\_\_init\_\_.py](maki/plugins/_
 | `file_writer` | Write files to disk | — |
 | `json_reader` | Parse and query JSON files | — |
 | `image_classifier` | Classify images via a local model | — |
-| `ocr` | Extract text from images | — |
+| `ocr` | Extract text from images (not in the default registry; load via `plugin_path`) | — |
 | `web_search` | RSS, HackerNews, Reddit, GitHub Trending, Lobste.rs | `web` |
 | `web_to_md` | Fetch a URL and convert to Markdown | `web` |
 | `provider_updates` | Fetch LLM provider release notes | `web` |
 | `trend_search` | Google Trends queries | `trends` |
 | `ftp_client` | FTP/SFTP file transfers | `ftp` |
-| `alpaca_data` | Crypto bar and quote data | `alpaca` |
+| `alpaca_data` | Crypto, equity, and forex bar and quote data | `alpaca` |
 | `alpaca_news` | Financial news from Alpaca and RSS | `alpaca` |
 | `alpaca_trading` | Submit and manage Alpaca trades | `alpaca` |
 | `alpaca_stream` | Live crypto data stream | `alpaca` |
@@ -348,15 +380,39 @@ When `use_plugins=True` (or the backend supports native tool-calling), available
 
 `HFBackend` runs models directly via HuggingFace Transformers — no Ollama required.
 
+`torch`, `transformers`, and `accelerate` are not installed with Maki (they are large and platform-specific), so install them first:
+
+```bash
+pip install torch transformers accelerate   # add bitsandbytes for 4/8-bit quantization
+```
+
 ```python
 from maki import HFBackend
 
-llm = HFBackend(model="mistralai/Mistral-7B-Instruct-v0.2", device="cuda")
+llm = HFBackend(model_id="mistralai/Mistral-7B-Instruct-v0.3", device="cuda")
 response = llm.chat("Explain attention mechanisms.")
 print(response.content)
 ```
 
-Supports quantization and device selection (`cpu`, `cuda`, `mps`).
+Supports quantization (`load_in_4bit`, `load_in_8bit`) and device selection (`cpu`, `cuda`, `mps`; auto-detected when omitted). Remote model code is not executed unless you pass `trust_remote_code=True`.
+
+---
+
+## Architecture
+
+<p align="center">
+  <img src="img/diagram.png" alt="Maki Architecture Diagram" width="900" />
+</p>
+
+The framework is organized into four layers on top of a shared infrastructure layer:
+
+- **Public API** — `maki/__init__.py` lazy-loads all exports on first access
+- **LLM Backends** — `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, and `HFBackend` all implement the abstract `LLMBackend` contract
+- **Agent System** — `Agent` composes `PluginHandler` and `ReasoningEngine` mixins; `AgentManager` orchestrates agents via `WorkflowTask` and `WorkflowState`
+- **Distributed Layer** — `AgentServer` (FastAPI) exposes agents over HTTP; `AgentProxy` provides a remote-agent client with circuit-breaking; `DistributedAgentManager` mixes local and remote agents
+- **Infrastructure** — `Connector` (hardened HTTP: URL validation, connect-time IP pinning by default), shared data classes, typed exceptions, runtime config, and structured logging
+
+The Plugin System sits alongside the Agent layer: plugins are loaded on demand and invoked automatically when the LLM emits a `TOOL:` directive or via native tool-calling APIs (Ollama, OpenAI, Anthropic).
 
 ---
 
@@ -364,7 +420,7 @@ Supports quantization and device selection (`cpu`, `cuda`, `mps`).
 
 Top-level imports exposed by `maki`:
 
-- `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `HFBackend`
+- `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `HFBackend`
 - `LLMBackend`, `BackendType`
 - `Agent`, `AgentManager`
 - `GenerationConfig`, `LLMResponse`, `Message`, `ToolCall`
@@ -392,7 +448,7 @@ maki-gui
 pytest
 ```
 
-888 tests covering backends, agents, workflows, plugins, connectors, distributed layer, and security-related behaviour. Tests marked `@pytest.mark.network` (requiring live external services) are excluded by default; run them explicitly with `pytest -m network`.
+900+ tests covering backends, agents, workflows, plugins, connectors, distributed layer, and security-related behaviour. Tests marked `@pytest.mark.network` (requiring live external services) are excluded by default; run them explicitly with `pytest -m network`.
 
 ---
 

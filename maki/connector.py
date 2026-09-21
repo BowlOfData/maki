@@ -150,14 +150,22 @@ def _connect_pinned(conn, super_new_conn) -> socket.socket:
     the resolution list (e.g. an IPv6 record on a dual-stack host whose
     service listens on IPv4 only) keeps the security property intact.
     """
-    addresses = _resolve_and_validate(conn._dns_host, conn.port)
+    hostname = conn._dns_host
+    addresses = _resolve_and_validate(hostname, conn.port)
     last_exc: Exception = OSError("no addresses to connect to")
-    for addr in addresses:
-        conn._dns_host = addr
-        try:
-            return super_new_conn()
-        except Exception as e:
-            last_exc = e
+    try:
+        for addr in addresses:
+            conn._dns_host = addr
+            try:
+                return super_new_conn()
+            except Exception as e:
+                last_exc = e
+    finally:
+        # ``conn.host`` (which urllib3 reads for the Host header and for
+        # certificate matching) must keep naming the real host. Leaving the IP
+        # in place made HTTPS requests go out as ``Host: <ip>``, which CDNs
+        # reject with 421/403 because it no longer matches the SNI name.
+        conn._dns_host = hostname
     raise last_exc
 
 

@@ -22,7 +22,7 @@ from maki.config import (
     DEFAULT_HTTP_READ_TIMEOUT,
     DEFAULT_WEB_USER_AGENT,
 )
-from maki.connector import Connector, validate_url
+from maki.connector import Connector
 from maki.exceptions import MakiError, MakiNetworkError
 from maki.plugins.file_writer.file_writer import FileWriter
 
@@ -166,22 +166,19 @@ class WebToMd:
     def _fetch_with_retry(self, url: str):
         """
         Fetch *url* with browser-like headers, retrying on transient network
-        errors.  SSRF is enforced via a static hostname/IP check before the
-        request is sent; DNS pinning is intentionally skipped so that CDN
-        SNI certificates (which are issued for domain names, not resolved IPs)
-        validate correctly.
+        errors.
+
+        The URL comes from page or feed content, so the connector runs with
+        full SSRF protection: the URL is validated, every hostname (including
+        each redirect hop) is resolved and checked against private/reserved
+        ranges at connect time, and the connection is pinned to the validated
+        IP while the Host header and TLS server name stay the real hostname.
 
         Raises the last exception if all attempts are exhausted.
         """
-        # Static SSRF check: block private IPs, disallowed schemes, etc.
-        # This replaces the connect-time DNS-pinning check; it is safe for
-        # news URLs sourced from curated RSS feeds.
-        validate_url(url)
-
         connector = Connector(
             timeout=(DEFAULT_HTTP_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT),
             headers=_BROWSER_HEADERS,
-            ssrf_protect=False,  # static check done above; skip DNS pinning
         )
         parsed = urlparse(url)
         headers = {"Referer": f"{parsed.scheme}://{parsed.netloc}/"}

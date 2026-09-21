@@ -128,23 +128,85 @@ class TestConnectionPinning(unittest.TestCase):
 
     def test_http_connection_pins_resolved_ip(self):
         conn = _PinnedHTTPConnection("example.com", port=80)
+        connected_to = []
+
+        def fake_new_conn(self_conn):
+            connected_to.append(self_conn._dns_host)
+            return MagicMock()
+
         with patch("maki.connector.socket.getaddrinfo",
                    return_value=_addrinfo("93.184.216.34")), \
              patch("urllib3.connection.HTTPConnection._new_conn",
-                   return_value=MagicMock()):
+                   fake_new_conn):
             conn._new_conn()
-        self.assertEqual(conn._dns_host, "93.184.216.34")
+        # The socket is opened against the validated IP...
+        self.assertEqual(connected_to, ["93.184.216.34"])
+        # ...but the connection keeps its logical hostname afterwards.
+        self.assertEqual(conn.host, "example.com")
 
     def test_https_connection_preserves_sni_hostname(self):
         conn = _PinnedHTTPSConnection("example.com", port=443)
+        connected_to = []
+
+        def fake_new_conn(self_conn):
+            connected_to.append(self_conn._dns_host)
+            return MagicMock()
+
         with patch("maki.connector.socket.getaddrinfo",
                    return_value=_addrinfo("93.184.216.34")), \
              patch("urllib3.connection.HTTPSConnection._new_conn",
-                   return_value=MagicMock()):
+                   fake_new_conn):
             conn._new_conn()
-        self.assertEqual(conn._dns_host, "93.184.216.34")
+        self.assertEqual(connected_to, ["93.184.216.34"])
         # TLS verification must still target the original hostname
         self.assertEqual(conn.server_hostname, "example.com")
+        # ...and so must the Host header, which urllib3 derives from conn.host
+        self.assertEqual(conn.host, "example.com")
+
+    def test_pinning_restores_hostname_when_all_addresses_fail(self):
+        conn = _PinnedHTTPConnection("example.com", port=80)
+        with patch("maki.connector.socket.getaddrinfo",
+                   return_value=_addrinfo("1.1.1.1", "2.2.2.2")), \
+             patch("urllib3.connection.HTTPConnection._new_conn",
+                   side_effect=ConnectionRefusedError("refused")):
+            with self.assertRaises(ConnectionRefusedError):
+                conn._new_conn()
+        self.assertEqual(conn.host, "example.com")
+
+    def test_host_header_survives_connect_before_request(self):
+        """urllib3 connects an HTTPS connection *before* sending the request,
+        so a pinned connection that leaves the IP in place sends
+        ``Host: <ip>`` and CDNs (Fastly, Cloudflare, ...) reject it with
+        421/403 because it no longer matches the SNI name."""
+        import http.server
+        import threading
+
+        seen = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen["host"] = self.headers.get("Host")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_port
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = _PinnedHTTPConnection("localhost", port=port)
+            conn.connect()          # what urllib3 does for HTTPS
+            conn.request("GET", "/")
+            conn.getresponse().read()
+            conn.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(seen["host"], f"localhost:{port}")
 
     def test_connection_falls_back_through_validated_addresses(self):
         """Dual-stack: if the first resolved address refuses the connection
