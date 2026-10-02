@@ -7,8 +7,9 @@ Domain schemas belong to the calling application, not to this plugin.
 
 Security model
 --------------
-* ``ALLOWED_METHODS`` is empty: no method is ever callable from an LLM
-  ``TOOL:`` directive. SQL runs only from application code.
+* ``ALLOWED_METHODS`` exposes only the harmless ``ping`` health check to
+  LLM ``TOOL:`` directives. SQL (``query``/``execute``/``migrate``) runs
+  only from application code.
 * The host comes from operator configuration (arguments or ``MAKI_PG_*``
   environment variables), never from model or feed content.
 * TLS must verify the server certificate (``verify-ca`` or ``verify-full``).
@@ -60,8 +61,8 @@ def _ident(name: str) -> str:
 class PostgresStore:
     """Pooled PostgreSQL client with enforced TLS verification."""
 
-    # Deliberately empty: nothing here is exposed to LLM tool calls.
-    ALLOWED_METHODS: List[str] = []
+    # Only the read-only health check is exposed to LLM tool calls.
+    ALLOWED_METHODS: List[str] = ["ping"]
 
     def __init__(
         self,

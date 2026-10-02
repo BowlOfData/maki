@@ -22,7 +22,7 @@ def _cfg(**over):
 
 
 def test_no_method_is_llm_callable():
-    assert PostgresStore.ALLOWED_METHODS == []
+    assert PostgresStore.ALLOWED_METHODS == ["ping"]
 
 
 @pytest.mark.parametrize("mode", ["disable", "allow", "prefer", "require"])

@@ -21,7 +21,7 @@ with PostgresStore() as db:
 
 ## Guarantees
 
-- `ALLOWED_METHODS` is empty: nothing is callable from an LLM `TOOL:` directive.
+- `ALLOWED_METHODS` is `["ping"]`: only the health check is callable from an LLM `TOOL:` directive; SQL methods are application-code only.
 - `sslmode` must be `verify-ca` or `verify-full` unless the host is loopback.
 - Pool size is capped at 10 whatever is requested; managed servers allow few connections.
 - Values are bind parameters only. Identifiers (schema, migration table) are validated.
