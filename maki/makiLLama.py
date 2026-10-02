@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import time
 import logging
-from typing import Generator, Optional
+from typing import Generator, Optional, Union
 
 from urllib.parse import urlparse
 
@@ -77,6 +77,7 @@ class MakiLLama(LLMBackend):
         rate_limit: Optional[int] = None,
         think: Optional[bool] = None,
         json_format: bool = False,
+        keep_alive: Optional[str] = None,
     ) -> None:
         self.model = model
         self.temperature = config.temperature if config else DEFAULT_TEMPERATURE
@@ -87,6 +88,7 @@ class MakiLLama(LLMBackend):
         self.timeout = timeout
         self.think = think
         self.json_format = json_format
+        self.keep_alive = keep_alive
         # Operator-configured endpoint: private/LAN addresses are legitimate
         # (loopback Ollama is the common case), so allow_private=True.
         self._http = Connector(timeout=timeout, allow_private=True)
@@ -205,6 +207,8 @@ class MakiLLama(LLMBackend):
         stream: bool,
         system: Optional[str] = None,
         images: Optional[list[str]] = None,
+        response_format: Optional[Union[str, dict]] = None,
+        think: Optional[bool] = None,
     ) -> dict:
         cfg = config or self.config
         payload: dict = {
@@ -213,20 +217,26 @@ class MakiLLama(LLMBackend):
             "stream": stream,
             "options": cfg.to_ollama_options(),
         }
-        if self.think is not None:
-            payload["think"] = self.think
-        if self.json_format:
+        effective_think = think if think is not None else self.think
+        if effective_think is not None:
+            payload["think"] = effective_think
+        if response_format is not None:
+            # "json" or a JSON-schema dict: Ollama constrains decoding to it.
+            payload["format"] = response_format
+        elif self.json_format:
             payload["format"] = "json"
+        if self.keep_alive is not None:
+            payload["keep_alive"] = self.keep_alive
         return payload
 
-    def _parse_response(self, data: dict, elapsed: float) -> LLMResponse:
+    def _parse_response(self, data: dict, elapsed: float, *, thinking_fallback: bool = True) -> LLMResponse:
         prompt_tokens = data.get("prompt_eval_count", 0)
         completion_tokens = data.get("eval_count", 0)
         content = data["message"]["content"]
         # Thinking models (gemma4, qwen3, …) may leave content empty when the model
         # exhausted its budget on the reasoning trace. Fall back to the thinking field
         # so callers always receive something extractable.
-        if not content.strip():
+        if thinking_fallback and not content.strip():
             thinking = data["message"].get("thinking", "")
             if thinking:
                 log.debug("_parse_response: content empty, falling back to thinking field")
@@ -249,19 +259,27 @@ class MakiLLama(LLMBackend):
         config: Optional[GenerationConfig] = None,
         system: Optional[str] = None,
         images: Optional[list[str]] = None,
+        response_format: Optional[Union[str, dict]] = None,
+        think: Optional[bool] = None,
     ) -> LLMResponse:
         """
         Single-turn (or multi-turn with explicit history) generation.
         Returns a fully resolved LLMResponse. Pass base64 strings in images for vision models.
+
+        ``response_format`` is ``"json"`` or a JSON-schema dict (Ollama structured
+        outputs). ``think`` overrides the instance-level setting for this call.
+        See :func:`maki.structured.generate_structured` for the validated wrapper.
         """
         log.debug("chat: %s", prompt[:100])
         if self._rate_limiter:
             self._rate_limiter.acquire()
-        payload = self._build_payload(prompt, history, config, stream=False, system=system, images=images)
+        payload = self._build_payload(prompt, history, config, stream=False, system=system, images=images,
+                                      response_format=response_format, think=think)
         t0 = time.perf_counter()
         r = self._http.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
         elapsed = time.perf_counter() - t0
-        response = self._parse_response(Connector.json_or_raise(r), elapsed)
+        response = self._parse_response(Connector.json_or_raise(r), elapsed,
+                                        thinking_fallback=response_format is None)
         log.info("chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
 
@@ -378,16 +396,20 @@ class MakiLLama(LLMBackend):
         config: Optional[GenerationConfig] = None,
         images: Optional[list[str]] = None,
         system: Optional[str] = None,
+        response_format: Optional[Union[str, dict]] = None,
+        think: Optional[bool] = None,
     ) -> LLMResponse:
         """Async variant of chat() for use inside asyncio event loops. Supports vision via images."""
         log.debug("async_chat: %s", prompt[:100])
         if self._rate_limiter:
             await self._rate_limiter.async_acquire()
-        payload = self._build_payload(prompt, history, config, stream=False, images=images, system=system)
+        payload = self._build_payload(prompt, history, config, stream=False, images=images, system=system,
+                                      response_format=response_format, think=think)
         t0 = time.perf_counter()
         r = await self._async_http.post(f"{self.base_url}/api/chat", json=payload)
         elapsed = time.perf_counter() - t0
-        response = self._parse_response(Connector.json_or_raise(r), elapsed)
+        response = self._parse_response(Connector.json_or_raise(r), elapsed,
+                                        thinking_fallback=response_format is None)
         log.info("async_chat: %.2fs, %d tokens", elapsed, response.total_tokens)
         return response
 

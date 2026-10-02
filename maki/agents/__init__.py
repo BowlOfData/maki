@@ -8,10 +8,16 @@ coordination, delegation, and collaboration.
 
 from .agent import Agent
 from .agent_manager import AgentManager
-from .workflow import WorkflowTask, WorkflowState, TaskStatus
+from .workflow import WorkflowTask, WorkflowState, TaskStatus, GateResult, TaskOutput
+from .approvals import (
+    ApprovalSpec, ApprovalStore, ApprovalRecord, ApprovalDecision,
+    LocalApprovalStore, InMemoryApprovalStore,
+)
 from .protocols import PluginHostProtocol, ReasoningHostProtocol
 
 __all__ = [
     'Agent', 'AgentManager', 'WorkflowTask', 'TaskStatus', 'WorkflowState',
     'PluginHostProtocol', 'ReasoningHostProtocol',
+    'GateResult', 'TaskOutput', 'ApprovalSpec', 'ApprovalStore', 'ApprovalRecord', 'ApprovalDecision',
+    'LocalApprovalStore', 'InMemoryApprovalStore',
 ]

@@ -28,6 +28,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+postgres = [
+    "psycopg[binary]>=3.1",
+    "psycopg_pool>=3.2",
+]
+structured = [
+    "pydantic>=2.0",
+]
 dev = [
     "pytest>=6.0",
     "pytest-asyncio>=0.21",
@@ -41,6 +48,9 @@ anthropic = [
     "anthropic>=0.20",
 ]
 openrouter = [
+    "openai>=1.0",
+]
+llamacpp = [
     "openai>=1.0",
 ]
 distributed = [
@@ -71,7 +81,7 @@ alpaca = [
     "yfinance>=0.2.40",
 ]
 all = [
-    "maki-framework[openai,anthropic,openrouter,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
+    "maki-framework[openai,anthropic,openrouter,llamacpp,structured,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
 ]
 
 [project.scripts]

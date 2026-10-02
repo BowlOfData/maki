@@ -14,7 +14,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..backend import LLMBackend
 from .agent import Agent
-from .workflow import WorkflowTask, WorkflowState, TaskStatus
+from .workflow import WorkflowTask, WorkflowState, TaskStatus, TaskOutput
+from .approvals import ApprovalDecision, ApprovalStore
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class AgentManager:
         """
         self.maki = maki_instance
         self.agents: Dict[str, Agent] = {}
+        # State of the most recent WorkflowTask run (inspect .status / .tasks after
+        # run_workflow, e.g. to see which tasks are awaiting approval).
+        self.last_workflow_state: Optional[WorkflowState] = None
 
         logger.info("AgentManager initialized")
 
@@ -280,6 +284,7 @@ class AgentManager:
         workflow: List,
         workflow_id: Optional[str] = None,
         state_store: Optional[Any] = None,
+        approval_store: Optional[ApprovalStore] = None,
     ) -> Dict[str, Any]:
         """
         Execute a workflow.
@@ -302,6 +307,12 @@ class AgentManager:
                           persisted after every task so the workflow can be resumed
                           after a restart.  On resume, already-COMPLETED tasks are
                           skipped; FAILED / PENDING tasks are re-executed.
+            approval_store: Required when any WorkflowTask has ``approval`` set.
+                          Such a task parks as AWAITING_APPROVAL (it is NOT skipped);
+                          it and everything downstream stay unexecuted and the run
+                          returns with ``last_workflow_state.status == "awaiting_approval"``.
+                          Approve via the store, then call run_workflow again with the
+                          same ``workflow_id`` (and a state_store) to resume.
 
         Returns:
             Dict mapping step/task names to result dicts with keys
@@ -316,7 +327,8 @@ class AgentManager:
             )
         if isinstance(workflow[0], WorkflowTask):
             return self._run_workflow_tasks(
-                workflow, workflow_id=workflow_id, state_store=state_store
+                workflow, workflow_id=workflow_id, state_store=state_store,
+                approval_store=approval_store,
             )
         return self._run_workflow_dicts(workflow)
 
@@ -378,6 +390,7 @@ class AgentManager:
         tasks: List[WorkflowTask],
         workflow_id: Optional[str] = None,
         state_store: Optional[Any] = None,
+        approval_store: Optional[ApprovalStore] = None,
     ) -> Dict[str, Any]:
         """
         Execute a list of WorkflowTask objects.
@@ -391,6 +404,8 @@ class AgentManager:
           task and COMPLETED tasks from a prior run are skipped on resume.
         """
         wf_id = workflow_id or f"workflow_{int(time.time())}"
+        if approval_store is None and any(t.approval is not None for t in tasks):
+            raise ValueError("tasks require approval but no approval_store was provided")
 
         # ------------------------------------------------------------------
         # Checkpoint resume: load prior state and pre-populate results
@@ -401,6 +416,9 @@ class AgentManager:
             else None
         )
         state = checkpoint if checkpoint is not None else WorkflowState(wf_id)
+        state.status = "running"  # a resumed run is running again
+        state.end_time = None
+        self.last_workflow_state = state
         results: Dict[str, Any] = {}
 
         if checkpoint is not None:
@@ -473,7 +491,7 @@ class AgentManager:
                 results_snapshot = dict(results)
 
                 def _run_wf_task(wt: WorkflowTask, _snap=results_snapshot):
-                    return self._execute_workflow_task(wt, _snap, state)
+                    return self._execute_workflow_task(wt, _snap, state, approval_store)
 
                 with ThreadPoolExecutor(max_workers=_WORKFLOW_MAX_WORKERS) as pool:
                     futures = {pool.submit(_run_wf_task, wt): wt for wt in pending}
@@ -487,7 +505,7 @@ class AgentManager:
                 if wt.name in results:
                     logger.debug("Skipping task '%s' (resumed from checkpoint).", wt.name)
                     continue
-                name, value = self._execute_workflow_task(wt, results, state)
+                name, value = self._execute_workflow_task(wt, results, state, approval_store)
                 if value is not None:
                     results[name] = value
                 _persist()
@@ -496,15 +514,23 @@ class AgentManager:
             t.get("status") == TaskStatus.SKIPPED
             for t in state.tasks.values()
         )
-        state.status = "completed_with_skips" if any_skipped else "completed"
-        state.end_time = time.time()
+        any_awaiting = any(
+            t.get("status") == TaskStatus.AWAITING_APPROVAL
+            for t in state.tasks.values()
+        )
+        if any_awaiting:
+            state.status = "awaiting_approval"
+        else:
+            state.status = "completed_with_skips" if any_skipped else "completed"
+            state.end_time = time.time()
         if state_store is not None:
             state_store.save_workflow(state)
 
         return results
 
     def _execute_workflow_task(self, wt: WorkflowTask, results: Dict,
-                               state: WorkflowState):
+                               state: WorkflowState,
+                               approval_store: Optional[ApprovalStore] = None):
         """Run a single WorkflowTask, updating its fields and the WorkflowState.
 
         The agent receives a ``context`` dict built from the structured ``data``
@@ -513,6 +539,22 @@ class AgentManager:
         free-text strings.  The text ``result`` of each dependency is also
         included under ``<dep_name>__result`` for backward compatibility.
         """
+        # A dependency parked for approval (or blocked behind one) holds this task
+        # back without skipping it: it stays PENDING and runs on a later resume.
+        blocked_dep = next(
+            (dep for dep in wt.dependencies
+             if results.get(dep, {}).get("awaiting_approval") or results.get(dep, {}).get("blocked")),
+            None,
+        )
+        if blocked_dep is not None:
+            reason = f"waiting on '{blocked_dep}' (awaiting approval)"
+            wt.status = TaskStatus.PENDING
+            wt.gate_reason = reason
+            state.update_task_status(wt.name, TaskStatus.PENDING, None, reason=reason)
+            return wt.name, {
+                "agent": wt.agent, "task": wt.task, "result": None, "data": None, "blocked": True
+            }
+
         # Propagate skip: a SKIPPED dependency skips this task transitively.
         skipped_dep = next(
             (dep for dep in wt.dependencies if results.get(dep, {}).get("skipped")),
@@ -522,11 +564,11 @@ class AgentManager:
             reason = (
                 f"dependency '{skipped_dep}' was skipped"
                 if skipped_dep is not None
-                else "conditions not met"
+                else (wt.gate_reason or "conditions not met")
             )
             logger.info(f"WorkflowTask '{wt.name}' skipped ({reason})")
             wt.status = TaskStatus.SKIPPED
-            state.update_task_status(wt.name, TaskStatus.SKIPPED, f"Skipped: {reason}")
+            state.update_task_status(wt.name, TaskStatus.SKIPPED, f"Skipped: {reason}", reason=reason)
             return wt.name, {
                 "agent": wt.agent, "task": wt.task, "result": None, "data": None, "skipped": True
             }
@@ -550,6 +592,40 @@ class AgentManager:
                 if dep_result.get("result") is not None:
                     context[f"{dep}__result"] = dep_result["result"]
 
+        if wt.approval is not None:
+            assert approval_store is not None  # enforced in _run_workflow_tasks
+            ctx = context or {}
+            try:
+                key = wt.approval.key_fn(ctx)
+                summary = wt.approval.summary_fn(ctx) if wt.approval.summary_fn else wt.task
+                decision = approval_store.check(state.workflow_id, wt.name, key, summary)
+            except Exception as e:  # fail closed: never run on an approval error
+                err = f"approval check failed: {e}"
+                wt.status = TaskStatus.FAILED
+                state.update_task_status(wt.name, TaskStatus.FAILED, err, reason=err)
+                state.add_error(wt.name, err)
+                logger.error(f"WorkflowTask '{wt.name}' failed: {err}")
+                return wt.name, None
+            if decision is ApprovalDecision.PENDING:
+                reason = f"awaiting approval: {summary}"
+                logger.info(f"WorkflowTask '{wt.name}' {reason}")
+                wt.status = TaskStatus.AWAITING_APPROVAL
+                wt.gate_reason = reason
+                state.update_task_status(wt.name, TaskStatus.AWAITING_APPROVAL, None, reason=reason)
+                return wt.name, {
+                    "agent": wt.agent, "task": wt.task, "result": None, "data": None,
+                    "awaiting_approval": True,
+                }
+            if decision is ApprovalDecision.REJECTED:
+                reason = "approval rejected"
+                logger.info(f"WorkflowTask '{wt.name}' skipped ({reason})")
+                wt.status = TaskStatus.SKIPPED
+                wt.gate_reason = reason
+                state.update_task_status(wt.name, TaskStatus.SKIPPED, f"Skipped: {reason}", reason=reason)
+                return wt.name, {
+                    "agent": wt.agent, "task": wt.task, "result": None, "data": None, "skipped": True
+                }
+
         wt.status = TaskStatus.IN_PROGRESS
         wt.attempts += 1
         start = time.time()
@@ -562,6 +638,9 @@ class AgentManager:
                 max_retries=wt.max_retries,
                 retry_delay=wt.retry_delay
             )
+            if isinstance(result, TaskOutput):
+                wt.data = result.data
+                result = result.text
             wt.result = result
             wt.status = TaskStatus.COMPLETED
             wt.execution_time = time.time() - start

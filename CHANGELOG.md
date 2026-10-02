@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Structured outputs for Ollama: `MakiLLama.chat()`/`async_chat()` accept `response_format` (`"json"` or a JSON-schema dict, sent as Ollama's `format`) and a per-call `think` override; the constructor accepts `keep_alive`. Structured replies never fall back to the thinking trace. New `maki.structured.generate_structured(backend, PydanticModel, prompt)` validates with pydantic and retries with the validation errors fed back, raising `StructuredOutputError` (a `MakiValidationError`) when the budget is exhausted (extra: `structured`)
+- Human-approval gate for workflows: `WorkflowTask(approval=ApprovalSpec(key_fn=...))` parks the task as `TaskStatus.AWAITING_APPROVAL` instead of skipping it; downstream tasks stay `PENDING`, `run_workflow(..., approval_store=...)` returns with `last_workflow_state.status == "awaiting_approval"`, and re-running with the same `workflow_id` after `store.approve(...)` resumes. Approval is bound to a content key (a changed key invalidates it), supports expiry and rejection, and fails closed. `LocalApprovalStore` (JSON files) and `InMemoryApprovalStore` provided
+- `TaskOutput(text, data)`: an agent may return it from `execute_task_with_retry`; `data` is stored on `WorkflowTask.data` and reaches dependents in their context (previously nothing in Maki populated `WorkflowTask.data`)
+- `GateResult(ok, reason)`: conditions may return it; the reason is recorded in `WorkflowState` (`tasks[name]["reason"]`) and `WorkflowTask.gate_reason`
+- `MakiLlamaCpp` backend for llama.cpp's `llama serve` (extra: `llamacpp`). Subclasses `MakiOpenAI`, so chat, streaming, async, vision and native tool calling work unchanged; adds `top_k`/`repeat_penalty` passthrough, `reasoning_content` capture, a streaming `chat_collect()` (per-chunk timeout for long local generations), and `health()`, `embed()`/`embed_batch()` (usable as `RagMemory(embedder=llm.embed)`) and `rerank()`. API key optional (`LLAMACPP_API_KEY`); base URL defaults to `http://127.0.0.1:8080/v1` (`MAKI_LLAMACPP_BASE_URL`)
+- `LLMResponse.reasoning`: optional thinking text for backends that return it separately
+- `maki serve` YAML configs accept `backend: llamacpp` (with optional `base_url`) and `backend: openrouter`, which was previously missing
+
+### Changed
+- `MakiOpenAI` gained `_request_kwargs()` and `_backend_type` hooks; `MakiOpenRouter` uses them instead of duplicating `_parse_response()`
+
 ### Security
 - `web_to_md` now fetches with the full SSRF-protected connector. It previously ran with `ssrf_protect=False`, so only IP *literals* in the first URL were checked: a hostname whose DNS pointed at a private or metadata address (e.g. `169.254.169.254`) was fetched, and redirects (`allow_redirects=True`) were never re-validated, so a public page could bounce the fetch to an internal host. Every hostname, including each redirect hop, is now resolved and validated at connect time
 

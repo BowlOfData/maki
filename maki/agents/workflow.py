@@ -8,7 +8,10 @@ with multiple tasks that can be executed in various strategies.
 from typing import Dict, List, Any, Optional, Callable
 import time
 import logging
+from dataclasses import dataclass
 from enum import Enum
+
+from .approvals import ApprovalSpec
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,33 @@ class TaskStatus(Enum):
     FAILED = "failed"
     RETRYING = "retrying"
     SKIPPED = "skipped"
+    AWAITING_APPROVAL = "awaiting_approval"
+
+
+@dataclass(frozen=True)
+class GateResult:
+    """Outcome of a gate (condition) with a human-readable reason.
+
+    Conditions may return a plain bool or a GateResult; ``bool(result)`` is ``ok``,
+    so existing truthiness checks keep working.
+    """
+    ok: bool
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+@dataclass(frozen=True)
+class TaskOutput:
+    """Return value for agents that produce typed data alongside text.
+
+    An agent's ``execute_task_with_retry`` may return ``TaskOutput`` instead of ``str``:
+    ``text`` becomes the task ``result`` and ``data`` becomes ``WorkflowTask.data``,
+    which dependents receive in their context under the dependency name.
+    """
+    text: str
+    data: Optional[Dict[str, Any]] = None
 
 
 class WorkflowTask:
@@ -28,7 +58,8 @@ class WorkflowTask:
 
     def __init__(self, name: str, agent: str, task: str, dependencies: Optional[List[str]] = None,
                  conditions: Optional[List[Callable]] = None, max_retries: int = 3,
-                 retry_delay: float = 1.0, parallelizable: bool = False):
+                 retry_delay: float = 1.0, parallelizable: bool = False,
+                 approval: Optional[ApprovalSpec] = None):
         """
         Initialize a workflow task
 
@@ -41,6 +72,9 @@ class WorkflowTask:
             max_retries: Maximum number of retry attempts
             retry_delay: Delay between retries in seconds
             parallelizable: Whether this task can be executed in parallel
+            approval: If set, the task waits for human approval (see maki.agents.approvals)
+                before running. Unlike a failed condition, this does not skip the task:
+                it parks as AWAITING_APPROVAL until approved or rejected.
         """
         self.name = name
         self.agent = agent
@@ -50,6 +84,8 @@ class WorkflowTask:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.parallelizable = parallelizable
+        self.approval = approval
+        self.gate_reason: Optional[str] = None
         self.status = TaskStatus.PENDING
         self.result = None
         # Structured output from this task.  Populated by the agent (or post-processor)
@@ -76,6 +112,8 @@ class WorkflowTask:
             'max_retries': self.max_retries,
             'retry_delay': self.retry_delay,
             'parallelizable': self.parallelizable,
+            'requires_approval': self.approval is not None,
+            'gate_reason': self.gate_reason,
             'status': self.status.value,
             'result': self.result,
             'data': self.data,
@@ -109,20 +147,27 @@ class WorkflowTask:
         wt.resources_used = data.get('resources_used', {})
         return wt
 
-    def should_execute(self, context: Optional[Dict] = None) -> bool:
-        """Check if task should execute based on conditions"""
+    def evaluate_conditions(self, context: Optional[Dict] = None) -> GateResult:
+        """Evaluate all conditions; return the first failure (with reason) or ok."""
         for condition in self.conditions:
+            cname = getattr(condition, '__name__', repr(condition))
             try:
-                if not condition(context):
-                    logger.debug("Task '%s' skipped: condition '%s' returned False",
-                                 self.name, getattr(condition, '__name__', repr(condition)))
-                    return False
+                outcome = condition(context)
             except Exception as e:
                 logger.error("Task '%s': condition '%s' raised an exception: %s",
-                             self.name, getattr(condition, '__name__', repr(condition)), e,
-                             exc_info=True)
-                return False
-        return True
+                             self.name, cname, e, exc_info=True)
+                return GateResult(False, f"condition '{cname}' raised {type(e).__name__}: {e}")
+            if not outcome:
+                detail = getattr(outcome, 'reason', '') or "returned False"
+                logger.debug("Task '%s' skipped: condition '%s' %s", self.name, cname, detail)
+                return GateResult(False, f"condition '{cname}' {detail}")
+        return GateResult(True)
+
+    def should_execute(self, context: Optional[Dict] = None) -> bool:
+        """Check if task should execute based on conditions"""
+        result = self.evaluate_conditions(context)
+        self.gate_reason = None if result.ok else result.reason
+        return result.ok
 
 
 class WorkflowState:
@@ -139,12 +184,14 @@ class WorkflowState:
 
     def update_task_status(self, task_name: str, status: TaskStatus, result: Any = None,
                           execution_time: float = 0.0, resources_used: Dict = None,
-                          data: Optional[Dict[str, Any]] = None):
+                          data: Optional[Dict[str, Any]] = None,
+                          reason: Optional[str] = None):
         """Update task status and metrics, including optional structured data payload."""
         self.tasks[task_name] = {
             'status': status,
             'result': result,
             'data': data,
+            'reason': reason,
             'timestamp': time.time(),
             'execution_time': execution_time,
             'resources_used': resources_used or {}

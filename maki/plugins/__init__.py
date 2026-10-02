@@ -17,6 +17,7 @@ PLUGIN_REGISTRY = {
     "ftp_client": "FTPClient",
     "image_classifier": "ImageClassifier",
     "json_reader": "JsonReader",
+    "postgres_store": "PostgresStore",
     "provider_updates": "ProviderUpdates",
     "trend_search": "TrendSearch",
     "web_search": "WebSearch",

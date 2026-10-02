@@ -7,8 +7,10 @@ name: researcher            # required
 role: Research specialist   # optional
 instructions: |             # optional
   You are a research agent...
-backend: ollama             # ollama | openai | anthropic  (default: ollama)
+backend: ollama             # ollama | openai | anthropic | openrouter | llamacpp
+                            # (default: ollama)
 model: llama3.2             # optional; falls back to each backend's default
+base_url: http://127.0.0.1:8080/v1  # optional; llamacpp only
 temperature: 0.7            # optional, default 0.7
 stateful: false             # optional, default false
 use_streaming: false        # optional, default false
@@ -66,8 +68,25 @@ def _build_backend(cfg: dict) -> LLMBackend:
             kwargs["model"] = model
         return MakiAnthropic(**kwargs)
 
+    if backend_name == "openrouter":
+        from ..makiOpenRouter import MakiOpenRouter
+        kwargs = {"config": gen_config}
+        if model:
+            kwargs["model"] = model
+        return MakiOpenRouter(**kwargs)
+
+    if backend_name == "llamacpp":
+        from ..makiLlamaCpp import MakiLlamaCpp
+        kwargs = {"config": gen_config}
+        if model:
+            kwargs["model"] = model
+        if cfg.get("base_url"):
+            kwargs["base_url"] = cfg["base_url"]
+        return MakiLlamaCpp(**kwargs)
+
     raise ValueError(
-        f"Unknown backend: '{backend_name}'. Supported values: ollama, openai, anthropic"
+        f"Unknown backend: '{backend_name}'. "
+        "Supported values: ollama, openai, anthropic, openrouter, llamacpp"
     )
 
 

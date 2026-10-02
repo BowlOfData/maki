@@ -50,6 +50,7 @@ class MakiOpenAI(LLMBackend):
         session.say("Explain list comprehensions.")
     """
     supports_native_tools: bool = True
+    _backend_type: BackendType = BackendType.OPENAI
 
     def __init__(
         self,
@@ -125,6 +126,10 @@ class MakiOpenAI(LLMBackend):
             msgs.append({"role": "user", "content": prompt})
         return msgs
 
+    def _request_kwargs(self, cfg: GenerationConfig) -> dict:
+        """Generation kwargs for chat.completions.create(); subclasses extend."""
+        return cfg.to_openai_kwargs(model_family=self._model_family)
+
     def _parse_response(self, response: object, elapsed: float) -> LLMResponse:
         usage = response.usage  # type: ignore[attr-defined]
         return LLMResponse(
@@ -135,7 +140,7 @@ class MakiOpenAI(LLMBackend):
             total_tokens=usage.total_tokens if usage else 0,
             elapsed_seconds=elapsed,
             done=True,
-            backend=BackendType.OPENAI,
+            backend=self._backend_type,
         )
 
     # ------------------------------------------------------------------
@@ -161,7 +166,7 @@ class MakiOpenAI(LLMBackend):
             response = self._client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                **cfg.to_openai_kwargs(model_family=self._model_family),
+                **self._request_kwargs(cfg),
             )
         except _openai_sdk.APITimeoutError as e:
             raise MakiTimeoutError(f"chat() timed out: {e}") from e
@@ -192,7 +197,7 @@ class MakiOpenAI(LLMBackend):
                 model=self.model,
                 messages=messages,
                 stream=True,
-                **cfg.to_openai_kwargs(model_family=self._model_family),
+                **self._request_kwargs(cfg),
             ) as stream:
                 for chunk in stream:
                     delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -224,7 +229,7 @@ class MakiOpenAI(LLMBackend):
             response = await self._async_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                **cfg.to_openai_kwargs(model_family=self._model_family),
+                **self._request_kwargs(cfg),
             )
         except _openai_sdk.APITimeoutError as e:
             raise MakiTimeoutError(f"async_chat() timed out: {e}") from e
@@ -293,7 +298,7 @@ class MakiOpenAI(LLMBackend):
             full_messages.append({"role": "system", "content": effective_system})
         full_messages.extend(messages)
 
-        kwargs = cfg.to_openai_kwargs(model_family=self._model_family)
+        kwargs = self._request_kwargs(cfg)
         if tools:
             kwargs["tools"] = tools
 

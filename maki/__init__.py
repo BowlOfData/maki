@@ -13,7 +13,8 @@ except PackageNotFoundError:  # pragma: no cover - running from source, not inst
     __version__ = "0.0.0.dev0"
 
 __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
-           "HFBackend", "MakiOpenAI", "MakiAnthropic", "MakiOpenRouter", "LLMResponse",
+           "HFBackend", "MakiOpenAI", "MakiAnthropic", "MakiOpenRouter", "MakiLlamaCpp",
+           "LLMResponse",
            "GenerationConfig", "Message", "ConversationMemory", "RateLimiter", "BackendType",
            "ToolCall", "config", "__version__"]
 
@@ -28,6 +29,7 @@ _LAZY_EXPORTS = {
     "MakiOpenAI":     (".makiOpenAI",    "MakiOpenAI"),
     "MakiAnthropic":  (".makiAnthropic", "MakiAnthropic"),
     "MakiOpenRouter": (".makiOpenRouter", "MakiOpenRouter"),
+    "MakiLlamaCpp":   (".makiLlamaCpp",  "MakiLlamaCpp"),
     "LLMResponse":    (".objects",       "LLMResponse"),
     "GenerationConfig": (".objects",     "GenerationConfig"),
     "Message":        (".objects",       "Message"),

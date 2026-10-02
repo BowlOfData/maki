@@ -11,7 +11,7 @@
 [![HuggingFace](https://img.shields.io/badge/LLM-HuggingFace-yellow?logo=huggingface)](https://huggingface.co/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/)
 
-**Maki is a Python framework for multi-agent LLM applications that run wherever your models do: on your own hardware (through Ollama), on a hosted API (OpenAI, Anthropic, OpenRouter), or a mix of both, with the same agent code.**
+**Maki is a Python framework for multi-agent LLM applications that run wherever your models do: on your own hardware (through Ollama or llama.cpp), on a hosted API (OpenAI, Anthropic, OpenRouter), or a mix of both, with the same agent code.**
 
 It is for developers who want to build and run tool-using agents on local models first, keep the option of moving any task to a hosted model by swapping one object, and have guardrails switched on by default while those agents touch files, the web, or a broker account.
 
@@ -19,7 +19,7 @@ It is for developers who want to build and run tool-using agents on local models
 
 ## Why Maki
 
-- **Local and hosted models are equals.** Ollama is a built-in backend, not an add-on, and sits next to OpenAI, Anthropic, and OpenRouter behind the same `LLMBackend` contract. Agents, workflows, and plugins never know which one they are talking to. An in-process HuggingFace Transformers backend is also included (manual install, see [below](#huggingface-backend)).
+- **Local and hosted models are equals.** Ollama and llama.cpp are built-in backends, not add-ons, and sit next to OpenAI, Anthropic, and OpenRouter behind the same `LLMBackend` contract. Agents, workflows, and plugins never know which one they are talking to. An in-process HuggingFace Transformers backend is also included (manual install, see [below](#huggingface-backend)).
 - **Guardrails on by default.** Requests Maki makes itself (Ollama, remote agents, web plugins) go through a hardened connector. URLs that come from content, such as pages and feeds, are checked against private and reserved address ranges at connect time (redirect hops included); operator-configured endpoints like a LAN Ollama host are allowed. Plugins are fail-closed: a model can only call methods a plugin explicitly lists, and destructive ones (file writes, FTP transfers, trades) stay disabled until you pass `Agent(allow_dangerous_tools=True)`. The trading plugin runs in paper mode unless you opt in to live.
 - **Small core.** The base install has three dependencies (`requests`, `httpx`, `python-dotenv`). Everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP, and `AgentProxy` lets another process use it as if it were local, with a circuit breaker and optional bearer-token auth.
@@ -36,6 +36,7 @@ Maki is young (0.x) and deliberately small. If you need a large catalog of third
 | Backend | Where inference runs | Class | Requires |
 |---|---|---|---|
 | Ollama | Your machine or LAN | `MakiLLama` | a running Ollama server |
+| llama.cpp | Your machine or LAN | `MakiLlamaCpp` | `maki-framework[llamacpp]` and a running `llama serve` |
 | HuggingFace Transformers | In-process, on your CPU/GPU | `HFBackend` | `torch`, `transformers`, `accelerate` (manual install, see [HuggingFace Backend](#huggingface-backend)) |
 | OpenAI | Hosted | `MakiOpenAI` | `maki-framework[openai]` |
 | Anthropic | Hosted | `MakiAnthropic` | `maki-framework[anthropic]` |
@@ -44,7 +45,7 @@ Maki is young (0.x) and deliberately small. If you need a large catalog of third
 The same agent runs on any of them; only the backend object changes:
 
 ```python
-from maki import MakiLLama, MakiOpenAI, MakiAnthropic
+from maki import MakiLLama, MakiLlamaCpp, MakiOpenAI, MakiAnthropic
 from maki.agents import Agent
 
 def reviewer(llm):
@@ -56,6 +57,7 @@ def reviewer(llm):
     )
 
 agent = reviewer(MakiLLama(model="gemma4:26b"))              # local, via Ollama
+# agent = reviewer(MakiLlamaCpp())                           # local, via llama.cpp
 # agent = reviewer(MakiOpenAI(model="gpt-4o"))               # hosted
 # agent = reviewer(MakiAnthropic(model="claude-sonnet-4-5")) # hosted
 
@@ -67,13 +69,14 @@ print(agent.execute_task("Review this design: a plugin system with file access."
 ## Features
 
 - `MakiLLama` — Ollama chat API with synchronous, streaming, async, and vision-capable workflows
+- `MakiLlamaCpp` — llama.cpp `llama serve` (GGUF models) with streaming, async, vision, tool calling, separate reasoning output, embeddings, and reranking
 - `MakiOpenAI` — OpenAI chat completions, including reasoning models (o3/o4)
 - `MakiAnthropic` — Anthropic messages API (Claude Sonnet, Haiku, Opus)
 - `HFBackend` — direct HuggingFace Transformers integration with quantization and device selection
 - `Agent` — role-based agents with task execution, memory, reasoning, and plugin support; per-agent execution lock for concurrent safety
 - `AgentManager` — multi-agent orchestration: sequential pipelines, collaborative tasks, and dependency-aware workflows with parallel batching and checkpoint/resume
 - `ConversationMemory` — token-budgeted, pair-based conversation history shared by `Agent` (stateful mode) and `ChatSession`
-- Native tool-calling for all backends (Ollama `tools=`, OpenAI, Anthropic tool use) with multi-round execution and self-correction
+- Native tool-calling for all backends (Ollama `tools=`, llama.cpp, OpenAI, Anthropic tool use) with multi-round execution and self-correction
 - 16 built-in plugins covering files, web content, search, trading, and memory
 - Distributed agent serving: `maki serve` exposes any agent over HTTP; `AgentProxy` consumes remote agents transparently
 - Hardened HTTP connector: URL validation, private-address blocking, DNS pinning on the default path, typed error classification, and configurable timeouts (hosted-model traffic goes through the vendors' own SDKs)
@@ -112,6 +115,7 @@ Some built-in plugins and backends rely on optional extras (defined in [pyprojec
 - `maki-framework[openai]` — `openai` (OpenAI backend)
 - `maki-framework[anthropic]` — `anthropic` (Anthropic backend)
 - `maki-framework[openrouter]` — `openai` (OpenRouter backend, via its OpenAI-compatible API)
+- `maki-framework[llamacpp]` — `openai` (llama.cpp backend, via the `llama serve` OpenAI-compatible API)
 - `maki-framework[distributed]` — `fastapi`, `uvicorn`, `pyyaml` (agent server and proxies)
 - `maki-framework[distributed-redis]` — `redis` (Redis workflow checkpoints)
 
@@ -128,6 +132,9 @@ Shared runtime defaults live in [maki/config.py](maki/config.py). All values are
 | `MAKI_OLLAMA_BASE_URL` | Full Ollama base URL |
 | `MAKI_OLLAMA_HOST` | Ollama hostname |
 | `MAKI_OLLAMA_PORT` | Ollama port |
+| `MAKI_LLAMACPP_BASE_URL` | llama.cpp server URL (default `http://127.0.0.1:8080/v1`) |
+| `MAKI_LLAMACPP_MODEL` | llama.cpp model name (default `local-model`; set it in router mode) |
+| `LLAMACPP_API_KEY` | llama.cpp API key, only if the server was started with `--api-key` |
 | `MAKI_DEFAULT_MODEL` | Default model name |
 | `MAKI_DEFAULT_TEMPERATURE` | Sampling temperature |
 | `MAKI_REQUEST_TIMEOUT` | Per-request timeout (seconds) |
@@ -313,6 +320,8 @@ maki serve --config agent.yaml --host 127.0.0.1 --port 8100
 name: MyAgent
 model: gemma4:26b
 role: assistant
+# backend: ollama | llamacpp | openai | anthropic | openrouter (default: ollama)
+# base_url: http://127.0.0.1:8080/v1   # llamacpp only
 plugins:
   - web_search
   - file_reader
@@ -376,6 +385,53 @@ When `use_plugins=True` (or the backend supports native tool-calling), available
 
 ---
 
+## llama.cpp Backend
+
+`MakiLlamaCpp` talks to a [llama.cpp](https://llama.app/docs/introduction) server, which runs GGUF models from Hugging Face or a local file. Install the extra and start a server:
+
+```bash
+pip install "maki-framework[llamacpp]"
+llama serve -hf ggml-org/gemma-4-e4b-it-GGUF:Q4_0    # listens on http://127.0.0.1:8080
+```
+
+```python
+from maki import MakiLlamaCpp
+from maki.objects import GenerationConfig
+
+llm = MakiLlamaCpp(config=GenerationConfig(temperature=0.7, top_k=40))
+print(llm.health())                         # False while the model is still loading
+
+response = llm.chat("What is the capital of France?")
+print(response.content)
+print(response.reasoning)                   # thinking text from reasoning models, else None
+
+for chunk in llm.stream("Tell me a joke"):
+    print(chunk, end="", flush=True)
+```
+
+- **Everything `MakiOpenAI` does** works unchanged: chat, streaming, async, vision (images as base64), sessions, and native tool calling with agents and plugins.
+- **llama.cpp sampling settings** `top_k` and `repeat_penalty` from `GenerationConfig` are sent to the server.
+- **Long generations:** `chat_collect()` (used by `Agent(use_streaming=True)`) streams internally, so the timeout applies per chunk instead of to the whole answer.
+- **Router mode:** start `llama serve` without a model and pass the model name, e.g. `MakiLlamaCpp(model="ggml-org/gemma-3-4b-it-qat-GGUF:Q4_0")`. The server loads it on demand.
+- **Other servers:** pass `base_url="http://192.168.1.20:8080/v1"` for a LAN host, and `api_key=` (or `LLAMACPP_API_KEY`) if it was started with `--api-key`.
+
+Embeddings and reranking need a server started with `--embedding` or `--rerank`:
+
+```python
+from maki.plugins.rag_memory import RagMemory
+
+embedder = MakiLlamaCpp()                   # llama serve -hf unsloth/embeddinggemma-300m-GGUF --embedding
+rag = RagMemory(dsn="memory://", embedder=embedder.embed)
+
+reranker = MakiLlamaCpp()                   # llama serve -m reranker.gguf --rerank
+for hit in reranker.rerank("What is a panda?", ["hi", "The giant panda is a bear."], top_n=1):
+    print(hit["relevance_score"], hit["document"])
+```
+
+Chat requests go through the `openai` SDK; `health()`, `embed()` and `rerank()` go through Maki's connector, which allows loopback and LAN addresses for this operator-configured endpoint.
+
+---
+
 ## HuggingFace Backend
 
 `HFBackend` runs models directly via HuggingFace Transformers — no Ollama required.
@@ -407,7 +463,7 @@ Supports quantization (`load_in_4bit`, `load_in_8bit`) and device selection (`cp
 The framework is organized into four layers on top of a shared infrastructure layer:
 
 - **Public API** — `maki/__init__.py` lazy-loads all exports on first access
-- **LLM Backends** — `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, and `HFBackend` all implement the abstract `LLMBackend` contract
+- **LLM Backends** — `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp`, and `HFBackend` all implement the abstract `LLMBackend` contract
 - **Agent System** — `Agent` composes `PluginHandler` and `ReasoningEngine` mixins; `AgentManager` orchestrates agents via `WorkflowTask` and `WorkflowState`
 - **Distributed Layer** — `AgentServer` (FastAPI) exposes agents over HTTP; `AgentProxy` provides a remote-agent client with circuit-breaking; `DistributedAgentManager` mixes local and remote agents
 - **Infrastructure** — `Connector` (hardened HTTP: URL validation, connect-time IP pinning by default), shared data classes, typed exceptions, runtime config, and structured logging
@@ -420,7 +476,7 @@ The Plugin System sits alongside the Agent layer: plugins are loaded on demand a
 
 Top-level imports exposed by `maki`:
 
-- `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `HFBackend`
+- `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp`, `HFBackend`
 - `LLMBackend`, `BackendType`
 - `Agent`, `AgentManager`
 - `GenerationConfig`, `LLMResponse`, `Message`, `ToolCall`

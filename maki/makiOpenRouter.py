@@ -28,7 +28,7 @@ from .config import (
     OPENROUTER_APP_NAME_ENV,
     OPENROUTER_SITE_URL_ENV,
 )
-from .objects import BackendType, GenerationConfig, LLMResponse, RateLimiter
+from .objects import BackendType, GenerationConfig, RateLimiter
 
 log = logging.getLogger(__name__)
 
@@ -41,8 +41,8 @@ class MakiOpenRouter(makiOpenAI.MakiOpenAI):
     and the native tool-calling methods (to_tool_schemas(),
     chat_with_tools(), append_tool_results()) are all inherited
     unchanged. Only client construction (base_url, optional attribution
-    headers), the reasoning-model family check, and response BackendType
-    stamping are overridden.
+    headers) and the reasoning-model family check are overridden; responses
+    are stamped via the ``_backend_type`` class attribute.
 
     Usage
     -----
@@ -57,6 +57,7 @@ class MakiOpenRouter(makiOpenAI.MakiOpenAI):
     If the underlying model doesn't, OpenRouter returns an API error,
     which surfaces here as MakiAPIError — no special-casing is needed.
     """
+    _backend_type: BackendType = BackendType.OPENROUTER
 
     def __init__(
         self,
@@ -117,19 +118,6 @@ class MakiOpenRouter(makiOpenAI.MakiOpenAI):
         if bare.startswith(("o1", "o3", "o4")):
             return "reasoning"
         return "chat"
-
-    def _parse_response(self, response: object, elapsed: float) -> LLMResponse:
-        usage = response.usage  # type: ignore[attr-defined]
-        return LLMResponse(
-            content=response.choices[0].message.content or "",  # type: ignore[attr-defined]
-            model=response.model,  # type: ignore[attr-defined]
-            prompt_tokens=usage.prompt_tokens if usage else 0,
-            completion_tokens=usage.completion_tokens if usage else 0,
-            total_tokens=usage.total_tokens if usage else 0,
-            elapsed_seconds=elapsed,
-            done=True,
-            backend=BackendType.OPENROUTER,
-        )
 
     def __repr__(self) -> str:
         return f"MakiOpenRouter(model={self.model!r}, base_url={self.base_url!r})"

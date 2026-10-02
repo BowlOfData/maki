@@ -12,6 +12,7 @@ class BackendType(str, Enum):
     ANTHROPIC  = "anthropic"
     HF         = "huggingface"
     OPENROUTER = "openrouter"
+    LLAMACPP   = "llamacpp"
 
 
 @dataclass
@@ -287,6 +288,7 @@ class LLMResponse:
     elapsed_seconds: float
     done: bool = True
     backend: BackendType = BackendType.OLLAMA
+    reasoning: Optional[str] = None  # thinking text, when the backend returns it separately
 
     def __str__(self) -> str:
         return self.content
@@ -305,6 +307,7 @@ class LLMResponse:
             "elapsed_seconds": self.elapsed_seconds,
             "done": self.done,
             "backend": self.backend.value,
+            "reasoning": self.reasoning,
         }
 
     @classmethod
@@ -318,6 +321,7 @@ class LLMResponse:
             elapsed_seconds=data["elapsed_seconds"],
             done=data.get("done", True),
             backend=BackendType(data["backend"]),
+            reasoning=data.get("reasoning"),
         )
 
 
