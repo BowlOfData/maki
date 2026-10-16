@@ -105,7 +105,7 @@ class FTPClient:
                 }
 
             # Check for absolute paths (not allowed for local)
-            if os.path.isabs(normalized_path):
+            if os.path.isabs(normalized_path) or path.startswith(("/", "\\")):
                 return {
                     'valid': False,
                     'normalized_path': None,
