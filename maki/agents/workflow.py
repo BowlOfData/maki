@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .approvals import ApprovalSpec
+from .verification import VerifySpec
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,8 @@ class WorkflowTask:
     def __init__(self, name: str, agent: str, task: str, dependencies: Optional[List[str]] = None,
                  conditions: Optional[List[Callable]] = None, max_retries: int = 3,
                  retry_delay: float = 1.0, parallelizable: bool = False,
-                 approval: Optional[ApprovalSpec] = None):
+                 approval: Optional[ApprovalSpec] = None,
+                 verify: Optional[VerifySpec] = None):
         """
         Initialize a workflow task
 
@@ -75,6 +77,10 @@ class WorkflowTask:
             approval: If set, the task waits for human approval (see maki.agents.approvals)
                 before running. Unlike a failed condition, this does not skip the task:
                 it parks as AWAITING_APPROVAL until approved or rejected.
+            verify: If set, the result must be accepted by an independent verifier
+                (see maki.agents.verification) before the task counts as COMPLETED.
+                A REVISE verdict re-runs the task with feedback up to
+                ``verify.max_revisions`` times; failure fails the task and skips dependents.
         """
         self.name = name
         self.agent = agent
@@ -85,6 +91,7 @@ class WorkflowTask:
         self.retry_delay = retry_delay
         self.parallelizable = parallelizable
         self.approval = approval
+        self.verify = verify
         self.gate_reason: Optional[str] = None
         self.status = TaskStatus.PENDING
         self.result = None
@@ -101,7 +108,8 @@ class WorkflowTask:
     def to_dict(self) -> dict:
         """Serialize to a JSON-compatible dict.
 
-        Note: conditions (Python callables) are intentionally excluded.
+        Note: conditions and the verifier (Python callables) are intentionally excluded
+        (only ``has_verifier`` is recorded).
         Remote workflows must evaluate conditions at the orchestrator.
         """
         return {
@@ -113,6 +121,7 @@ class WorkflowTask:
             'retry_delay': self.retry_delay,
             'parallelizable': self.parallelizable,
             'requires_approval': self.approval is not None,
+            'has_verifier': self.verify is not None,
             'gate_reason': self.gate_reason,
             'status': self.status.value,
             'result': self.result,
@@ -185,9 +194,14 @@ class WorkflowState:
     def update_task_status(self, task_name: str, status: TaskStatus, result: Any = None,
                           execution_time: float = 0.0, resources_used: Dict = None,
                           data: Optional[Dict[str, Any]] = None,
-                          reason: Optional[str] = None):
-        """Update task status and metrics, including optional structured data payload."""
-        self.tasks[task_name] = {
+                          reason: Optional[str] = None,
+                          verification: Optional[Dict[str, Any]] = None):
+        """Update task status and metrics, including optional structured data payload.
+
+        ``verification`` (verdict, evidence, revisions, history) is stored only for tasks
+        that have a verifier.
+        """
+        entry = {
             'status': status,
             'result': result,
             'data': data,
@@ -196,6 +210,9 @@ class WorkflowState:
             'execution_time': execution_time,
             'resources_used': resources_used or {}
         }
+        if verification is not None:
+            entry['verification'] = verification
+        self.tasks[task_name] = entry
 
     def get_workflow_progress(self) -> Dict:
         """Get overall workflow progress"""

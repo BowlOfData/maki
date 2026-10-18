@@ -16,6 +16,7 @@ from ..backend import LLMBackend
 from .agent import Agent
 from .workflow import WorkflowTask, WorkflowState, TaskStatus, TaskOutput
 from .approvals import ApprovalDecision, ApprovalStore
+from .verification import Verdict, VerifyResult, normalize_verify_result
 
 logger = logging.getLogger(__name__)
 
@@ -314,6 +315,10 @@ class AgentManager:
                           Approve via the store, then call run_workflow again with the
                           same ``workflow_id`` (and a state_store) to resume.
 
+        Tasks with ``verify=VerifySpec(...)`` only count as COMPLETED once accepted by their
+        verifier. One that fails verification is FAILED, appears in the returned dict with
+        ``verification_failed: True`` and ``result: None``, and its dependents are SKIPPED.
+
         Returns:
             Dict mapping step/task names to result dicts with keys
             'agent', 'task', 'result'
@@ -406,6 +411,19 @@ class AgentManager:
         wf_id = workflow_id or f"workflow_{int(time.time())}"
         if approval_store is None and any(t.approval is not None for t in tasks):
             raise ValueError("tasks require approval but no approval_store was provided")
+        for t in tasks:
+            verifier_agent = getattr(t.verify.verify, "agent_name", None) if t.verify else None
+            if verifier_agent is None:
+                continue
+            if verifier_agent == t.agent:
+                raise ValueError(
+                    f"task '{t.name}': verifier agent '{verifier_agent}' must differ from the "
+                    "agent that produces the result"
+                )
+            if verifier_agent not in self.agents:
+                raise ValueError(
+                    f"task '{t.name}': verifier agent '{verifier_agent}' is not registered"
+                )
 
         # ------------------------------------------------------------------
         # Checkpoint resume: load prior state and pre-populate results
@@ -560,10 +578,16 @@ class AgentManager:
             (dep for dep in wt.dependencies if results.get(dep, {}).get("skipped")),
             None,
         )
-        if skipped_dep is not None or not wt.should_execute(results):
+        unverified_dep = next(
+            (dep for dep in wt.dependencies if results.get(dep, {}).get("verification_failed")),
+            None,
+        )
+        if skipped_dep is not None or unverified_dep is not None or not wt.should_execute(results):
             reason = (
                 f"dependency '{skipped_dep}' was skipped"
                 if skipped_dep is not None
+                else f"dependency '{unverified_dep}' failed verification"
+                if unverified_dep is not None
                 else (wt.gate_reason or "conditions not met")
             )
             logger.info(f"WorkflowTask '{wt.name}' skipped ({reason})")
@@ -586,7 +610,8 @@ class AgentManager:
         context: dict = {}
         for dep in wt.dependencies:
             dep_result = results.get(dep)
-            if dep_result and not dep_result.get("skipped"):
+            if dep_result and not dep_result.get("skipped") \
+                    and not dep_result.get("verification_failed"):
                 if dep_result.get("data") is not None:
                     context[dep] = dep_result["data"]
                 if dep_result.get("result") is not None:
@@ -627,26 +652,80 @@ class AgentManager:
                 }
 
         wt.status = TaskStatus.IN_PROGRESS
-        wt.attempts += 1
         start = time.time()
         wt.timestamp = start
 
+        spec = wt.verify
+        max_runs = spec.max_revisions + 1 if spec is not None else 1
+        history: List[Dict[str, Any]] = []
+        feedback: Optional[str] = None
+        previous: Any = None
+
+        def _verification_summary(verdict: str) -> Optional[Dict[str, Any]]:
+            if spec is None:
+                return None
+            last = history[-1] if history else {}
+            return {
+                "verdict": verdict,
+                "evidence": last.get("evidence", ""),
+                "revisions": max(len(history) - 1, 0),
+                "history": list(history),
+            }
+
         try:
-            result = agent.execute_task_with_retry(
-                wt.task,
-                context=context or None,
-                max_retries=wt.max_retries,
-                retry_delay=wt.retry_delay
-            )
-            if isinstance(result, TaskOutput):
-                wt.data = result.data
-                result = result.text
+            for revision in range(max_runs):
+                wt.attempts += 1
+                run_context = dict(context)
+                if revision > 0:
+                    run_context["__verification_feedback"] = feedback
+                    run_context["__previous_result"] = previous
+                result = agent.execute_task_with_retry(
+                    wt.task,
+                    context=run_context or None,
+                    max_retries=wt.max_retries,
+                    retry_delay=wt.retry_delay
+                )
+                # verified tasks start each run clean so a stale payload never survives a revision
+                data = None if spec is not None else wt.data
+                if isinstance(result, TaskOutput):
+                    data = result.data
+                    result = result.text
+                wt.data = data
+                if spec is None:
+                    break
+                verdict = self._run_verifier(wt, spec, result, data, context, revision)
+                history.append({"revision": revision, **verdict.to_dict()})
+                if verdict.verdict is Verdict.ACCEPT:
+                    break
+                if verdict.verdict is Verdict.BLOCK or revision == max_runs - 1:
+                    exhausted = verdict.verdict is Verdict.REVISE
+                    reason = (
+                        f"verification failed after {revision} revision(s): "
+                        if exhausted else "verification blocked: "
+                    ) + (verdict.fixes or verdict.evidence or "no detail")
+                    wt.status = TaskStatus.FAILED
+                    wt.gate_reason = reason
+                    wt.execution_time = time.time() - start
+                    state.update_task_status(
+                        wt.name, TaskStatus.FAILED, reason, wt.execution_time, reason=reason,
+                        verification=_verification_summary(verdict.verdict.value),
+                    )
+                    state.add_error(wt.name, reason)
+                    logger.warning(f"WorkflowTask '{wt.name}' {reason}")
+                    return wt.name, {
+                        "agent": wt.agent, "task": wt.task, "result": None, "data": None,
+                        "verification_failed": True,
+                    }
+                feedback = verdict.fixes or verdict.evidence
+                previous = result
+
             wt.result = result
             wt.status = TaskStatus.COMPLETED
             wt.execution_time = time.time() - start
             state.update_task_status(
                 wt.name, TaskStatus.COMPLETED, result, wt.execution_time,
                 data=wt.data,
+                verification=_verification_summary(Verdict.ACCEPT.value),
             )
             return wt.name, {
                 'agent': wt.agent,
@@ -659,11 +738,25 @@ class AgentManager:
             wt.status = TaskStatus.FAILED
             wt.execution_time = time.time() - start
             state.update_task_status(
-                wt.name, TaskStatus.FAILED, str(e), wt.execution_time
+                wt.name, TaskStatus.FAILED, str(e), wt.execution_time,
+                verification=_verification_summary("error") if history else None,
             )
             state.add_error(wt.name, str(e))
             logger.error(f"WorkflowTask '{wt.name}' failed: {str(e)}")
             return wt.name, None
+
+    def _run_verifier(self, wt: WorkflowTask, spec: Any, result: Any, data: Any,
+                      context: Dict, revision: int) -> VerifyResult:
+        """Run a task's verifier; any error or bad return value fails closed (BLOCK)."""
+        ctx = {
+            "name": wt.name, "agent": wt.agent, "task": wt.task, "result": result,
+            "data": data, "context": dict(context), "revision": revision, "manager": self,
+        }
+        try:
+            return normalize_verify_result(spec.verify(ctx))
+        except Exception as e:
+            logger.error(f"Verifier for task '{wt.name}' raised: {e}", exc_info=True)
+            return VerifyResult(Verdict.BLOCK, evidence=f"verifier raised {type(e).__name__}: {e}")
 
     def _topological_sort(self, tasks: List[WorkflowTask]) -> List[WorkflowTask]:
         """
