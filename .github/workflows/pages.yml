@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "www/**"
+      - "docs/user/**"
+      - "mkdocs.yml"
       - ".github/workflows/pages.yml"
   workflow_dispatch: {}
 
@@ -25,10 +27,22 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build documentation
+        run: |
+          pip install mkdocs-material
+          mkdocs build --strict
+      - name: Assemble site (landing page at /, docs at /docs/)
+        run: |
+          mkdir _site
+          cp -r www/. _site/
+          cp -r site _site/docs
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: www
+          path: _site
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

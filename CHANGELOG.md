@@ -25,6 +25,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 - Pinned (SSRF-protected) HTTPS connections sent `Host: <ip>` instead of the real hostname: the connect-time IP swap on `conn._dns_host` was never undone, and urllib3 connects HTTPS connections before writing the request. CDNs such as Fastly answered `421 Misdirected Request` (and Cloudflare/GitHub Pages `403`/`404`) because the Host header no longer matched the SNI name. This was the real cause of the "DNS pinning breaks CDN-hosted sites" workaround (`ssrf_protect=False`) used in several plugins. Verified against pypi.org, docs.python.org, raw.githubusercontent.com, reddit.com, theverge.com, bbc.com, blog.cloudflare.com and GitHub Pages, all of which now return 200 with pinning on
 
+## [0.3.1] - 2026-10-23
+
+### Fixed
+- PyPI project page: the logo did not render because the README used a relative image path. The README is now a short landing page with absolute image and link URLs
+
+### Added
+- User documentation site (MkDocs Material) at https://bowlofdata.github.io/maki/docs/, and `[project.urls]` metadata
+
 ## [0.3.0] - 2026-09-08
 
 ### Added

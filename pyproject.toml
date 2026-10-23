@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "maki-framework"
-version = "0.3.0"
+version = "0.3.1"
 authors = [
   {name="Bowl of Data", email="bowlofdata@gmail.com"},
 ]
@@ -83,6 +83,13 @@ alpaca = [
 all = [
     "maki-framework[openai,anthropic,openrouter,llamacpp,structured,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
 ]
+
+[project.urls]
+Homepage = "https://bowlofdata.github.io/maki/"
+Documentation = "https://bowlofdata.github.io/maki/docs/"
+Source = "https://github.com/BowlOfData/maki"
+Issues = "https://github.com/BowlOfData/maki/issues"
+Changelog = "https://github.com/BowlOfData/maki/blob/main/CHANGELOG.md"
 
 [project.scripts]
 maki = "maki.__main__:main"

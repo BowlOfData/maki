@@ -224,3 +224,4 @@ ARCHITECTURE_REVIEW.md
 DISTRIBUTED_PLAN.md
 PLAN_openai_anthropic_backends.md
 .flake8
+docs/ideas/verified-private-agents-regulated-smes.md

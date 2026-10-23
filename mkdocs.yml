@@ -1,0 +1,51 @@
+site_name: Maki
+site_description: A Python framework for multi-agent LLM applications that run wherever your models do.
+site_url: https://bowlofdata.github.io/maki/docs/
+repo_url: https://github.com/BowlOfData/maki
+repo_name: BowlOfData/maki
+edit_uri: edit/main/docs/user/
+docs_dir: docs/user
+site_dir: site
+
+theme:
+  name: material
+  logo: assets/logo.png
+  favicon: assets/logo.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Installation: installation.md
+  - Guides:
+      - Backends: backends.md
+      - Agents: agents.md
+      - Workflows: workflows.md
+      - Plugins: plugins.md
+      - Serving agents: serving.md
+  - Reference:
+      - Configuration: configuration.md
+      - Architecture: architecture.md
