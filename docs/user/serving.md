@@ -13,8 +13,8 @@ pip install "maki-framework[distributed]"
 name: MyAgent
 model: llama3.2
 role: assistant
-# backend: ollama | llamacpp | openai | anthropic | openrouter (default: ollama)
-# base_url: http://127.0.0.1:8080/v1   # llamacpp only
+# backend: ollama | llamacpp | vllm | openai | anthropic | openrouter (default: ollama)
+# base_url: http://127.0.0.1:8080/v1   # llamacpp / vllm only
 plugins:
   - web_search
   - file_reader

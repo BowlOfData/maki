@@ -16,6 +16,7 @@ Backends and plugins with heavier dependencies are opt-in:
 | `anthropic` | `anthropic` | Anthropic backend |
 | `openrouter` | `openai` | OpenRouter backend |
 | `llamacpp` | `openai` | llama.cpp backend |
+| `vllm` | `openai` | vLLM backend |
 | `distributed` | `fastapi`, `uvicorn`, `pyyaml` | `maki serve`, `AgentProxy` |
 | `distributed-redis` | `redis` | Redis workflow checkpoints |
 | `web` | `feedparser`, `readability-lxml`, `html2text` | `web_search`, `web_to_md`, `provider_updates` |

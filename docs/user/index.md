@@ -1,6 +1,6 @@
 # Maki
 
-**Maki is a Python framework for multi-agent LLM applications that run wherever your models do:** on your own hardware (through Ollama or llama.cpp), on a hosted API (OpenAI, Anthropic, OpenRouter), or a mix of both, with the same agent code.
+**Maki is a Python framework for multi-agent LLM applications that run wherever your models do:** on your own hardware (through Ollama, llama.cpp or vLLM), on a hosted API (OpenAI, Anthropic, OpenRouter), or a mix of both, with the same agent code.
 
 It is for developers who want to build tool-using agents on local models first, keep the option of moving any task to a hosted model by swapping one object, and have guardrails on by default while those agents touch files, the web, or a broker account.
 
@@ -12,7 +12,7 @@ pip install maki-framework
 
 ## Why Maki
 
-- **Local and hosted models are equals.** Ollama and llama.cpp sit next to OpenAI, Anthropic and OpenRouter behind the same `LLMBackend` contract. Agents, workflows and plugins never know which one they are talking to.
+- **Local and hosted models are equals.** Ollama, llama.cpp and vLLM sit next to OpenAI, Anthropic and OpenRouter behind the same `LLMBackend` contract. Agents, workflows and plugins never know which one they are talking to.
 - **Guardrails on by default.** Outbound requests go through a hardened connector that blocks private and reserved address ranges for content-derived URLs. Plugins are fail-closed: a model can only call methods a plugin explicitly lists, and destructive ones stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
 - **Small core.** The base install has three dependencies (`requests`, `httpx`, `python-dotenv`). Everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP, and `AgentProxy` lets another process use it as if it were local.
@@ -26,8 +26,9 @@ pip install maki-framework
 | I want to... | Read |
 |---|---|
 | Run my first agent | [Quickstart](quickstart.md) |
-| Use OpenAI, Anthropic, llama.cpp or HuggingFace | [Backends](backends.md) |
+| Use OpenAI, Anthropic, llama.cpp, vLLM or HuggingFace | [Backends](backends.md) |
 | Give an agent memory, streaming or tools | [Agents](agents.md) |
 | Chain several agents together | [Workflows](workflows.md) |
 | Let an agent read files or search the web | [Plugins](plugins.md) |
+| Give an agent a notes vault or a searchable knowledge base | [Memory: Obsidian and RAG](memory.md) |
 | Expose an agent over HTTP | [Serving agents](serving.md) |

@@ -53,6 +53,9 @@ openrouter = [
 llamacpp = [
     "openai>=1.0",
 ]
+vllm = [
+    "openai>=1.0",
+]
 distributed = [
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
@@ -81,7 +84,7 @@ alpaca = [
     "yfinance>=0.2.40",
 ]
 all = [
-    "maki-framework[openai,anthropic,openrouter,llamacpp,structured,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
+    "maki-framework[openai,anthropic,openrouter,llamacpp,vllm,structured,distributed,distributed-redis,gui,ftp,web,trends,alpaca]",
 ]
 
 [project.urls]

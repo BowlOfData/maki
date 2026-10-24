@@ -45,6 +45,7 @@ nav:
       - Agents: agents.md
       - Workflows: workflows.md
       - Plugins: plugins.md
+      - Memory (Obsidian and RAG): memory.md
       - Serving agents: serving.md
   - Reference:
       - Configuration: configuration.md

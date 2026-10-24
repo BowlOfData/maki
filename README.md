@@ -10,7 +10,7 @@
 [![CI](https://github.com/BowlOfData/maki/actions/workflows/python-package.yml/badge.svg)](https://github.com/BowlOfData/maki/actions/workflows/python-package.yml)
 [![Docs](https://img.shields.io/badge/docs-bowlofdata.github.io-informational)](https://bowlofdata.github.io/maki/docs/)
 
-**Maki is a Python framework for multi-agent LLM applications that run wherever your models do: on your own hardware (through Ollama or llama.cpp), on a hosted API (OpenAI, Anthropic, OpenRouter), or a mix of both, with the same agent code.**
+**Maki is a Python framework for multi-agent LLM applications that run wherever your models do: on your own hardware (through Ollama, llama.cpp or vLLM), on a hosted API (OpenAI, Anthropic, OpenRouter), or a mix of both, with the same agent code.**
 
 It is for developers who want to build and run tool-using agents on local models first, keep the option of moving any task to a hosted model by swapping one object, and have guardrails switched on by default while those agents touch files, the web, or a broker account.
 
@@ -49,7 +49,7 @@ agent = Agent(name="Reviewer", maki_instance=MakiAnthropic(model="claude-sonnet-
 
 ## Why Maki
 
-- **Local and hosted models are equals.** Ollama, llama.cpp, OpenAI, Anthropic and OpenRouter sit behind the same `LLMBackend` contract, and an in-process HuggingFace backend is included.
+- **Local and hosted models are equals.** Ollama, llama.cpp, vLLM, OpenAI, Anthropic and OpenRouter sit behind the same `LLMBackend` contract, and an in-process HuggingFace backend is included.
 - **Guardrails on by default.** Content-derived URLs are checked against private and reserved address ranges at connect time. Plugins are fail-closed, and destructive methods (file writes, FTP transfers, trades) stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
 - **Small core.** Three dependencies (`requests`, `httpx`, `python-dotenv`); everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP; `AgentProxy` consumes it remotely.
@@ -63,7 +63,7 @@ Maki is young (0.x) and deliberately small. If you need a large catalog of third
 |---|---|
 | [Quickstart](https://bowlofdata.github.io/maki/docs/quickstart/) | Install to first agent in 5 minutes |
 | [Installation and extras](https://bowlofdata.github.io/maki/docs/installation/) | Optional dependencies per backend and plugin |
-| [Backends](https://bowlofdata.github.io/maki/docs/backends/) | Ollama, llama.cpp, OpenAI, Anthropic, OpenRouter, HuggingFace |
+| [Backends](https://bowlofdata.github.io/maki/docs/backends/) | Ollama, llama.cpp, vLLM, OpenAI, Anthropic, OpenRouter, HuggingFace |
 | [Agents](https://bowlofdata.github.io/maki/docs/agents/) | Memory, reasoning, streaming, tools |
 | [Workflows](https://bowlofdata.github.io/maki/docs/workflows/) | Multi-agent pipelines and verified tasks |
 | [Plugins](https://bowlofdata.github.io/maki/docs/plugins/) | Built-in plugins and the safety model |

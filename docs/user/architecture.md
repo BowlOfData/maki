@@ -5,7 +5,7 @@
 Four layers on top of a shared infrastructure layer:
 
 - **Public API:** `maki/__init__.py` lazy-loads all exports on first access.
-- **LLM backends:** `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp` and `HFBackend` all implement the abstract `LLMBackend` contract.
+- **LLM backends:** `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp`, `MakiVllm` and `HFBackend` all implement the abstract `LLMBackend` contract.
 - **Agent system:** `Agent` composes `PluginHandler` and `ReasoningEngine` mixins; `AgentManager` orchestrates agents via `WorkflowTask` and `WorkflowState`.
 - **Distributed layer:** `AgentServer` (FastAPI) exposes agents over HTTP; `AgentProxy` is the remote-agent client with circuit breaking; `DistributedAgentManager` mixes local and remote agents.
 - **Infrastructure:** `Connector` (hardened HTTP: URL validation, connect-time IP pinning), shared data classes, typed exceptions, runtime config and logging.
@@ -16,7 +16,7 @@ Plugins sit alongside the agent layer. They are loaded on demand and invoked whe
 
 Top-level imports from `maki`:
 
-- `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp`, `HFBackend`
+- `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp`, `MakiVllm`, `HFBackend`
 - `LLMBackend`, `BackendType`
 - `Agent`, `AgentManager`
 - `GenerationConfig`, `LLMResponse`, `Message`, `ToolCall`

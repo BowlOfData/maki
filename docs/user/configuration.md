@@ -9,6 +9,9 @@ Shared runtime defaults live in `maki/config.py`. Every value can be overridden 
 | `MAKI_OLLAMA_PORT` | Ollama port |
 | `MAKI_LLAMACPP_BASE_URL` | llama.cpp server URL (default `http://127.0.0.1:8080/v1`) |
 | `MAKI_LLAMACPP_MODEL` | llama.cpp model name (default `local-model`; set it in router mode) |
+| `MAKI_VLLM_BASE_URL` | vLLM server URL (default `http://127.0.0.1:8000/v1`) |
+| `MAKI_VLLM_MODEL` | vLLM model name (default `Qwen/Qwen2.5-1.5B-Instruct`, the vLLM quickstart model); must match the served name |
+| `VLLM_API_KEY` | vLLM API key, only if the server was started with `--api-key` |
 | `LLAMACPP_API_KEY` | llama.cpp API key, only if the server was started with `--api-key` |
 | `MAKI_DEFAULT_MODEL` | Default model name |
 | `MAKI_DEFAULT_TEMPERATURE` | Sampling temperature |

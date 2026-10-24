@@ -13,6 +13,7 @@ class BackendType(str, Enum):
     HF         = "huggingface"
     OPENROUTER = "openrouter"
     LLAMACPP   = "llamacpp"
+    VLLM       = "vllm"
 
 
 @dataclass

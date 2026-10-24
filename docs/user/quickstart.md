@@ -73,6 +73,6 @@ llm = MakiAnthropic(model="claude-sonnet-4-5")
 
 ## Next steps
 
-- [Backends](backends.md): llama.cpp, OpenAI, Anthropic, OpenRouter, HuggingFace
+- [Backends](backends.md): llama.cpp, vLLM, OpenAI, Anthropic, OpenRouter, HuggingFace
 - [Agents](agents.md): memory, reasoning, streaming
 - [Workflows](workflows.md): multi-agent pipelines

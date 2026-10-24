@@ -13,10 +13,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `TaskOutput(text, data)`: an agent may return it from `execute_task_with_retry`; `data` is stored on `WorkflowTask.data` and reaches dependents in their context (previously nothing in Maki populated `WorkflowTask.data`)
 - `GateResult(ok, reason)`: conditions may return it; the reason is recorded in `WorkflowState` (`tasks[name]["reason"]`) and `WorkflowTask.gate_reason`
 - `MakiLlamaCpp` backend for llama.cpp's `llama serve` (extra: `llamacpp`). Subclasses `MakiOpenAI`, so chat, streaming, async, vision and native tool calling work unchanged; adds `top_k`/`repeat_penalty` passthrough, `reasoning_content` capture, a streaming `chat_collect()` (per-chunk timeout for long local generations), and `health()`, `embed()`/`embed_batch()` (usable as `RagMemory(embedder=llm.embed)`) and `rerank()`. API key optional (`LLAMACPP_API_KEY`); base URL defaults to `http://127.0.0.1:8080/v1` (`MAKI_LLAMACPP_BASE_URL`)
+- `MakiVllm` backend for vLLM servers (extra: `vllm`). Subclasses `MakiOpenAI` (chat, streaming, async, vision, native tools unchanged); adds `top_k`/`repetition_penalty` passthrough, structured outputs (`chat_json()` with a JSON schema or pydantic model, `chat_choice()`, `chat_regex()`), concurrent `chat_batch()`/`async_chat_batch()`, `reasoning` capture, `chat_collect()`, and `health()`, `models()`, `embed()`/`embed_batch()` and `rerank()`. LoRA adapters are selected via `model=`. API key optional (`VLLM_API_KEY`); base URL defaults to `http://127.0.0.1:8000/v1` (`MAKI_VLLM_BASE_URL`); model defaults to `Qwen/Qwen2.5-1.5B-Instruct` (`MAKI_VLLM_MODEL`); `maki serve` configs accept `backend: vllm`
 - `LLMResponse.reasoning`: optional thinking text for backends that return it separately
 - `maki serve` YAML configs accept `backend: llamacpp` (with optional `base_url`) and `backend: openrouter`, which was previously missing
 
+### Documentation
+- New guide `docs/user/memory.md` with worked examples for the `obsidian_memory` and `rag_memory` plugins (agent memory across runs, document Q&A, reranking, indexing a vault for semantic search) using vLLM for chat and embeddings; vLLM added to the README, index and quickstart backend lists
+
 ### Changed
+- `MakiLlamaCpp` and `MakiVllm` share a new abstract base, `OpenAICompatServer` (`maki/makiOpenAICompat.py`), holding the constructor, `chat_collect()`, reasoning capture, `health()`, `embed()`/`embed_batch()` and `rerank()`; each backend now only declares its defaults and `_server_extra_body()`. Public behaviour is unchanged
 - `MakiOpenAI` gained `_request_kwargs()` and `_backend_type` hooks; `MakiOpenRouter` uses them instead of duplicating `_parse_response()`
 
 ### Security

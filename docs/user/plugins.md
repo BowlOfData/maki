@@ -40,6 +40,8 @@ When `use_plugins=True` (or the backend supports native tool calling), the plugi
 | `obsidian_memory` | Persistent note-based memory (Obsidian vault) | none |
 | `rag_memory` | Retrieval-augmented memory with pluggable vector backends | none |
 
+See [Memory: Obsidian and RAG](memory.md) for worked examples of the two memory plugins.
+
 ## Safety model
 
 Tool calls are **fail-closed**:
