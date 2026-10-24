@@ -219,10 +219,11 @@ news_letter_plan.md
 maki_gui/*
 maki_newsletter/output/*
 plugin_ocr.md
-docs/IDEAS_startup_investor_report.md
+plans/IDEAS_startup_investor_report.md
 ARCHITECTURE_REVIEW.md
 DISTRIBUTED_PLAN.md
 PLAN_openai_anthropic_backends.md
 .flake8
-docs/ideas/verified-private-agents-regulated-smes.md
+plans/ideas/verified-private-agents-regulated-smes.md
 PyPI-Recovery-Codes-BowlofData-2026-10-23T13_38_14.578787.txt
+plans/*

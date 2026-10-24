@@ -14,7 +14,7 @@ A `WorkflowTask` can declare a **verifier**. After the task runs, the verifier j
 - `WorkflowTask.to_dict` omits callables (`conditions`, `approval`); a verifier spec is the same kind of thing and is treated the same way (`has_verifier` flag only).
 - Agents are non-stateful by default, so a verifier agent's prompt is just task + context: "fresh context" comes for free as long as the verifier agent is a different `Agent` and is not set `stateful`.
 - Approval gate sits *before* execution and is keyed on content; it is not reused for after-the-fact escalation (D2).
-- Tests use stub agents with `execute_task_with_retry` (see `maki/test/test_workflow_approval.py`); the new tests follow that pattern. No `plans/` directory exists; plans live as `docs/PLAN_*.md`.
+- Tests use stub agents with `execute_task_with_retry` (see `maki/test/test_workflow_approval.py`); the new tests follow that pattern. Plans live as `plans/PLAN_*.md`.
 
 ## Design (proposed)
 
