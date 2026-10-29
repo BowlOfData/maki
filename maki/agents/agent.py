@@ -236,6 +236,33 @@ class Agent(PluginHandler, ReasoningEngine):
         # Unreachable, but satisfies type checkers
         raise RuntimeError(f"Task '{task}' failed after {max_retries} attempts")
 
+    def run_loop(self, goal: str, requirements, judge, on_iteration=None, confirm_requirements=None, **options):
+        """
+        Work on ``goal`` in a loop until a judge confirms every requirement is met.
+
+        Args:
+            goal: What to achieve.
+            requirements: ``Requirement`` objects, or plain strings (judged by ``judge``).
+            judge: A separate, stateless Agent that judges the requirements without a
+                command or check. Back it with a JSON-mode, non-thinking model.
+            on_iteration: Hook called before the first iteration (``None``) and after each
+                one (a ``LoopEvent``); return a ``Decision`` to stop or add a reviewer note.
+            confirm_requirements: Called once with every requirement (commands in full);
+                return False to cancel.
+            **options: ``LoopSpec`` fields: ``max_iterations``, ``max_seconds``,
+                ``stall_limit``, ``context`` ("shared" needs ``stateful=True``),
+                ``use_plugins``, ``artifact_fn``, ``cwd``, ``loop_dir``, ``loop_id``.
+
+        Returns:
+            A ``LoopResult``; see :mod:`maki.agents.loop`.
+        """
+        from .loop import LoopSpec, Requirement, run_loop
+
+        reqs = [r if isinstance(r, Requirement) else Requirement(f"r{n}", r)
+                for n, r in enumerate(requirements, 1)]
+        spec = LoopSpec(goal, reqs, **options)
+        return run_loop(self, judge, spec, on_iteration=on_iteration, confirm_requirements=confirm_requirements)
+
     def stream_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False):
         """
         Stream a task response token by token.

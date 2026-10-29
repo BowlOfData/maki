@@ -16,6 +16,10 @@ from .approvals import (
 from .verification import (
     Verdict, VerifyResult, VerifySpec, AgentVerifier, agent_verifier,
 )
+from .loop import (
+    Decision, LoopEvent, LoopResult, LoopSpec, Requirement, StopReason, approve_requirements,
+    draft_requirements, run_loop,
+)
 from .protocols import PluginHostProtocol, ReasoningHostProtocol
 
 __all__ = [
@@ -24,4 +28,6 @@ __all__ = [
     'GateResult', 'TaskOutput', 'ApprovalSpec', 'ApprovalStore', 'ApprovalRecord', 'ApprovalDecision',
     'LocalApprovalStore', 'InMemoryApprovalStore',
     'Verdict', 'VerifyResult', 'VerifySpec', 'AgentVerifier', 'agent_verifier',
+    'Decision', 'LoopEvent', 'LoopResult', 'LoopSpec', 'Requirement', 'StopReason',
+    'approve_requirements', 'draft_requirements', 'run_loop',
 ]
