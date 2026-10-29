@@ -18,8 +18,9 @@ from .verification import (
 )
 from .loop import (
     Decision, LoopEvent, LoopResult, LoopSpec, Requirement, StopReason, approve_requirements,
-    draft_requirements, run_loop,
+    draft_requirements, resume_loop, run_loop,
 )
+from .loop_scratchpad import LoopBusyError
 from .protocols import PluginHostProtocol, ReasoningHostProtocol
 
 __all__ = [
@@ -28,6 +29,6 @@ __all__ = [
     'GateResult', 'TaskOutput', 'ApprovalSpec', 'ApprovalStore', 'ApprovalRecord', 'ApprovalDecision',
     'LocalApprovalStore', 'InMemoryApprovalStore',
     'Verdict', 'VerifyResult', 'VerifySpec', 'AgentVerifier', 'agent_verifier',
-    'Decision', 'LoopEvent', 'LoopResult', 'LoopSpec', 'Requirement', 'StopReason',
-    'approve_requirements', 'draft_requirements', 'run_loop',
+    'Decision', 'LoopBusyError', 'LoopEvent', 'LoopResult', 'LoopSpec', 'Requirement', 'StopReason',
+    'approve_requirements', 'draft_requirements', 'resume_loop', 'run_loop',
 ]

@@ -82,7 +82,7 @@ class StoppingTests(EngineBase):
 
         res = run_loop(maker, judge, self.spec(max_seconds=15, stall_limit=9), on_iteration=hook, clock=clock)
         self.assertEqual(res.stop_reason, StopReason.TIMEOUT)
-        self.assertEqual(res.iterations, 2)
+        self.assertEqual(res.iterations, 1)  # the cap counts from loop start, hook time included
 
     def test_agent_error_stops_cleanly_with_checkpoint(self):
         res, *_ = self.run_it([RuntimeError("model down")], [verdict({"a": True, "b": True})])
@@ -122,6 +122,35 @@ class CheckTests(EngineBase):
         _, _, judge = self.run_it(["reply"], [verdict({"a": True, "b": True})], artifact_fn=lambda: "DIFF-123")
         self.assertIn("DIFF-123", judge.prompts[0])
         self.assertIn("reply", judge.prompts[0])
+
+
+class JudgeErrorFeedbackTests(EngineBase):
+    def test_a_judge_failure_is_never_shown_to_the_maker_as_feedback(self):
+        _, maker, _ = self.run_it(["x"], ["junk", "junk", verdict({"a": True, "b": True})], stall_limit=9)
+        self.assertNotIn("no usable verdict", maker.prompts[1])
+
+    def test_last_real_feedback_is_kept_through_a_judge_error(self):
+        judge = [verdict({"a": True, "b": False}, b="fix b like THIS"), "junk", "junk", verdict({"a": True, "b": True})]
+        _, maker, _ = self.run_it(["x"], judge, stall_limit=9)
+        self.assertIn("fix b like THIS", maker.prompts[2])
+        self.assertNotIn("no usable verdict", maker.prompts[2])
+
+
+class ArtifactTests(EngineBase):
+    def test_artifact_fn_output_is_the_tracked_artifact(self):
+        seen = []
+        reqs = [Requirement("fn", "sees raw artifact", check=lambda t: seen.append(t) or t == "FILE-V1")]
+        res, *_ = self.run_it(["I fixed it"], ["u"], reqs=reqs, artifact_fn=lambda: "FILE-V1")
+        self.assertEqual(seen, ["FILE-V1"])
+        self.assertEqual(res.artifact, "FILE-V1")
+        self.assertEqual(res.events[0].reply, "I fixed it")
+
+    def test_fresh_prompt_carries_artifact_fn_output_not_the_reply(self):
+        files = iter(["FILE-V1", "FILE-V2", "FILE-V3"])
+        _, maker, _ = self.run_it(["I fixed it"], [verdict({"a": True, "b": False}), verdict({"a": True, "b": True})],
+                                  context="fresh", maker_kw={"stateful": False}, artifact_fn=lambda: next(files))
+        self.assertIn("FILE-V1", maker.prompts[1])
+        self.assertNotIn("Current artifact:\nI fixed it", maker.prompts[1])
 
 
 class ContextTests(EngineBase):

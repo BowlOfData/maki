@@ -19,12 +19,20 @@ Context modes:
 * ``"fresh"``: every iteration starts clean; the prompt carries the goal, the current
   artifact, the failing feedback and the scratchpad notes.
 
+Durability: the state is checkpointed every iteration, so :func:`resume_loop` can continue a
+loop after a crash, a stop, or a durable-approval suspension. With an ``ApprovalStore`` the
+loop asks for approval before every iteration (gate N = N iterations done) and suspends
+(``StopReason.SUSPENDED``) until a human answers: approve = continue, reject with a note =
+continue with that note as feedback, reject without a note = stop.
+
 Command checks are not sandboxed (see :mod:`maki.agents.loop_judge`). Tools that write
 files need ``Agent(allow_dangerous_tools=True)``.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import time
@@ -33,13 +41,16 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+from .approvals import ApprovalDecision, ApprovalStore
 from .loop_judge import CheckResult, _last_json_object, judge_requirements, run_command_check
-from .loop_scratchpad import LoopStore, ReloadReport, Scratchpad, default_loop_dir
+from .loop_scratchpad import LoopLock, LoopStore, ReloadReport, Scratchpad, default_loop_dir
 
 logger = logging.getLogger(__name__)
 
 _NOTES_HINT = ("Optionally end your reply with a line `NOTES:` followed by notes to your future self; "
                "everything after that line is kept as notes and is not part of the result.")
+# Only the last "NOTES:" line splits the reply, so a result that itself contains such a line loses
+# the text after it; give the agent a different heading if that matters for your task.
 
 CheckFn = Callable[[str], Union[bool, CheckResult, Tuple[bool, str]]]
 
@@ -96,6 +107,7 @@ class StopReason(Enum):
     BLOCKED = "blocked"
     STOPPED = "stopped"
     ERROR = "error"
+    SUSPENDED = "suspended"
 
 
 @dataclass(frozen=True)
@@ -225,6 +237,11 @@ class LoopResult:
     def succeeded(self) -> bool:
         return self.stop_reason is StopReason.SUCCEEDED
 
+    @property
+    def suspended(self) -> bool:
+        """True when the loop is waiting for a durable approval; continue with :func:`resume_loop`."""
+        return self.stop_reason is StopReason.SUSPENDED
+
 
 OnIteration = Callable[[Optional[LoopEvent]], Optional[Decision]]
 
@@ -292,19 +309,31 @@ def _requirement_listing(reqs: Sequence[Requirement]) -> str:
     return "\n".join(f"- {r.id}: {r.text}" for r in reqs)
 
 
-def _failing_text(reqs: Sequence[Requirement], results: Dict[str, CheckResult]) -> str:
-    return "\n".join(f"- {r.id} ({r.text}): {results[r.id].feedback or 'not met'}"
-                     for r in reqs if not results[r.id].passed)
+def _failing_text(reqs: Sequence[Requirement], results: Dict[str, CheckResult], judge_error: bool = False,
+                  last_good: Optional[Dict[str, CheckResult]] = None) -> str:
+    """Feedback for the maker. After a judge error the judge's requirements keep the last real
+    verdict (or none), so "the judge failed" is never presented as something to fix."""
+    lines = []
+    for r in reqs:
+        res = results[r.id]
+        if judge_error and r.kind == "agent":
+            res = (last_good or {}).get(r.id)
+            if res is None:
+                continue
+        if not res.passed:
+            lines.append(f"- {r.id} ({r.text}): {res.feedback or 'not met'}")
+    return "\n".join(lines)
 
 
-def _build_prompt(spec: LoopSpec, iteration: int, pad: Scratchpad, artifact: str, note: str) -> str:
+def _build_prompt(spec: LoopSpec, iteration: int, pad: Scratchpad, artifact: str, note: str,
+                  full: bool = False) -> str:
     if iteration == 1:
         parts = [f"Goal:\n{spec.goal}", f"Requirements (all must be met):\n{_requirement_listing(spec.requirements)}"]
         if note:
             parts.append(f"Reviewer note: {note}")
         parts.append(_NOTES_HINT)
         return "\n\n".join(parts)
-    if spec.context == "shared":
+    if spec.context == "shared" and not full:
         parts = [f"Not all requirements are met yet. Failing requirements and feedback:\n{pad.feedback}"]
     else:
         parts = [f"Goal:\n{spec.goal}",
@@ -334,17 +363,22 @@ def _validate_start(agent: Any, judge: Any, spec: LoopSpec) -> None:
                                  "allow_dangerous_tools=True to let a loop use them")
 
 
-def _judged_artifact(spec: LoopSpec, body: str) -> str:
+def _artifacts(spec: LoopSpec, body: str) -> Tuple[str, str]:
+    """Return ``(current, judged)``: the artifact the loop tracks and the text the judge reads.
+
+    Without ``artifact_fn`` both are the agent's reply. With it, the current artifact is the
+    function's output (for code: the files) and the judge also sees the reply.
+    """
     if spec.artifact_fn is None:
-        return body
+        return body, body
     try:
-        extra = str(spec.artifact_fn())
+        current = str(spec.artifact_fn())
     except Exception as e:  # noqa: BLE001
-        extra = f"(artifact_fn failed: {type(e).__name__}: {e})"
-    return f"Agent reply:\n{body}\n\nArtifact:\n{extra}"
+        current = f"(artifact_fn failed: {type(e).__name__}: {e})"
+    return current, f"Agent reply:\n{body}\n\nArtifact:\n{current}"
 
 
-def _check_requirements(judge: Any, spec: LoopSpec, artifact: str,
+def _check_requirements(judge: Any, spec: LoopSpec, artifact: str, current: str,
                         cwd: str) -> Tuple[Dict[str, CheckResult], bool, str]:
     """Run command/callable checks, then one batched judge call for the rest.
 
@@ -355,7 +389,7 @@ def _check_requirements(judge: Any, spec: LoopSpec, artifact: str,
     for r in spec.requirements:
         if r.kind == "agent":
             continue
-        results[r.id] = _run_check(r, artifact, cwd, spec.command_timeout)
+        results[r.id] = _run_check(r, current, cwd, spec.command_timeout)
         if r.command is not None:
             evidence.append(f"{r.id} `{' '.join(r.command)}`: "
                             f"{'passed' if results[r.id].passed else 'FAILED'}\n{results[r.id].feedback}")
@@ -383,8 +417,196 @@ def _after_iteration_stop(spec: LoopSpec, iteration: int, passing: Optional[int]
     return None
 
 
+_GATE_TASK = "loop-gate"
+
+
+def _fingerprint(requirements: Sequence[Requirement]) -> str:
+    """Hash of what each requirement says and runs (callables count by kind only)."""
+    payload = [[r.id, r.text, list(r.command) if r.command else None, r.kind] for r in requirements]
+    return hashlib.sha256(json.dumps(payload).encode("utf-8")).hexdigest()
+
+
+class _LoopRun:
+    """One run of a loop: owns the scratchpad, checkpoint and counters, and drives the iterations."""
+
+    def __init__(self, agent: Any, judge: Any, spec: LoopSpec, on_iteration: Optional[OnIteration],
+                 approvals: Optional[ApprovalStore], clock: Callable[[], float]):
+        _validate_start(agent, judge, spec)
+        self.agent, self.judge, self.spec = agent, judge, spec
+        self.on_iteration, self.approvals, self.clock = on_iteration, approvals, clock
+        self.loop_id = spec.loop_id or f"loop-{uuid.uuid4().hex[:8]}"
+        self.directory = spec.loop_dir or default_loop_dir(self.loop_id)
+        self.pad = Scratchpad(os.path.join(self.directory, "scratchpad.md"), self.loop_id)
+        self.store = LoopStore(self.directory)
+        self.lock = LoopLock(self.directory)
+        self.cwd = os.path.realpath(spec.cwd or os.getcwd())
+        self.tracker = StallTracker(spec.stall_limit)
+        self.events: List[LoopEvent] = []
+        self.history: List[str] = []
+        self.prev_passed: set = set()
+        self.last_good: Dict[str, CheckResult] = {}
+        self.artifact, self.note = "", ""
+        self.iteration_done = 0
+        self.base_elapsed = 0.0
+        self.rebuild_prompt = False
+        self.start = clock()
+        self.result = LoopResult(self.loop_id, StopReason.STOPPED, 0, self.events, "", self.pad.path)
+
+    # -- persistence -------------------------------------------------------------------------
+
+    def elapsed(self) -> float:
+        return self.base_elapsed + (self.clock() - self.start)
+
+    def checkpoint(self, status: str, gate: Optional[int] = None) -> None:
+        self.store.save({
+            "loop_id": self.loop_id,
+            "status": status,
+            "goal": self.spec.goal,
+            "requirement_ids": [r.id for r in self.spec.requirements],
+            "requirements_fingerprint": _fingerprint(self.spec.requirements),
+            "iteration": self.iteration_done,
+            "stall": {"previous": self.tracker.previous, "streak": self.tracker.streak,
+                      "limit": self.tracker.limit},
+            "prev_passed": sorted(self.prev_passed),
+            "artifact": self.artifact,
+            "note": self.note,
+            "elapsed": self.elapsed(),
+            "engine_log": list(self.pad.engine_log),
+            "feedback": self.pad.feedback,
+            "notes": self.pad.notes,
+            "results": {k: {"passed": v.passed, "feedback": v.feedback}
+                        for k, v in self.result.final_results.items()},
+            "last_good": {k: {"passed": v.passed, "feedback": v.feedback} for k, v in self.last_good.items()},
+            "uses_approvals": self.approvals is not None,
+            "history": list(self.history),
+            "gate": gate,
+            "detail": self.result.detail,
+            "error": self.result.error,
+        })
+
+    def restore(self, state: Dict[str, Any]) -> None:
+        try:
+            self.iteration_done = int(state["iteration"])
+            self.tracker.previous = int(state["stall"]["previous"])
+            self.tracker.streak = int(state["stall"]["streak"])
+            self.prev_passed = set(state["prev_passed"])
+            self.artifact, self.note = str(state["artifact"]), str(state["note"])
+            self.base_elapsed = float(state["elapsed"])
+            self.pad.engine_log = [str(x) for x in state["engine_log"]]
+            self.pad.feedback, self.pad.notes = str(state["feedback"]), str(state["notes"])
+            self.history = [str(x) for x in state["history"]]
+            self.result.final_results = {k: CheckResult(bool(v["passed"]), str(v["feedback"]))
+                                         for k, v in state["results"].items()}
+            self.last_good = {k: CheckResult(bool(v["passed"]), str(v["feedback"]))
+                              for k, v in state.get("last_good", {}).items()}
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
+            raise ValueError(f"loop checkpoint is corrupt ({type(e).__name__}: {e})") from e
+        self.result.iterations, self.result.artifact = self.iteration_done, self.artifact
+        self.rebuild_prompt = True  # a restarted process has lost any shared conversation
+
+    def finish(self, reason: StopReason, detail: str = "", error: str = "") -> LoopResult:
+        self.result.stop_reason, self.result.detail, self.result.error = reason, detail, error
+        verb = "suspended" if reason is StopReason.SUSPENDED else "stopped"
+        self.pad.append_engine(f"{verb}: {reason.value}{(' - ' + detail) if detail else ''}")
+        self.pad.flush()
+        self.checkpoint(reason.value, gate=self.iteration_done if reason is StopReason.SUSPENDED else None)
+        return self.result
+
+    # -- durable approval --------------------------------------------------------------------
+
+    def _gate_summary(self, number: int) -> str:
+        if number == 0:
+            return (f"Start loop '{self.loop_id}'\nGoal: {self.spec.goal}\n"
+                    + "\n".join(f"- {r.id}: {r.text}" + (f"  [command: {' '.join(r.command)}]" if r.command else "")
+                                for r in self.spec.requirements))
+        return f"{self.history[-1] if self.history else ''}\n{self.pad.feedback}".strip()
+
+    def gate(self, number: int) -> Optional[LoopResult]:
+        """Ask for approval before the next iteration; return a result if the loop must not go on."""
+        if self.approvals is None:
+            return None
+        key = hashlib.sha256(f"{self.loop_id}:{number}".encode()).hexdigest()[:16]
+        decision = self.approvals.check(self.loop_id, _GATE_TASK, key, self._gate_summary(number))
+        if decision is ApprovalDecision.PENDING:
+            return self.finish(StopReason.SUSPENDED, f"waiting for approval of gate {number}")
+        record = self.approvals.get(self.loop_id, _GATE_TASK)
+        human_note = (record.note if record else "").strip()
+        if decision is ApprovalDecision.REJECTED and not human_note:
+            return self.finish(StopReason.STOPPED, f"gate {number} rejected")
+        if human_note:
+            self.note = f"{self.note}\n{human_note}".strip()
+        return None
+
+    # -- the iterations ----------------------------------------------------------------------
+
+    def run(self) -> LoopResult:
+        spec = self.spec
+        for iteration in range(self.iteration_done + 1, spec.max_iterations + 1):
+            if spec.max_seconds is not None and self.elapsed() >= spec.max_seconds:
+                return self.finish(StopReason.TIMEOUT, f"wall-clock cap of {spec.max_seconds}s reached")
+            blocked = self.gate(iteration - 1)
+            if blocked is not None:
+                return blocked
+            outcome = self._iterate(iteration)
+            if outcome is not None:
+                return outcome
+            decision = self.on_iteration(self.events[-1]) if self.on_iteration else None
+            if decision is not None and decision.stop:
+                return self.finish(StopReason.STOPPED, "stopped by the iteration hook")
+            self.note = decision.note if decision else ""
+            if self.note:
+                self.checkpoint("running")  # a pending reviewer note must survive a crash
+        return self.finish(StopReason.MAX_ITERATIONS)
+
+    def _iterate(self, iteration: int) -> Optional[LoopResult]:
+        """Run one iteration; return a result if the loop ends here, else None."""
+        spec, reqs, pad = self.spec, self.spec.requirements, self.pad
+        iter_start = self.clock()
+        report = pad.reload()
+        if report.engine_tampered:
+            pad.append_engine("warning: the engine section of the scratchpad was edited; it was restored")
+        if spec.context == "fresh" and hasattr(self.agent, "reset_conversation"):
+            self.agent.reset_conversation()
+        used_note = self.note
+        prompt = _build_prompt(spec, iteration, pad, self.artifact, used_note, full=self.rebuild_prompt)
+        self.rebuild_prompt = False
+        try:
+            reply = self.agent.execute_task_with_retry(prompt, use_plugins=spec.use_plugins)
+        except Exception as e:  # noqa: BLE001 - stop cleanly; the checkpoint keeps the state
+            return self.finish(StopReason.ERROR, error=f"{type(e).__name__}: {e}")
+        self.note = ""  # consumed; kept until now so a failed call can be resumed with it
+        body, new_notes = _split_notes(getattr(reply, "text", reply))
+        pad.append_note(new_notes)
+        current, judged = _artifacts(spec, body)
+        self.artifact = current
+        results, judge_error, blocked = _check_requirements(self.judge, spec, judged, current, self.cwd)
+
+        passing = None if judge_error else sum(c.passed for c in results.values())
+        improved = self.tracker.update(passing)
+        now_passed = {k for k, v in results.items() if v.passed}
+        regressions = [] if judge_error else sorted(self.prev_passed - now_passed)
+        if not judge_error:
+            self.prev_passed = now_passed
+        event = LoopEvent(iteration, results, passing, len(reqs), improved, self.tracker.streak, regressions,
+                          judge_error, current, body, self.clock() - iter_start, report)
+        self.events.append(event)
+        self.iteration_done = iteration
+        self.result.iterations, self.result.artifact, self.result.final_results = iteration, current, results
+        self.history.append(event.summary())
+        pad.append_engine(event.summary() + (f"; regressions={regressions}" if regressions else "")
+                          + (f"; reviewer note: {used_note}" if used_note else ""))
+        if not judge_error:
+            self.last_good = dict(results)
+        pad.set_feedback(_failing_text(reqs, results, judge_error, self.last_good))
+        pad.flush()
+        self.checkpoint("running")
+        stop = _after_iteration_stop(spec, iteration, passing, len(reqs), blocked, self.tracker)
+        return self.finish(*stop) if stop is not None else None
+
+
 def run_loop(agent: Any, judge: Any, spec: LoopSpec, on_iteration: Optional[OnIteration] = None,
              confirm_requirements: Optional[Callable[[Sequence[Requirement]], bool]] = None,
+             approvals: Optional[ApprovalStore] = None,
              clock: Callable[[], float] = time.monotonic) -> LoopResult:
     """Run ``agent`` on ``spec`` until the requirements are met or a limit is hit.
 
@@ -398,101 +620,62 @@ def run_loop(agent: Any, judge: Any, spec: LoopSpec, on_iteration: Optional[OnIt
             (``None`` = continue). A note on a continue decision is shown to the agent.
         confirm_requirements: called once with every requirement (commands in full)
             before anything runs; return False to cancel.
+        approvals: an :class:`~maki.agents.approvals.ApprovalStore` for durable approval
+            before every iteration. A pending approval returns a ``SUSPENDED`` result;
+            continue it later with :func:`resume_loop`.
 
     Raises:
         ValueError: for an invalid setup (unapproved drafts, stateless agent in shared
             mode, dangerous tools not allowed, ...).
+        LoopBusyError: another process is already running a loop with the same directory.
     """
-    _validate_start(agent, judge, spec)
-    loop_id = spec.loop_id or f"loop-{uuid.uuid4().hex[:8]}"
-    directory = spec.loop_dir or default_loop_dir(loop_id)
-    pad = Scratchpad(os.path.join(directory, "scratchpad.md"), loop_id)
-    store = LoopStore(directory)
-    cwd = os.path.realpath(spec.cwd or os.getcwd())
-    reqs = spec.requirements
-    events: List[LoopEvent] = []
-    result = LoopResult(loop_id, StopReason.STOPPED, 0, events, "", pad.path)
-
-    def finish(reason: StopReason, detail: str = "", error: str = "") -> LoopResult:
-        result.stop_reason, result.detail, result.error = reason, detail, error
-        pad.append_engine(f"stopped: {reason.value}{(' - ' + detail) if detail else ''}")
-        pad.flush()
-        _checkpoint(store, loop_id, spec, result, tracker, reason.value)
-        return result
-
-    tracker = StallTracker(spec.stall_limit)
-    if confirm_requirements is not None and not confirm_requirements(reqs):
-        return finish(StopReason.STOPPED, "requirements not confirmed")
-    pad.flush()
-
-    note = ""
-    decision = on_iteration(None) if on_iteration else None
-    if decision is not None and decision.stop:
-        return finish(StopReason.STOPPED, "stopped before the first iteration")
-    note = decision.note if decision else ""
-
-    start = clock()
-    artifact = ""
-    prev_passed: set = set()
-    for iteration in range(1, spec.max_iterations + 1):
-        if spec.max_seconds is not None and clock() - start >= spec.max_seconds:
-            return finish(StopReason.TIMEOUT, f"wall-clock cap of {spec.max_seconds}s reached")
-        iter_start = clock()
-        report = pad.reload()
-        if report.engine_tampered:
-            pad.append_engine("warning: the engine section of the scratchpad was edited; it was restored")
-        if spec.context == "fresh" and hasattr(agent, "reset_conversation"):
-            agent.reset_conversation()
-        prompt = _build_prompt(spec, iteration, pad, artifact, note)
-        try:
-            reply = agent.execute_task_with_retry(prompt, use_plugins=spec.use_plugins)
-        except Exception as e:  # noqa: BLE001 - stop cleanly; the checkpoint keeps the state
-            result.iterations = iteration
-            return finish(StopReason.ERROR, error=f"{type(e).__name__}: {e}")
-        reply = getattr(reply, "text", reply)
-        body, new_notes = _split_notes(reply)
-        pad.append_note(new_notes)
-        artifact = body
-        judged_artifact = _judged_artifact(spec, body)
-        results, judge_error, blocked = _check_requirements(judge, spec, judged_artifact, cwd)
-
-        total = len(reqs)
-        passing = None if judge_error else sum(c.passed for c in results.values())
-        improved = tracker.update(passing)
-        now_passed = {k for k, v in results.items() if v.passed}
-        regressions = [] if judge_error else sorted(prev_passed - now_passed)
-        if not judge_error:
-            prev_passed = now_passed
-        event = LoopEvent(iteration, results, passing, total, improved, tracker.streak, regressions,
-                          judge_error, artifact, body, clock() - iter_start, report)
-        events.append(event)
-        result.iterations, result.artifact, result.final_results = iteration, artifact, results
-        pad.append_engine(event.summary() + (f"; regressions={regressions}" if regressions else "")
-                          + (f"; reviewer note: {note}" if note else ""))
-        pad.set_feedback(_failing_text(reqs, results))
-        pad.flush()
-        _checkpoint(store, loop_id, spec, result, tracker, "running")
-
-        stop = _after_iteration_stop(spec, iteration, passing, total, blocked, tracker)
-        if stop is not None:
-            return finish(*stop)
-        decision = on_iteration(event) if on_iteration else None
+    run = _LoopRun(agent, judge, spec, on_iteration, approvals, clock)
+    with run.lock:
+        if confirm_requirements is not None and not confirm_requirements(spec.requirements):
+            return run.finish(StopReason.STOPPED, "requirements not confirmed")
+        run.pad.flush()
+        decision = on_iteration(None) if on_iteration else None
         if decision is not None and decision.stop:
-            return finish(StopReason.STOPPED, "stopped by the iteration hook")
-        note = decision.note if decision else ""
-    return finish(StopReason.MAX_ITERATIONS)  # pragma: no cover - the loop returns above
+            return run.finish(StopReason.STOPPED, "stopped before the first iteration")
+        run.note = decision.note if decision else ""
+        return run.run()
 
 
-def _checkpoint(store: LoopStore, loop_id: str, spec: LoopSpec, result: LoopResult,
-                tracker: StallTracker, status: str) -> None:
-    store.save({
-        "loop_id": loop_id,
-        "status": status,
-        "goal": spec.goal,
-        "requirement_ids": [r.id for r in spec.requirements],
-        "iteration": result.iterations,
-        "stall": {"previous": tracker.previous, "streak": tracker.streak, "limit": tracker.limit},
-        "history": [e.summary() for e in result.events],
-        "detail": result.detail,
-        "error": result.error,
-    })
+def resume_loop(agent: Any, judge: Any, spec: LoopSpec, on_iteration: Optional[OnIteration] = None,
+                approvals: Optional[ApprovalStore] = None,
+                clock: Callable[[], float] = time.monotonic) -> LoopResult:
+    """Continue a loop from its checkpoint (same ``loop_id``/``loop_dir``, same goal and requirement ids).
+
+    Works after a crash, a stop, an error, a cap or a durable-approval suspension; a loop
+    that already succeeded cannot be resumed. The first resumed iteration gets the full
+    prompt (goal, artifact, feedback, notes) because a restarted process has lost any
+    shared conversation. Raise ``max_iterations`` / ``max_seconds`` in ``spec`` to continue
+    past a cap; wall-clock time spent before the restart still counts. The returned
+    ``events`` hold only the iterations of this resumed run; ``iterations`` is the total.
+    A loop that was started with an ``approvals`` store must be resumed with it.
+
+    Raises:
+        ValueError: no usable checkpoint, a corrupt one, or one that does not match ``spec``.
+        LoopBusyError: another process is running this loop.
+    """
+    if not spec.loop_id and not spec.loop_dir:
+        raise ValueError("resume_loop needs spec.loop_id or spec.loop_dir")
+    run = _LoopRun(agent, judge, spec, on_iteration, approvals, clock)
+    with run.lock:
+        try:
+            state = run.store.load()
+        except (OSError, json.JSONDecodeError) as e:
+            raise ValueError(f"loop checkpoint is unreadable ({type(e).__name__}: {e})") from e
+        if state is None:
+            raise ValueError(f"no checkpoint to resume at {run.store.path}")
+        if state.get("status") == StopReason.SUCCEEDED.value:
+            raise ValueError("this loop already succeeded")
+        if state.get("goal") != spec.goal or state.get("requirement_ids") != [r.id for r in spec.requirements]:
+            raise ValueError("the checkpoint was written for a different goal or set of requirements")
+        if state.get("requirements_fingerprint") != _fingerprint(spec.requirements):
+            raise ValueError("a requirement's text or command changed since the checkpoint; "
+                             "approvals given for the old ones do not carry over")
+        if state.get("uses_approvals") and approvals is None:
+            raise ValueError("this loop requires approval before each iteration; pass the same approvals store")
+        run.restore(state)
+        return run.run()

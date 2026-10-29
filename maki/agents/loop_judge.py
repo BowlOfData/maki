@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence, Tuple
@@ -46,7 +47,8 @@ def run_command_check(argv: Sequence[str], cwd: Optional[str] = None,
                       timeout: float = 120.0, max_output: int = _MAX_OUTPUT_CHARS) -> CheckResult:
     """Run ``argv`` (no shell) and return pass on exit code 0, with its output as feedback.
 
-    Fails closed on a timeout or when the program cannot be started.
+    Fails closed on a timeout (the whole process group is killed) or when the program cannot be
+    started. Output is merged (stdout + stderr) and buffered in memory before the tail is kept.
 
     Raises:
         ValueError: if ``argv`` is not a non-empty sequence of strings (a single command
@@ -56,16 +58,31 @@ def run_command_check(argv: Sequence[str], cwd: Optional[str] = None,
         raise ValueError("command must be a non-empty list of strings (no shell)")
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"}
     try:
-        proc = subprocess.run(list(argv), cwd=cwd, env=env, capture_output=True, text=True,
-                              timeout=timeout, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return CheckResult(False, f"command timed out after {timeout}s: {' '.join(argv)}")
+        proc = subprocess.Popen(list(argv), cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL, text=True, start_new_session=True)
     except OSError as e:
         return CheckResult(False, f"command could not run: {e}")
-    output = (proc.stdout + proc.stderr)[-max_output:]
+    try:
+        output, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        proc.communicate()
+        return CheckResult(False, f"command timed out after {timeout}s: {' '.join(argv)}")
+    output = (output or "")[-max_output:]
     if proc.returncode == 0:
         return CheckResult(True, output)
     return CheckResult(False, f"exit code {proc.returncode}\n{output}")
+
+
+def _kill_group(proc: "subprocess.Popen") -> None:
+    """Kill the command and everything it started, so no grandchild keeps the pipe open."""
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:  # pragma: no cover - Windows
+            proc.kill()
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
 
 
 @dataclass

@@ -28,6 +28,15 @@ class CommandCheckTests(unittest.TestCase):
         self.assertFalse(r.passed)
         self.assertIn("timed out", r.feedback)
 
+    def test_timeout_kills_grandchildren_that_hold_the_pipe(self):
+        import time
+        code = ("import subprocess, sys, time; "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); time.sleep(30)")
+        start = time.time()
+        r = run_command_check([sys.executable, "-c", code], timeout=0.5)
+        self.assertFalse(r.passed)
+        self.assertLess(time.time() - start, 10)
+
     def test_missing_program_fails_closed(self):
         r = run_command_check(["definitely-not-a-program-xyz"])
         self.assertFalse(r.passed)

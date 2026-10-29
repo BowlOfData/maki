@@ -236,7 +236,8 @@ class Agent(PluginHandler, ReasoningEngine):
         # Unreachable, but satisfies type checkers
         raise RuntimeError(f"Task '{task}' failed after {max_retries} attempts")
 
-    def run_loop(self, goal: str, requirements, judge, on_iteration=None, confirm_requirements=None, **options):
+    def run_loop(self, goal: str, requirements, judge, on_iteration=None, confirm_requirements=None,
+                 approvals=None, **options):
         """
         Work on ``goal`` in a loop until a judge confirms every requirement is met.
 
@@ -249,6 +250,8 @@ class Agent(PluginHandler, ReasoningEngine):
                 one (a ``LoopEvent``); return a ``Decision`` to stop or add a reviewer note.
             confirm_requirements: Called once with every requirement (commands in full);
                 return False to cancel.
+            approvals: An ``ApprovalStore`` for durable approval before every iteration; a
+                pending approval returns a suspended result, continued by ``resume_loop``.
             **options: ``LoopSpec`` fields: ``max_iterations``, ``max_seconds``,
                 ``stall_limit``, ``context`` ("shared" needs ``stateful=True``),
                 ``use_plugins``, ``artifact_fn``, ``cwd``, ``loop_dir``, ``loop_id``.
@@ -256,12 +259,28 @@ class Agent(PluginHandler, ReasoningEngine):
         Returns:
             A ``LoopResult``; see :mod:`maki.agents.loop`.
         """
-        from .loop import LoopSpec, Requirement, run_loop
+        from .loop import LoopSpec, run_loop
 
-        reqs = [r if isinstance(r, Requirement) else Requirement(f"r{n}", r)
+        spec = LoopSpec(goal, self._loop_requirements(requirements), **options)
+        return run_loop(self, judge, spec, on_iteration=on_iteration,
+                        confirm_requirements=confirm_requirements, approvals=approvals)
+
+    def resume_loop(self, goal: str, requirements, judge, on_iteration=None, approvals=None, **options):
+        """Continue a loop from its checkpoint; ``options`` must include ``loop_id`` (or ``loop_dir``).
+
+        The goal and requirement ids must match the original run. See :func:`maki.agents.loop.resume_loop`.
+        """
+        from .loop import LoopSpec, resume_loop
+
+        spec = LoopSpec(goal, self._loop_requirements(requirements), **options)
+        return resume_loop(self, judge, spec, on_iteration=on_iteration, approvals=approvals)
+
+    @staticmethod
+    def _loop_requirements(requirements):
+        from .loop import Requirement
+
+        return [r if isinstance(r, Requirement) else Requirement(f"r{n}", r)
                 for n, r in enumerate(requirements, 1)]
-        spec = LoopSpec(goal, reqs, **options)
-        return run_loop(self, judge, spec, on_iteration=on_iteration, confirm_requirements=confirm_requirements)
 
     def stream_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False):
         """

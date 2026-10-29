@@ -14,10 +14,17 @@ re-reads the file at the start of each iteration. Writes are atomic.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import tempfile
+
+try:  # POSIX
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None
+    import msvcrt
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -30,8 +37,15 @@ _SAFE = re.compile(r"[^a-zA-Z0-9_\-.]")
 
 def safe_id(value: str) -> str:
     """Make ``value`` usable as a directory name (no separators, no traversal)."""
-    cleaned = _SAFE.sub("_", value).replace("..", "_").strip(".")
-    return cleaned or "loop"
+    cleaned = _SAFE.sub("_", value).replace("..", "_").strip(".") or "loop"
+    if cleaned != value:  # distinct ids that sanitise alike (a/b vs a_b) must not share a directory
+        cleaned = f"{cleaned}-{hashlib.sha256(value.encode('utf-8')).hexdigest()[:8]}"
+    return cleaned
+
+
+def _neutralise(text: str) -> str:
+    """Stop content (command output, notes) from forging a section marker."""
+    return text.replace("<!-- maki:", "<!-- maki-")
 
 
 def atomic_write(path: str, text: str) -> None:
@@ -53,6 +67,58 @@ def default_loop_dir(loop_id: str) -> str:
     return os.path.join(os.path.expanduser("~/.maki/loops"), safe_id(loop_id))
 
 
+class LoopBusyError(RuntimeError):
+    """Another process (or run) already holds this loop."""
+
+
+class LoopLock:
+    """Exclusive, non-blocking lock on a loop directory (``run.lock``).
+
+    An OS file lock, so the operating system releases it when the holder dies; a crashed
+    run never leaves a stale lock behind. The holder's pid is written into the file for
+    the error message only.
+    """
+
+    def __init__(self, directory: str):
+        self.path = os.path.join(directory, "run.lock")
+        self._fd: Optional[int] = None
+
+    def acquire(self) -> None:
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:  # pragma: no cover - Windows
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            holder = os.pread(fd, 32, 0).decode("ascii", "ignore").strip() or "unknown"
+            os.close(fd)
+            raise LoopBusyError(f"loop is already running (pid {holder}); lock file {self.path}") from None
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, str(os.getpid()).encode("ascii"), 0)
+        self._fd = fd
+
+    def release(self) -> None:
+        if self._fd is None:
+            return
+        try:
+            if fcntl is not None:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+            else:  # pragma: no cover - Windows
+                msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(self._fd)
+            self._fd = None
+
+    def __enter__(self) -> "LoopLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
+
+
 @dataclass
 class ReloadReport:
     """What :meth:`Scratchpad.reload` found in the file."""
@@ -71,13 +137,13 @@ class Scratchpad:
     notes: str = ""
 
     def append_engine(self, line: str) -> None:
-        self.engine_log.append(line)
+        self.engine_log.append(" / ".join(_neutralise(line).splitlines()) or "-")
 
     def set_feedback(self, text: str) -> None:
-        self.feedback = text.strip()
+        self.feedback = _neutralise(text).strip()
 
     def append_note(self, text: str) -> None:
-        text = text.strip()
+        text = _neutralise(text).strip()
         if text:
             self.notes = f"{self.notes}\n{text}".strip()
 
