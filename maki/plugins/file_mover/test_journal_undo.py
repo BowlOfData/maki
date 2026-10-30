@@ -205,8 +205,8 @@ class UndoTests(Base):
         execute_move(plan)
         self.journal.record("move", src=os.path.join(outside, "a.txt"), dst=self.w("a.txt"), kind="file",
                             method="rename", irreversible=False, fingerprint=fingerprint(self.w("a.txt")))
-        with self.assertRaisesRegex(UndoRefused, "outside the allowed"):
-            undo_latest(self.journal, self.scope)  # narrow scope: the original place is outside
+        with self.assertRaisesRegex(UndoRefused, "nothing to undo"):
+            undo_latest(self.journal, self.scope)  # narrow scope: that move is not this scope's own
         undo_latest(self.journal, wide)  # the operator's wider scope allows it
         self.assertTrue(os.path.exists(os.path.join(outside, "a.txt")))
 

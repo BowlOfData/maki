@@ -16,7 +16,7 @@ from ._engine import MoveError, execute_move, plan_move
 from ._journal import Journal, fingerprint
 from ._names import check_path, windows_rules_by_default
 from ._scope import Scope, ScopeError
-from ._undo import UndoRefused, undo_latest
+from ._undo import UndoRefused, own_entries, undo_latest
 
 _MAX_LIST = 100
 
@@ -153,13 +153,17 @@ class FileMover:
                 "method": result["method"], "error": None}
 
     def list_moves(self, limit: int = 10) -> Dict[str, Any]:
-        """List the most recent moves and undos from the journal, newest first (limit is how many, 1 to 100)."""
+        """List the most recent moves and undos inside this plugin's scope, newest first (limit is how many, 1 to 100)."""
         if isinstance(limit, str) and limit.strip().isdigit():
             limit = int(limit)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _MAX_LIST:
             return self._failure(f"limit must be an integer between 1 and {_MAX_LIST}")
         keys = ("id", "ts", "action", "src", "dst", "kind", "method", "irreversible", "undoes")
-        moves = [{k: e[k] for k in keys if k in e} for e in self.journal.entries(limit=limit)]
+        moves = []
+        for entry in own_entries(self.journal, self.scope):  # only moves inside this plugin's scope
+            moves.append({k: entry[k] for k in keys if k in entry})
+            if len(moves) >= limit:
+                break
         return {"success": True, "moves": moves, "count": len(moves), "error": None}
 
 

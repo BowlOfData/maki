@@ -12,8 +12,18 @@ class UndoRefused(Exception):
     """The latest move cannot (or should not) be reversed; the message is the reason."""
 
 
-def _undoable_entry(journal: Journal) -> Dict[str, Any]:
-    entry = journal.last_record()
+def own_entries(journal: Journal, scope: Scope):
+    """Journal entries (newest first) whose source and destination are both inside ``scope``.
+
+    The journal directory may be shared by agents with different scopes; each sees and undoes only its own.
+    """
+    for entry in journal.iter_entries():
+        if scope.includes(str(entry.get("src", ""))) and scope.includes(str(entry.get("dst", ""))):
+            yield entry
+
+
+def _undoable_entry(journal: Journal, scope: Scope) -> Dict[str, Any]:
+    entry = next(own_entries(journal, scope), None)
     if entry is None:
         raise UndoRefused("There is nothing to undo")
     if entry.get("action") != "move":
@@ -38,7 +48,7 @@ def undo_latest(journal: Journal, scope: Scope) -> Dict[str, Any]:
     existing file (that file is gone), the item is no longer where the journal left it or changed since,
     something now occupies the original place, or either place is outside the operator's scope.
     """
-    entry = _undoable_entry(journal)
+    entry = _undoable_entry(journal, scope)
     current, original = _locate(entry, scope)
     if not os.path.lexists(current):
         raise UndoRefused(f"The moved item is no longer at {entry['dst']}")

@@ -199,6 +199,23 @@ class LocalExecuteTests(Base):
         self.assertEqual([n for n in os.listdir(self.d)], ["Report.txt"])
         self.assertEqual(read(self.p("Report.txt")), "r")
 
+    def test_temporary_names_stay_within_the_file_name_limit(self):
+        for name in ("x" * 255, "y" * 240, "short.txt"):
+            temp = os.path.basename(_engine._temp_sibling(os.path.join(self.d, name)))
+            self.assertLessEqual(len(temp), 255, name)
+        self.assertNotEqual(_engine._temp_sibling(self.p("a")), _engine._temp_sibling(self.p("a")))
+
+    def test_folders_created_for_a_move_that_then_fails_are_removed_again(self):
+        write(self.p("a.txt"), "keep")
+        os.makedirs(self.p("existing"))
+        plan = plan_move(self.p("a.txt"), self.p("existing", "new", "deep", "a.txt"), create_dirs=True)
+        with patch.object(_engine, "_rename_direct", side_effect=PermissionError(errno.EACCES, "denied")):
+            with self.assertRaises(MoveError):
+                execute_move(plan)
+        self.assertTrue(os.path.isdir(self.p("existing")))  # was there before
+        self.assertFalse(os.path.exists(self.p("existing", "new")))
+        self.assertEqual(read(self.p("a.txt")), "keep")
+
     def test_executing_a_failed_plan_raises(self):
         with self.assertRaises(MoveError):
             execute_move(plan_move(self.p("nope"), self.p("x")))

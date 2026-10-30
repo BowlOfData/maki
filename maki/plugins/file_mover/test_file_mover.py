@@ -164,6 +164,41 @@ class MoveTests(Base):
         self.assertTrue(os.path.exists(self.w("b.txt")))
 
 
+class SharedJournalTests(Base):
+    """Two agents with different scopes can share one journal directory without seeing or undoing each other."""
+
+    def setUp(self):
+        super().setUp()
+        self.a = os.path.join(self.d, "projA")
+        self.b = os.path.join(self.d, "projB")
+        for folder, name in ((self.a, "a.txt"), (self.b, "b.txt")):
+            write(os.path.join(folder, name))
+        self.ma = FileMover(base_dir=self.a, journal_dir=self.journal_dir)
+        self.mb = FileMover(base_dir=self.b, journal_dir=self.journal_dir)
+
+    def test_list_moves_shows_only_moves_inside_the_scope(self):
+        self.mb.move("b.txt", "b2.txt")
+        self.ma.move("a.txt", "a2.txt")
+        listed = self.mb.list_moves()["moves"]
+        self.assertEqual([m["src"] for m in listed], [os.path.join(self.b, "b.txt")])
+        everything = FileMover(base_dir=self.a, allow_any_path=True, journal_dir=self.journal_dir).list_moves()
+        self.assertEqual(everything["count"], 2)
+
+    def test_undo_last_undoes_this_scopes_latest_move_even_if_another_scope_moved_later(self):
+        self.mb.move("b.txt", "b2.txt")
+        self.ma.move("a.txt", "a2.txt")
+        result = self.mb.undo_last()
+        self.assertTrue(result["success"], result)
+        self.assertTrue(os.path.exists(os.path.join(self.b, "b.txt")))
+        self.assertTrue(os.path.exists(os.path.join(self.a, "a2.txt")))  # A's move is untouched
+        self.assertTrue(self.ma.undo_last()["success"])  # and A can still undo its own
+
+    def test_a_scope_with_no_moves_of_its_own_has_nothing_to_undo(self):
+        self.ma.move("a.txt", "a2.txt")
+        self.assertIn("nothing to undo", self.mb.undo_last()["error"])
+        self.assertTrue(os.path.exists(os.path.join(self.a, "a2.txt")))
+
+
 class UndoAndListTests(Base):
     def test_undo_last_reverses_the_latest_move_and_list_moves_shows_both(self):
         write(self.w("a.txt"), "x")

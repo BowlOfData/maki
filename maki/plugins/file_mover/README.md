@@ -50,10 +50,12 @@ Options are passed to `register_plugin` by `agent.load_plugin("file_mover", **op
   - `create_dirs=True` creates missing destination folders (undo recreates the original folder but never
     removes folders a move created).
   - The flags may be real booleans or the strings `"true"` / `"false"`.
-- `undo_last()` moves the item of the latest move back. It refuses when there is nothing to undo, the latest
+- `undo_last()` moves the item of this plugin's latest move back. It refuses when there is nothing to undo, the latest
   entry is an undo (only one step), the move replaced a file, the item is gone or **changed since the move**
   (files: size and mtime; directories: entry count and newest mtime), or the original place is now taken.
-- `list_moves(limit=10)` shows the latest journal entries, newest first.
+- `list_moves(limit=10)` shows the latest journal entries, newest first. Only entries whose source and
+  destination are both inside this plugin's scope are shown or undone, so several agents with different scopes
+  can share one journal directory without seeing (or undoing) each other's moves.
 
 Each method returns a dictionary with `success` and `error`.
 
@@ -77,5 +79,6 @@ The API and the results are the same on every OS, except where the file systems 
   strings), so it holds on case-insensitive disks and through symlinks.
 - `allow_any_path=True` is the operator's decision. Do not turn it on for an agent that reads untrusted
   content (web pages, mail): it could be told to move files anywhere.
+- A failed move removes the folders that `create_dirs` made for it.
 - The journal is outside the folders being moved by default and is written after each move. If it cannot be
   written the move still happens and the result says it cannot be undone.

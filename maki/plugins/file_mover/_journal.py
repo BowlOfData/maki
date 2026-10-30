@@ -11,7 +11,7 @@ import re
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 DEFAULT_JOURNAL_DIR = "~/.maki/moves"
 _FILE = re.compile(r"^(\d{4})-(\d{2})\.jsonl$")
@@ -97,8 +97,16 @@ class Journal:
         return entry
 
     def entries(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Entries newest first, skipping any line that is not valid JSON."""
+        """Entries newest first (at most ``limit``), skipping any line that is not valid JSON."""
         found: List[Dict[str, Any]] = []
+        for item in self.iter_entries():
+            found.append(item)
+            if limit is not None and len(found) >= limit:
+                break
+        return found
+
+    def iter_entries(self) -> Iterator[Dict[str, Any]]:
+        """Every entry, newest first, one month file at a time."""
         for name in reversed(self._month_files()):
             try:
                 with open(os.path.join(self.directory, name), encoding="utf-8") as handle:
@@ -111,10 +119,7 @@ class Journal:
                 except ValueError:
                     continue
                 if isinstance(item, dict):
-                    found.append(item)
-                    if limit is not None and len(found) >= limit:
-                        return found
-        return found
+                    yield item
 
     def last_record(self) -> Optional[Dict[str, Any]]:
         latest = self.entries(limit=1)

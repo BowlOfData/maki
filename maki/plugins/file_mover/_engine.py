@@ -188,7 +188,8 @@ def _rename_direct(src: str, dst: str, overwrite: bool) -> None:
 
 
 def _temp_sibling(dst: str) -> str:
-    return os.path.join(os.path.dirname(dst), f".{os.path.basename(dst)}.maki-moving-{uuid.uuid4().hex[:8]}")
+    """A hidden, unique temporary name next to ``dst`` (fixed length, so a long file name cannot overflow)."""
+    return os.path.join(os.path.dirname(dst), f".maki-moving-{uuid.uuid4().hex[:16]}")
 
 
 def _case_only_rename(src: str, dst: str) -> None:
@@ -272,25 +273,54 @@ def _copy_then_delete(plan: MovePlan) -> None:
         raise MoveError(f"Copied to {plan.dst}, but could not remove the source: {exc}", partial=True) from exc
 
 
+def _perform(plan: MovePlan) -> Dict[str, Any]:
+    if plan.case_only:
+        _case_only_rename(plan.src, plan.dst)
+        return {"method": "rename"}
+    try:
+        _rename_direct(plan.src, plan.dst, plan.will_overwrite)
+        return {"method": "rename"}
+    except OSError as exc:
+        if not is_cross_device(exc):
+            raise
+    _copy_then_delete(plan)
+    return {"method": "copy"}
+
+
 def execute_move(plan: MovePlan) -> Dict[str, Any]:
     """Carry out a plan. Returns ``{"method": "rename" | "copy"}`` or raises :class:`MoveError`."""
     if not plan.ok:
         raise MoveError(plan.error)
+    created = _missing_folders(os.path.dirname(plan.dst)) if plan.create_dirs else []
     try:
-        if plan.create_dirs:
+        if created:
             os.makedirs(os.path.dirname(plan.dst), exist_ok=True)
-        if plan.case_only:
-            _case_only_rename(plan.src, plan.dst)
-            return {"method": "rename"}
-        try:
-            _rename_direct(plan.src, plan.dst, plan.will_overwrite)
-            return {"method": "rename"}
-        except OSError as exc:
-            if not is_cross_device(exc):
-                raise
-        _copy_then_delete(plan)
-        return {"method": "copy"}
-    except MoveError:
+        return _perform(plan)
+    except MoveError as exc:
+        if not exc.partial:
+            _remove_empty_folders(created)
         raise
     except OSError as exc:
+        _remove_empty_folders(created)
         raise MoveError(f"Could not move: {exc.strerror or exc}") from exc
+
+
+def _missing_folders(folder: str) -> List[str]:
+    """The folders ``os.makedirs(folder)`` would have to create, outermost first."""
+    missing: List[str] = []
+    while folder and not os.path.lexists(folder):
+        missing.append(folder)
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
+    return list(reversed(missing))
+
+
+def _remove_empty_folders(created: List[str]) -> None:
+    """Undo the folder creation of a move that failed (innermost first; only if still empty)."""
+    for folder in reversed(created):
+        try:
+            os.rmdir(folder)
+        except OSError:
+            break

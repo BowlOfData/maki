@@ -51,6 +51,13 @@ class Scope:
                 return False
             current = parent
 
+    def includes(self, path: str) -> bool:
+        """True if ``path`` (a link is located by where it lives) is inside the scope. Never raises."""
+        try:
+            return self.contains(self.resolve(path, follow_final=False))
+        except (OSError, ValueError):
+            return False
+
     def require(self, path: str, follow_final: bool = True) -> str:
         """Resolve ``path`` and return it, or raise :class:`ScopeError` if it is out of scope."""
         resolved = self.resolve(path, follow_final)
