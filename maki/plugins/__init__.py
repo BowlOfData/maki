@@ -13,6 +13,7 @@ from maki.config import PLUGIN_PACKAGE_PREFIX
 PLUGIN_REGISTRY = {
     "directory_reader": "DirectoryReader",
     "file_reader": "FileReader",
+    "file_mover": "FileMover",
     "file_writer": "FileWriter",
     "ftp_client": "FTPClient",
     "image_classifier": "ImageClassifier",

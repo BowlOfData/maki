@@ -46,3 +46,28 @@ jobs:
       if: github.event_name == 'schedule'
       run: |
         pytest -m network --tb=short || true
+
+  # The file_mover plugin promises the same behaviour on every OS. Run its tests on macOS and Windows too.
+  # Windows is best effort: a failure there is reported but does not fail the workflow.
+  portability:
+    name: file_mover on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[dev]"
+    - name: Test the file_mover plugin
+      run: |
+        python -m pytest maki/plugins/file_mover maki/test/test_plugin_options.py maki/test/test_plugin_structure.py -q

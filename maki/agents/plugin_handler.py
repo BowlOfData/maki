@@ -254,13 +254,15 @@ class PluginHandler:
             )
         self.plugins: Dict = {}
 
-    def load_plugin(self, plugin_name: str, plugin_path: str = None):
+    def load_plugin(self, plugin_name: str, plugin_path: str = None, **options):
         """
         Load a plugin for this agent.
 
         Args:
             plugin_name: Name of the plugin to load
             plugin_path: Optional path to the plugin (if not in standard location)
+            **options: Operator settings handed to the plugin's ``register_plugin(maki, **options)``
+                (for example ``allowed_roots`` for ``file_mover``). They never come from the model.
 
         Returns:
             The loaded plugin instance
@@ -286,10 +288,10 @@ class PluginHandler:
                 module = importlib.import_module(f"maki.plugins.{plugin_name}")
 
             if hasattr(module, 'register_plugin'):
-                plugin_instance = module.register_plugin(self.maki)
+                plugin_instance = module.register_plugin(self.maki, **options)
             elif hasattr(module, plugin_name):
                 plugin_class = getattr(module, plugin_name)
-                plugin_instance = plugin_class(self.maki)
+                plugin_instance = plugin_class(self.maki, **options)
             else:
                 raise MakiValidationError(
                     f"Plugin '{plugin_name}' has no register_plugin() function "

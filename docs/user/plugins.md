@@ -25,6 +25,7 @@ When `use_plugins=True` (or the backend supports native tool calling), the plugi
 | `directory_reader` | List and inspect directory contents | none |
 | `file_reader` | Read files from disk | none |
 | `file_writer` | Write files to disk | none |
+| `file_mover` | Move and rename files and directories the same way on every OS, with a preview, a journal and a one-step undo | none |
 | `json_reader` | Parse and query JSON files | none |
 | `image_classifier` | Classify images via a local model | none |
 | `ocr` | Extract text from images (not in the default registry; load via `plugin_path`) | none |
@@ -47,7 +48,7 @@ See [Memory: Obsidian and RAG](memory.md) for worked examples of the two memory 
 Tool calls are **fail-closed**:
 
 - A plugin exposes only the methods listed in its class-level `ALLOWED_METHODS`. No list means nothing is exposed.
-- Destructive methods (file writes, FTP transfers and deletes, trades) are listed in `DANGEROUS_METHODS` and additionally require `Agent(allow_dangerous_tools=True)`.
+- Destructive methods (file writes and moves, FTP transfers and deletes, trades) are listed in `DANGEROUS_METHODS` and additionally require `Agent(allow_dangerous_tools=True)`.
 - The trading plugin runs in paper mode unless you opt in to live trading.
 - Web plugins fetch through Maki's hardened connector, which blocks private and reserved address ranges for content-derived URLs.
 
@@ -56,3 +57,16 @@ Tool calls are **fail-closed**:
 agent = Agent(name="Writer", maki_instance=llm, role="writer", allow_dangerous_tools=True)
 agent.load_plugin("file_writer")
 ```
+
+## Plugin options
+
+`load_plugin` accepts keyword options that are passed to the plugin's `register_plugin`. They are set by you,
+never by the model. For example, `file_mover` works inside `base_dir` unless you widen it:
+
+```python
+agent = Agent(name="Organiser", maki_instance=llm, role="file organiser", allow_dangerous_tools=True)
+agent.load_plugin("file_mover", base_dir="/path/to/project", allowed_roots=["/path/to/archive"])
+```
+
+`allow_any_path=True` lets the plugin touch anything the process can reach; use it only for agents that
+do not read untrusted content. See the plugin's README for the options, the undo rules and the per-OS notes.
