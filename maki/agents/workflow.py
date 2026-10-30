@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .approvals import ApprovalSpec
+from .loop import LoopTask
 from .verification import VerifySpec
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,8 @@ class WorkflowTask:
                  conditions: Optional[List[Callable]] = None, max_retries: int = 3,
                  retry_delay: float = 1.0, parallelizable: bool = False,
                  approval: Optional[ApprovalSpec] = None,
-                 verify: Optional[VerifySpec] = None):
+                 verify: Optional[VerifySpec] = None,
+                 loop: Optional[LoopTask] = None):
         """
         Initialize a workflow task
 
@@ -81,7 +83,12 @@ class WorkflowTask:
                 (see maki.agents.verification) before the task counts as COMPLETED.
                 A REVISE verdict re-runs the task with feedback up to
                 ``verify.max_revisions`` times; failure fails the task and skips dependents.
+            loop: If set, the task's agent works in a loop (see maki.agents.loop) until a judge
+                confirms every requirement; the task is COMPLETED only when the loop succeeds.
+                Any other outcome fails it and skips dependents. Exclusive with ``verify``.
         """
+        if loop is not None and verify is not None:
+            raise ValueError("a WorkflowTask takes loop= or verify=, not both")
         self.name = name
         self.agent = agent
         self.task = task
@@ -92,6 +99,7 @@ class WorkflowTask:
         self.parallelizable = parallelizable
         self.approval = approval
         self.verify = verify
+        self.loop = loop
         self.gate_reason: Optional[str] = None
         self.status = TaskStatus.PENDING
         self.result = None
@@ -122,6 +130,7 @@ class WorkflowTask:
             'parallelizable': self.parallelizable,
             'requires_approval': self.approval is not None,
             'has_verifier': self.verify is not None,
+            'has_loop': self.loop is not None,
             'gate_reason': self.gate_reason,
             'status': self.status.value,
             'result': self.result,

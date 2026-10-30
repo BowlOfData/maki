@@ -17,7 +17,7 @@ from .verification import (
     Verdict, VerifyResult, VerifySpec, AgentVerifier, agent_verifier,
 )
 from .loop import (
-    Decision, LoopEvent, LoopResult, LoopSpec, Requirement, StopReason, approve_requirements,
+    Decision, LoopEvent, LoopResult, LoopSpec, LoopTask, Requirement, StopReason, approve_requirements,
     draft_requirements, resume_loop, run_loop,
 )
 from .loop_scratchpad import LoopBusyError
@@ -29,6 +29,6 @@ __all__ = [
     'GateResult', 'TaskOutput', 'ApprovalSpec', 'ApprovalStore', 'ApprovalRecord', 'ApprovalDecision',
     'LocalApprovalStore', 'InMemoryApprovalStore',
     'Verdict', 'VerifyResult', 'VerifySpec', 'AgentVerifier', 'agent_verifier',
-    'Decision', 'LoopBusyError', 'LoopEvent', 'LoopResult', 'LoopSpec', 'Requirement', 'StopReason',
+    'Decision', 'LoopBusyError', 'LoopEvent', 'LoopResult', 'LoopSpec', 'LoopTask', 'Requirement', 'StopReason',
     'approve_requirements', 'draft_requirements', 'resume_loop', 'run_loop',
 ]

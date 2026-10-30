@@ -16,6 +16,8 @@ from ..backend import LLMBackend
 from .agent import Agent
 from .workflow import WorkflowTask, WorkflowState, TaskStatus, TaskOutput
 from .approvals import ApprovalDecision, ApprovalStore
+from .loop import _fingerprint, resume_loop, run_loop
+from .loop_scratchpad import LoopStore
 from .verification import Verdict, VerifyResult, normalize_verify_result
 
 logger = logging.getLogger(__name__)
@@ -412,6 +414,7 @@ class AgentManager:
         if approval_store is None and any(t.approval is not None for t in tasks):
             raise ValueError("tasks require approval but no approval_store was provided")
         for t in tasks:
+            self._validate_loop_task(t)
             verifier_agent = getattr(t.verify.verify, "agent_name", None) if t.verify else None
             if verifier_agent is None:
                 continue
@@ -546,6 +549,69 @@ class AgentManager:
 
         return results
 
+    def _validate_loop_task(self, t: WorkflowTask) -> None:
+        """Fail fast on a loop task whose agents cannot run a loop."""
+        if t.loop is None:
+            return
+        judge_name = t.loop.judge
+        if judge_name == t.agent:
+            raise ValueError(f"task '{t.name}': loop judge '{judge_name}' must differ from the agent doing the work")
+        if judge_name not in self.agents:
+            raise ValueError(f"task '{t.name}': loop judge '{judge_name}' is not registered")
+        if getattr(self.agents[judge_name], "stateful", False):
+            raise ValueError(f"task '{t.name}': loop judge '{judge_name}' must not be stateful")
+        if t.loop.context == "shared" and not getattr(self.agents.get(t.agent), "stateful", False):
+            raise ValueError(f"task '{t.name}': context='shared' needs a stateful agent ('{t.agent}' is not)")
+        for role, name in (("agent", t.agent), ("judge", judge_name)):
+            if getattr(self.agents.get(name), "endpoint", None) is not None:
+                raise ValueError(f"task '{t.name}': loop {role} '{name}' is a remote proxy; loops run on local "
+                                 "agents (use AgentProxy.run_loop to loop on a remote server)")
+
+    def _run_loop_task(self, wt: WorkflowTask, agent: Any, context: Dict, state: WorkflowState, start: float):
+        """Run a ``loop=`` task: COMPLETED only when its loop succeeds, otherwise FAILED."""
+        cfg = wt.loop
+        judge = self.get_agent(cfg.judge)
+        goal = wt.task + (f"\n\nContext: {json.dumps(context, default=str)}" if context else "")
+        spec = cfg.to_spec(f"{state.workflow_id}/{wt.name}", goal)
+
+        def log_iteration(event):
+            if event is not None:
+                logger.info(f"WorkflowTask '{wt.name}' loop: {event.summary()}")
+
+        # Resume this task's loop only when it is the same work (goal and requirements unchanged).
+        try:
+            checkpoint = LoopStore(spec.loop_dir).load()
+        except (OSError, ValueError):  # unreadable checkpoint: start over rather than fail the task
+            checkpoint = None
+        if not isinstance(checkpoint, dict):
+            checkpoint = None
+        resumable = (checkpoint is not None and checkpoint.get("status") != "succeeded"
+                     and checkpoint.get("goal") == spec.goal
+                     and checkpoint.get("requirements_fingerprint") == _fingerprint(spec.requirements))
+        runner = resume_loop if resumable else run_loop
+        result = runner(agent, judge, spec, on_iteration=log_iteration)
+
+        wt.attempts += result.iterations
+        wt.execution_time = time.time() - start
+        summary = {"verdict": result.stop_reason.value, "evidence": result.detail or result.error,
+                   "revisions": max(result.iterations - 1, 0), "history": [e.summary() for e in result.events]}
+        if not result.succeeded:
+            reason = f"loop {result.stop_reason.value} after {result.iterations} iteration(s)" + (
+                f": {result.detail or result.error}" if (result.detail or result.error) else "")
+            wt.status = TaskStatus.FAILED
+            wt.gate_reason = reason
+            state.update_task_status(wt.name, TaskStatus.FAILED, reason, wt.execution_time, reason=reason,
+                                     verification=summary)
+            state.add_error(wt.name, reason)
+            logger.warning(f"WorkflowTask '{wt.name}' {reason}")
+            return wt.name, {"agent": wt.agent, "task": wt.task, "result": None, "data": None,
+                             "verification_failed": True, "loop_failed": True}
+        wt.result = result.artifact
+        wt.status = TaskStatus.COMPLETED
+        state.update_task_status(wt.name, TaskStatus.COMPLETED, wt.result, wt.execution_time, data=wt.data,
+                                 verification=summary)
+        return wt.name, {"agent": wt.agent, "task": wt.task, "result": wt.result, "data": wt.data}
+
     def _execute_workflow_task(self, wt: WorkflowTask, results: Dict,
                                state: WorkflowState,
                                approval_store: Optional[ApprovalStore] = None):
@@ -673,6 +739,8 @@ class AgentManager:
             }
 
         try:
+            if wt.loop is not None:
+                return self._run_loop_task(wt, agent, context, state, start)
             for revision in range(max_runs):
                 wt.attempts += 1
                 run_context = dict(context)

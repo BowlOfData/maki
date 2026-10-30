@@ -465,9 +465,9 @@ class TestServeCLI(unittest.TestCase):
         mock_agent.role = "role"
         mock_agent.plugins = {}
 
-        # load_agent_from_config / create_app are imported locally in _cmd_serve
-        with patch("maki.distributed.config_loader.load_agent_from_config",
-                   return_value=mock_agent), \
+        # load_server_config / create_app are imported locally in _cmd_serve
+        with patch("maki.distributed.config_loader.load_server_config",
+                   return_value=MagicMock(agent=mock_agent, judge=None)), \
              patch("maki.distributed.server.create_app", return_value=MagicMock()), \
              patch("uvicorn.run") as mock_run:
             _cmd_serve(args)
@@ -489,8 +489,8 @@ class TestServeCLI(unittest.TestCase):
         mock_agent.role = ""
         mock_agent.plugins = {}
 
-        with patch("maki.distributed.config_loader.load_agent_from_config",
-                   return_value=mock_agent), \
+        with patch("maki.distributed.config_loader.load_server_config",
+                   return_value=MagicMock(agent=mock_agent, judge=None)), \
              patch("maki.distributed.server.create_app", return_value=MagicMock()), \
              patch("uvicorn.run") as mock_run:
             _cmd_serve(args)

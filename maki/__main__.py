@@ -36,19 +36,20 @@ def _cmd_serve(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        from .distributed.config_loader import load_agent_from_config
+        from .distributed.config_loader import load_server_config
         from .distributed.server import create_app
     except ImportError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
     try:
-        agent = load_agent_from_config(args.config)
+        server_cfg = load_server_config(args.config)
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error loading config: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    app = create_app(agent, api_key=args.api_key)
+    agent = server_cfg.agent
+    app = create_app(agent, api_key=args.api_key, judge=server_cfg.judge, loop_caps=server_cfg.loop_caps)
 
     scheme = "https" if args.tls_cert else "http"
     print(f"Maki Agent Server — {agent.name!r} ({agent.role or 'no role'})")
@@ -56,6 +57,7 @@ def _cmd_serve(args: argparse.Namespace) -> None:
     print(f"  Auth          {'Bearer token' if args.api_key else 'disabled (trusted network)'}")
     print(f"  TLS           {'enabled' if args.tls_cert else 'disabled'}")
     print(f"  Plugins       {list(agent.plugins.keys()) or 'none'}")
+    print(f"  Loops         {'enabled (judge: ' + server_cfg.judge.name + ')' if server_cfg.judge else 'disabled (no judge: section)'}")
 
     uvicorn_kwargs: dict = {"host": args.host, "port": args.port}
     if args.tls_cert:

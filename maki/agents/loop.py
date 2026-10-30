@@ -43,7 +43,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from .approvals import ApprovalDecision, ApprovalStore
 from .loop_judge import CheckResult, _last_json_object, judge_requirements, run_command_check
-from .loop_scratchpad import LoopLock, LoopStore, ReloadReport, Scratchpad, default_loop_dir
+from .loop_scratchpad import LoopLock, LoopStore, ReloadReport, Scratchpad, default_loop_dir, safe_id
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +171,47 @@ class LoopSpec:
             raise ValueError("LoopSpec.context must be 'shared' or 'fresh'")
         if self.artifact_fn is not None and not callable(self.artifact_fn):
             raise ValueError("LoopSpec.artifact_fn must be callable")
+
+
+@dataclass
+class LoopTask:
+    """Attach to a ``WorkflowTask`` (``loop=``) to run its agent in a loop until a judge confirms
+    every requirement. The task is ``COMPLETED`` only when the loop succeeds; any other outcome
+    fails it and skips its dependents. Mutually exclusive with ``verify=``.
+
+    judge:        name of a registered, *different*, stateless agent that judges the requirements.
+    requirements: ``Requirement`` objects or plain strings (agent-judged). Commands and callables
+                  are allowed here because the workflow author is the trusted caller.
+    The other fields mirror :class:`LoopSpec`. Loop state lives under
+    ``<loop_dir_base>/<workflow_id>/<task name>`` so a resumed workflow resumes its loops.
+    """
+    judge: str
+    requirements: Sequence[Union[Requirement, str]]
+    max_iterations: int = 10
+    max_seconds: Optional[float] = None
+    stall_limit: int = 3
+    context: str = "fresh"
+    use_plugins: bool = False
+    artifact_fn: Optional[Callable[[], str]] = None
+    cwd: Optional[str] = None
+    loop_dir_base: Optional[str] = None
+    command_timeout: float = 120.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.judge, str) or not self.judge.strip():
+            raise ValueError("LoopTask.judge must be the name of a registered agent")
+        self.requirements = tuple(r if isinstance(r, Requirement) else Requirement(f"r{n}", r)
+                                  for n, r in enumerate(self.requirements, 1))
+        # Reuse LoopSpec's validation of everything else.
+        self.to_spec("check", "check goal")
+
+    def to_spec(self, loop_id: str, goal: str) -> LoopSpec:
+        base = self.loop_dir_base or os.path.dirname(default_loop_dir("x"))
+        return LoopSpec(goal, self.requirements, max_iterations=self.max_iterations, max_seconds=self.max_seconds,
+                        stall_limit=self.stall_limit, context=self.context, use_plugins=self.use_plugins,
+                        artifact_fn=self.artifact_fn, cwd=self.cwd, loop_id=loop_id,
+                        loop_dir=os.path.join(base, *(safe_id(part) for part in loop_id.split("/"))),
+                        command_timeout=self.command_timeout)
 
 
 class StallTracker:
@@ -464,6 +505,7 @@ class _LoopRun:
             "goal": self.spec.goal,
             "requirement_ids": [r.id for r in self.spec.requirements],
             "requirements_fingerprint": _fingerprint(self.spec.requirements),
+            "requirements": [{"id": r.id, "text": r.text, "kind": r.kind} for r in self.spec.requirements],
             "iteration": self.iteration_done,
             "stall": {"previous": self.tracker.previous, "streak": self.tracker.streak,
                       "limit": self.tracker.limit},
@@ -478,6 +520,8 @@ class _LoopRun:
                         for k, v in self.result.final_results.items()},
             "last_good": {k: {"passed": v.passed, "feedback": v.feedback} for k, v in self.last_good.items()},
             "uses_approvals": self.approvals is not None,
+            "context": self.spec.context,
+            "use_plugins": self.spec.use_plugins,
             "history": list(self.history),
             "gate": gate,
             "detail": self.result.detail,

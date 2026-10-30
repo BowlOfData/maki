@@ -12,6 +12,14 @@ GET  /info                Agent metadata: plugins, backend class, model.
 POST /execute             Run a task; returns result + elapsed time.
 POST /stream              SSE token stream for a task (same body as /execute;
                           POST keeps task text out of access logs, §2.5).
+POST /loop                Start a background loop: iterate the agent until a judge
+                          confirms every (text) requirement. 202 + loop id. Needs a
+                          ``judge:`` section in the config, else 503.
+GET  /loop                List loops (running, finished, and checkpoints on disk).
+GET  /loop/{id}           Loop status.
+GET  /loop/{id}/events    SSE stream of loop events (replay with Last-Event-ID or ?after=N).
+DELETE /loop/{id}         Cancel a running loop (takes effect between iterations).
+POST /loop/{id}/resume    Continue a stopped or interrupted loop from its checkpoint.
 POST /memory/set          Store a key/value in agent memory.
 GET  /memory/{key}        Retrieve a memory value.
 DELETE /memory/{key}      Remove a memory key.
@@ -26,10 +34,10 @@ must carry:
 Omit api_key to run in open/trusted-network mode.
 """
 try:
-    from fastapi import Depends, FastAPI, HTTPException, Request, Security
+    from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Security
     from fastapi.responses import StreamingResponse
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-    from pydantic import BaseModel, field_validator
+    from pydantic import BaseModel, ConfigDict, field_validator
     from starlette.middleware.base import BaseHTTPMiddleware
 except ImportError as _e:
     raise ImportError(
@@ -42,7 +50,7 @@ import logging
 import secrets
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from ..agents.agent import Agent
 from ..exceptions import (
@@ -52,6 +60,7 @@ from ..exceptions import (
     MakiTimeoutError,
     MakiValidationError,
 )
+from .loop_jobs import LOOP_ID_PATTERN, LoopCaps, LoopJobBusy, LoopJobNotFound, LoopJobs
 
 logger = logging.getLogger(__name__)
 
@@ -71,23 +80,49 @@ class ExecuteRequest(BaseModel):
         return v
 
 
+class LoopRequest(BaseModel):
+    """Start a loop. Text requirements only; unknown fields (command, cwd, loop_dir, ...) are rejected."""
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str
+    requirements: List[Union[str, Dict[str, Any]]]
+    max_iterations: Optional[int] = None
+    max_seconds: Optional[float] = None
+    stall_limit: Optional[int] = None
+    context: Optional[Literal["shared", "fresh"]] = None
+    use_plugins: bool = False
+
+
+class LoopResumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_iterations: Optional[int] = None
+    max_seconds: Optional[float] = None
+
+
 class MemorySetRequest(BaseModel):
     key: str
     value: Any
 
 
-def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
+def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agent] = None,
+               loop_caps: Optional[LoopCaps] = None) -> FastAPI:
     """
     Build and return a FastAPI application wrapping *agent*.
 
     Args:
-        agent:   The Agent instance to serve.
-        api_key: If set, every request must carry this value as a Bearer token.
-                 Pass None to run without authentication (trusted network only).
+        agent:     The Agent instance to serve.
+        api_key:   If set, every request must carry this value as a Bearer token.
+                   Pass None to run without authentication (trusted network only).
+        judge:     A separate, stateless reviewer agent. Enables the ``/loop`` endpoints;
+                   without it they answer 503 (the served agent never judges its own work).
+        loop_caps: Operator limits for remote loops (iterations, wall-clock, storage).
     """
     app = FastAPI(title="Maki Agent Server", version="0.1.0")
     app.state.agent = agent
     app.state.api_key = api_key
+    app.state.loop_jobs = LoopJobs(agent, judge, loop_caps) if judge is not None else None
+    app.state.loop_heartbeat_seconds = 15.0
 
     # ------------------------------------------------------------------
     # Trace middleware: attach/propagate X-Maki-Trace-Id on every request
@@ -201,6 +236,115 @@ def create_app(agent: Agent, api_key: Optional[str] = None) -> FastAPI:
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_sse(), media_type="text/event-stream")
+
+    # ------------------------------------------------------------------
+    # Loops
+    # ------------------------------------------------------------------
+
+    def _jobs(request: Request) -> LoopJobs:
+        jobs: Optional[LoopJobs] = request.app.state.loop_jobs
+        if jobs is None:
+            raise HTTPException(status_code=503, detail="Loops are disabled: no judge is configured")
+        return jobs
+
+    def _loop_id(loop_id: str) -> str:
+        if not LOOP_ID_PATTERN.match(loop_id):
+            raise HTTPException(status_code=404, detail="Loop not found")
+        return loop_id
+
+    @app.post("/loop", status_code=202)
+    def loop_start(req: LoopRequest, request: Request, _: None = Depends(_auth)):
+        jobs = _jobs(request)
+        try:
+            job = jobs.start(req.goal, req.requirements, max_iterations=req.max_iterations,
+                             max_seconds=req.max_seconds, stall_limit=req.stall_limit,
+                             context=req.context, use_plugins=req.use_plugins)
+        except LoopJobBusy as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return job.snapshot()
+
+    @app.get("/loop")
+    def loop_list(request: Request, _: None = Depends(_auth)):
+        return {"loops": _jobs(request).list()}
+
+    @app.get("/loop/{loop_id}")
+    def loop_status(loop_id: str, request: Request, _: None = Depends(_auth)):
+        try:
+            return _jobs(request).snapshot(_loop_id(loop_id))
+        except LoopJobNotFound:
+            raise HTTPException(status_code=404, detail="Loop not found")
+
+    @app.get("/loop/{loop_id}/events")
+    def loop_events(loop_id: str, request: Request, after: Optional[int] = Query(None, ge=-1),
+                    last_event_id: Optional[str] = Header(None), _: None = Depends(_auth)):
+        jobs = _jobs(request)
+        loop_id = _loop_id(loop_id)
+        start = 0
+        if after is not None:
+            start = after + 1
+        elif last_event_id is not None and last_event_id.strip().lstrip("-").isdigit():
+            start = max(int(last_event_id) + 1, 0)
+        job = jobs.get(loop_id)
+        if job is None:
+            try:
+                snap = jobs.snapshot(loop_id)
+            except LoopJobNotFound:
+                raise HTTPException(status_code=404, detail="Loop not found")
+            stopped = {"type": "stopped", "stop_reason": snap["stop_reason"] or snap["status"],
+                       "iterations": snap["iterations"], "detail": snap["detail"], "error": snap["error"],
+                       "artifact": snap["artifact"]}
+
+            def _from_disk():
+                if start == 0:
+                    yield f"id: 0\ndata: {json.dumps(stopped)}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(_from_disk(), media_type="text/event-stream")
+        heartbeat: float = request.app.state.loop_heartbeat_seconds
+
+        def _sse():
+            index = start
+            while True:
+                events, finished = job.wait_events(index, timeout=heartbeat)
+                for event in events:
+                    yield f"id: {index}\ndata: {json.dumps(event)}\n\n"
+                    index += 1
+                if finished and not events:
+                    break
+                if not events:
+                    yield ": keep-alive\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(_sse(), media_type="text/event-stream")
+
+    @app.delete("/loop/{loop_id}", status_code=202)
+    def loop_cancel(loop_id: str, request: Request, _: None = Depends(_auth)):
+        jobs = _jobs(request)
+        loop_id = _loop_id(loop_id)
+        if jobs.cancel(loop_id):
+            return {"ok": True, "cancelling": True}
+        try:
+            jobs.snapshot(loop_id)
+        except LoopJobNotFound:
+            raise HTTPException(status_code=404, detail="Loop not found")
+        raise HTTPException(status_code=409, detail="Loop is not running")
+
+    @app.post("/loop/{loop_id}/resume", status_code=202)
+    def loop_resume(loop_id: str, request: Request, req: Optional[LoopResumeRequest] = None,
+                    _: None = Depends(_auth)):
+        jobs = _jobs(request)
+        loop_id = _loop_id(loop_id)
+        req = req or LoopResumeRequest()
+        try:
+            job = jobs.resume(loop_id, max_iterations=req.max_iterations, max_seconds=req.max_seconds)
+        except LoopJobNotFound:
+            raise HTTPException(status_code=404, detail="Loop not found")
+        except LoopJobBusy as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return job.snapshot()
 
     # ------------------------------------------------------------------
     # Memory

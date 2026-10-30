@@ -1,0 +1,19 @@
+# Serve an agent whose loops are judged by a separate reviewer:
+#   maki serve --config examples/loop_server.yaml --port 8123
+# then run examples/loop_remote.py.
+name: writer
+role: technical writer
+backend: ollama
+model: gemma4:26b
+think: false            # keep the model's reasoning out of the replies a loop judges
+stateful: true          # loops share one conversation; use stateless + context "fresh" otherwise
+
+judge:                  # enables POST /loop; ollama judges run in JSON mode with thinking off
+  backend: ollama
+  model: gemma4:26b
+  temperature: 0
+
+loop:                   # caps on remote loops
+  max_iterations: 6
+  max_seconds: 900
+  retention_days: 14      # finished loops older than this are deleted (null = keep all)

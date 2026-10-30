@@ -12,6 +12,8 @@ backend: ollama             # ollama | openai | anthropic | openrouter | llamacp
 model: llama3.2             # optional; falls back to each backend's default
 base_url: http://127.0.0.1:8080/v1  # optional; llamacpp / vllm only
 temperature: 0.7            # optional, default 0.7
+think: false                # optional, ollama only: false turns model thinking off (a thinking
+                            # model can leak its reasoning into the reply, which pollutes loop artifacts)
 stateful: false             # optional, default false
 use_streaming: false        # optional, default false
 allow_dangerous_tools: false  # optional, default false; opt-in to let TOOL:
@@ -20,6 +22,16 @@ allow_dangerous_tools: false  # optional, default false; opt-in to let TOOL:
 plugins:                    # optional list of built-in plugin names; must be
   - web_to_md               # registered in maki.plugins.PLUGIN_REGISTRY
   - file_reader
+judge:                      # optional; enables POST /loop. A separate, stateless
+  backend: ollama           # reviewer agent that judges loop requirements. Keys:
+  model: gemma4:26b         # backend, model, base_url, temperature, instructions.
+                            # (ollama: JSON mode on, thinking off.)  Without it /loop
+                            # answers 503: the served agent never judges its own work.
+loop:                       # optional caps for remote loops
+  max_iterations: 20        # default 20
+  max_seconds: 3600         # default 3600
+  loop_dir_base: ~/.maki/loops
+  retention_days: 14        # finished loops older than this are deleted (null = keep all)
 
 Install optional dependencies before use:
     pip install "maki-framework[distributed]"
@@ -33,15 +45,17 @@ except ImportError as _e:
     ) from _e
 
 import os
+from dataclasses import dataclass
 from typing import Optional
 
 from ..agents.agent import Agent
 from ..backend import LLMBackend
 from ..objects import GenerationConfig
 from ..plugins import PLUGIN_REGISTRY
+from .loop_jobs import LoopCaps
 
 
-def _build_backend(cfg: dict) -> LLMBackend:
+def _build_backend(cfg: dict, judge: bool = False) -> LLMBackend:
     backend_name = cfg.get("backend", "ollama").lower()
     model: Optional[str] = cfg.get("model")
     temperature = float(cfg.get("temperature", 0.7))
@@ -52,6 +66,10 @@ def _build_backend(cfg: dict) -> LLMBackend:
         kwargs: dict = {"config": gen_config}
         if model:
             kwargs["model"] = model
+        if "think" in cfg:  # ollama only: False stops reasoning text leaking into replies
+            kwargs["think"] = bool(cfg["think"])
+        if judge:  # a thinking judge often returns truncated or reasoning-polluted verdicts
+            kwargs.update(json_format=True, think=False)
         return MakiLLama(**kwargs)
 
     if backend_name == "openai":
@@ -99,23 +117,17 @@ def _build_backend(cfg: dict) -> LLMBackend:
     )
 
 
-def load_agent_from_config(path: str) -> Agent:
-    """
-    Parse *path* (YAML) and return a fully configured Agent instance.
-
-    Raises:
-        FileNotFoundError: If the config file does not exist.
-        ValueError: If required fields are missing or backend is unknown.
-    """
+def _read_config(path: str) -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Agent config not found: {path}")
-
     with open(path) as f:
         cfg = yaml.safe_load(f)
-
     if not cfg or not cfg.get("name"):
         raise ValueError("Agent config must include a 'name' field")
+    return cfg
 
+
+def _agent_from_cfg(cfg: dict) -> Agent:
     # Validate plugin names up front (before the backend constructor, which
     # may touch the network): load_plugin() feeds the name into
     # importlib.import_module, so only registry names are acceptable (§2.6).
@@ -142,3 +154,70 @@ def load_agent_from_config(path: str) -> Agent:
         agent.load_plugin(plugin_name)
 
     return agent
+
+
+def load_agent_from_config(path: str) -> Agent:
+    """
+    Parse *path* (YAML) and return a fully configured Agent instance.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        ValueError: If required fields are missing or backend is unknown.
+    """
+    return _agent_from_cfg(_read_config(path))
+
+
+_JUDGE_KEYS = {"backend", "model", "base_url", "temperature", "instructions"}  # think/json are forced
+_LOOP_KEYS = {"max_iterations", "max_seconds", "loop_dir_base", "retention_days"}
+
+
+def _judge_from_cfg(agent_name: str, section: dict) -> Agent:
+    if not isinstance(section, dict):
+        raise ValueError("'judge' must be a mapping")
+    unknown = sorted(set(section) - _JUDGE_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown key(s) in 'judge': {', '.join(unknown)}. "
+                         f"Valid keys: {', '.join(sorted(_JUDGE_KEYS))} (a judge has no plugins or tools)")
+    return Agent(name=f"{agent_name}-judge", maki_instance=_build_backend(section, judge=True), role="reviewer",
+                 instructions=section.get("instructions", ""), stateful=False)
+
+
+def _caps_from_cfg(section: dict) -> LoopCaps:
+    if not isinstance(section, dict):
+        raise ValueError("'loop' must be a mapping")
+    unknown = sorted(set(section) - _LOOP_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown key(s) in 'loop': {', '.join(unknown)}. Valid keys: {', '.join(sorted(_LOOP_KEYS))}")
+    kwargs: dict = {}
+    if "max_iterations" in section:
+        kwargs["max_iterations"] = section["max_iterations"]
+    if "max_seconds" in section:
+        kwargs["max_seconds"] = None if section["max_seconds"] is None else float(section["max_seconds"])
+    if "retention_days" in section:
+        kwargs["retention_days"] = None if section["retention_days"] is None else float(section["retention_days"])
+    if section.get("loop_dir_base"):
+        kwargs["loop_dir_base"] = os.path.abspath(os.path.expanduser(str(section["loop_dir_base"])))
+    return LoopCaps(**kwargs)
+
+
+@dataclass
+class ServerConfig:
+    """Everything ``maki serve`` builds from the YAML: the served agent, the optional loop
+    judge (``None`` = ``/loop`` disabled) and the caps for remote loops."""
+    agent: Agent
+    judge: Optional[Agent]
+    loop_caps: LoopCaps
+
+
+def load_server_config(path: str) -> ServerConfig:
+    """Like :func:`load_agent_from_config`, plus the optional ``judge:`` and ``loop:`` sections.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        ValueError: For missing fields, an unknown backend, or bad ``judge``/``loop`` sections.
+    """
+    cfg = _read_config(path)
+    agent = _agent_from_cfg(cfg)
+    judge = _judge_from_cfg(cfg["name"], cfg["judge"]) if cfg.get("judge") is not None else None
+    caps = _caps_from_cfg(cfg["loop"]) if cfg.get("loop") is not None else LoopCaps()
+    return ServerConfig(agent=agent, judge=judge, loop_caps=caps)
