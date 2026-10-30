@@ -3,10 +3,9 @@ Unit tests for the enhanced workflow management system
 """
 import unittest
 from unittest.mock import patch, MagicMock
-import time
 
 # Import the classes we want to test
-from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus, WorkflowState
+from maki.agents import AgentManager, WorkflowTask, TaskStatus, WorkflowState
 
 
 class TestEnhancedWorkflowManagement(unittest.TestCase):
@@ -110,7 +109,7 @@ class TestEnhancedWorkflowManagement(unittest.TestCase):
     def test_enhanced_workflow_execution(self):
         """Test enhanced workflow execution"""
         # Add an agent
-        agent = self.agent_manager.add_agent(
+        self.agent_manager.add_agent(
             name="TestAgent",
             role="researcher",
             instructions="You are a researcher"

@@ -9,7 +9,7 @@ import json
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..backend import LLMBackend
@@ -411,6 +411,44 @@ class AgentManager:
           task and COMPLETED tasks from a prior run are skipped on resume.
         """
         wf_id = workflow_id or f"workflow_{int(time.time())}"
+        self._validate_workflow_tasks(tasks, approval_store)
+
+        # Checkpoint resume: load prior state and pre-populate results
+        checkpoint = (
+            state_store.load_workflow(wf_id)
+            if (state_store is not None and workflow_id)
+            else None
+        )
+        state = checkpoint if checkpoint is not None else WorkflowState(wf_id)
+        state.status = "running"  # a resumed run is running again
+        state.end_time = None
+        self.last_workflow_state = state
+        results = self._completed_results(tasks, checkpoint, wf_id)
+
+        if state_store is not None:
+            state_store.save_workflow(state)
+
+        batches = self._build_batches(self._topological_sort(tasks))
+
+        # Lock used when persisting state from the main thread after parallel tasks.
+        _save_lock = threading.Lock()
+
+        def _persist():
+            if state_store is not None:
+                with _save_lock:
+                    state_store.save_workflow(state)
+
+        for batch in batches:
+            self._run_batch(batch, results, state, approval_store, _persist)
+
+        self._finish_workflow_state(state)
+        if state_store is not None:
+            state_store.save_workflow(state)
+
+        return results
+
+    def _validate_workflow_tasks(self, tasks: List[WorkflowTask], approval_store: Optional[ApprovalStore]) -> None:
+        """Fail fast on tasks that cannot run: missing approval store, bad loop or verifier agents."""
         if approval_store is None and any(t.approval is not None for t in tasks):
             raise ValueError("tasks require approval but no approval_store was provided")
         for t in tasks:
@@ -428,51 +466,40 @@ class AgentManager:
                     f"task '{t.name}': verifier agent '{verifier_agent}' is not registered"
                 )
 
-        # ------------------------------------------------------------------
-        # Checkpoint resume: load prior state and pre-populate results
-        # ------------------------------------------------------------------
-        checkpoint = (
-            state_store.load_workflow(wf_id)
-            if (state_store is not None and workflow_id)
-            else None
-        )
-        state = checkpoint if checkpoint is not None else WorkflowState(wf_id)
-        state.status = "running"  # a resumed run is running again
-        state.end_time = None
-        self.last_workflow_state = state
+    @staticmethod
+    def _completed_results(tasks: List[WorkflowTask], checkpoint: Optional[WorkflowState],
+                           wf_id: str) -> Dict[str, Any]:
+        """Results of the tasks a checkpointed prior run already completed (they are not re-run)."""
         results: Dict[str, Any] = {}
+        if checkpoint is None:
+            return results
+        task_map = {t.name: t for t in tasks}
+        for task_name, task_data in checkpoint.tasks.items():
+            if task_data.get("status") != TaskStatus.COMPLETED:
+                continue
+            wt = task_map.get(task_name)
+            if wt is None:
+                continue
+            wt.status = TaskStatus.COMPLETED
+            wt.result = task_data.get("result")
+            results[task_name] = {
+                "agent": wt.agent,
+                "task": wt.task,
+                "result": task_data.get("result"),
+                "data": task_data.get("data"),
+            }
+        if results:
+            logger.info(
+                "Resuming workflow '%s': %d task(s) already completed, skipping.",
+                wf_id, len(results),
+            )
+        return results
 
-        if checkpoint is not None:
-            task_map = {t.name: t for t in tasks}
-            for task_name, task_data in checkpoint.tasks.items():
-                if task_data.get("status") == TaskStatus.COMPLETED:
-                    wt = task_map.get(task_name)
-                    if wt is not None:
-                        wt.status = TaskStatus.COMPLETED
-                        wt.result = task_data.get("result")
-                        results[task_name] = {
-                            "agent": wt.agent,
-                            "task": wt.task,
-                            "result": task_data.get("result"),
-                            "data": task_data.get("data"),
-                        }
-            if results:
-                logger.info(
-                    "Resuming workflow '%s': %d task(s) already completed, skipping.",
-                    wf_id, len(results),
-                )
-
-        if state_store is not None:
-            state_store.save_workflow(state)
-
-        # ------------------------------------------------------------------
-        # Topological sort + batch construction (unchanged from before)
-        # ------------------------------------------------------------------
-        ordered = self._topological_sort(tasks)
-
-        # Batch consecutive parallelizable tasks, but never place a task in the
-        # same batch as one of its dependencies. That would allow a dependent
-        # task to start before its prerequisite has produced a result.
+    @staticmethod
+    def _build_batches(ordered: List[WorkflowTask]) -> List[List[WorkflowTask]]:
+        """Batch consecutive parallelizable tasks, but never place a task in the same batch as one
+        of its dependencies. That would allow a dependent task to start before its prerequisite
+        has produced a result."""
         batches: List[List[WorkflowTask]] = []
         for wt in ordered:
             current_batch = batches[-1] if batches else None
@@ -487,67 +514,50 @@ class AgentManager:
                 batches[-1].append(wt)
             else:
                 batches.append([wt])
+        return batches
 
-        # Lock used when persisting state from the main thread after parallel tasks.
-        _save_lock = threading.Lock()
+    def _run_batch(self, batch: List[WorkflowTask], results: Dict[str, Any], state: WorkflowState,
+                   approval_store: Optional[ApprovalStore], persist: Callable[[], None]) -> None:
+        """Run one batch: a thread pool for parallelizable tasks, otherwise the single task inline."""
+        if not (batch[0].parallelizable and len(batch) > 1):
+            wt = batch[0]
+            if wt.name in results:
+                logger.debug("Skipping task '%s' (resumed from checkpoint).", wt.name)
+                return
+            name, value = self._execute_workflow_task(wt, results, state, approval_store)
+            if value is not None:
+                results[name] = value
+            persist()
+            return
 
-        def _persist():
-            if state_store is not None:
-                with _save_lock:
-                    state_store.save_workflow(state)
+        # Skip tasks already completed in a prior run.
+        pending = [wt for wt in batch if wt.name not in results]
+        if not pending:
+            return
 
-        # ------------------------------------------------------------------
-        # Execute batches
-        # ------------------------------------------------------------------
-        for batch in batches:
-            if batch[0].parallelizable and len(batch) > 1:
-                # Skip tasks already completed in a prior run.
-                pending = [wt for wt in batch if wt.name not in results]
-                if not pending:
-                    continue
+        # Snapshot results before submitting so all tasks in this batch evaluate conditions against
+        # the same consistent state, not a partially-updated dict from concurrently finishing siblings.
+        results_snapshot = dict(results)
 
-                # Snapshot results before submitting so all tasks in this batch
-                # evaluate conditions against the same consistent state, not a
-                # partially-updated dict from concurrently finishing siblings.
-                results_snapshot = dict(results)
+        def _run_wf_task(wt: WorkflowTask, _snap=results_snapshot):
+            return self._execute_workflow_task(wt, _snap, state, approval_store)
 
-                def _run_wf_task(wt: WorkflowTask, _snap=results_snapshot):
-                    return self._execute_workflow_task(wt, _snap, state, approval_store)
-
-                with ThreadPoolExecutor(max_workers=_WORKFLOW_MAX_WORKERS) as pool:
-                    futures = {pool.submit(_run_wf_task, wt): wt for wt in pending}
-                    for future in as_completed(futures):
-                        name, value = future.result()
-                        if value is not None:
-                            results[name] = value
-                        _persist()
-            else:
-                wt = batch[0]
-                if wt.name in results:
-                    logger.debug("Skipping task '%s' (resumed from checkpoint).", wt.name)
-                    continue
-                name, value = self._execute_workflow_task(wt, results, state, approval_store)
+        with ThreadPoolExecutor(max_workers=_WORKFLOW_MAX_WORKERS) as pool:
+            futures = {pool.submit(_run_wf_task, wt): wt for wt in pending}
+            for future in as_completed(futures):
+                name, value = future.result()
                 if value is not None:
                     results[name] = value
-                _persist()
+                persist()
 
-        any_skipped = any(
-            t.get("status") == TaskStatus.SKIPPED
-            for t in state.tasks.values()
-        )
-        any_awaiting = any(
-            t.get("status") == TaskStatus.AWAITING_APPROVAL
-            for t in state.tasks.values()
-        )
-        if any_awaiting:
+    @staticmethod
+    def _finish_workflow_state(state: WorkflowState) -> None:
+        statuses = [t.get("status") for t in state.tasks.values()]
+        if TaskStatus.AWAITING_APPROVAL in statuses:
             state.status = "awaiting_approval"
         else:
-            state.status = "completed_with_skips" if any_skipped else "completed"
+            state.status = "completed_with_skips" if TaskStatus.SKIPPED in statuses else "completed"
             state.end_time = time.time()
-        if state_store is not None:
-            state_store.save_workflow(state)
-
-        return results
 
     def _validate_loop_task(self, t: WorkflowTask) -> None:
         """Fail fast on a loop task whose agents cannot run a loop."""
@@ -624,6 +634,35 @@ class AgentManager:
         free-text strings.  The text ``result`` of each dependency is also
         included under ``<dep_name>__result`` for backward compatibility.
         """
+        early = self._held_back(wt, results, state)
+        if early is not None:
+            return early
+
+        agent = self.get_agent(wt.agent)
+        if not agent:
+            err = f"Agent '{wt.agent}' not found"
+            wt.status = TaskStatus.FAILED
+            state.update_task_status(wt.name, TaskStatus.FAILED, err)
+            state.add_error(wt.name, err)
+            logger.error(f"WorkflowTask '{wt.name}' failed: {err}")
+            return wt.name, None
+
+        context = self._dependency_context(wt, results)
+
+        if wt.approval is not None:
+            assert approval_store is not None  # enforced in _run_workflow_tasks
+            early = self._approval_gate(wt, context, state, approval_store)
+            if early is not None:
+                return early
+
+        wt.status = TaskStatus.IN_PROGRESS
+        start = time.time()
+        wt.timestamp = start
+        return self._run_task(wt, agent, context, state, start)
+
+    @staticmethod
+    def _held_back(wt: WorkflowTask, results: Dict, state: WorkflowState):
+        """``(name, result)`` if the task must not run now (parked behind an approval, or skipped), else None."""
         # A dependency parked for approval (or blocked behind one) holds this task
         # back without skipping it: it stays PENDING and runs on a later resume.
         blocked_dep = next(
@@ -649,33 +688,26 @@ class AgentManager:
             (dep for dep in wt.dependencies if results.get(dep, {}).get("verification_failed")),
             None,
         )
-        if skipped_dep is not None or unverified_dep is not None or not wt.should_execute(results):
-            reason = (
-                f"dependency '{skipped_dep}' was skipped"
-                if skipped_dep is not None
-                else (f"dependency '{unverified_dep}' did not complete its loop"
+        if skipped_dep is None and unverified_dep is None and wt.should_execute(results):
+            return None
+        if skipped_dep is not None:
+            reason = f"dependency '{skipped_dep}' was skipped"
+        elif unverified_dep is not None:
+            reason = (f"dependency '{unverified_dep}' did not complete its loop"
                       if results[unverified_dep].get("loop_failed")
                       else f"dependency '{unverified_dep}' failed verification")
-                if unverified_dep is not None
-                else (wt.gate_reason or "conditions not met")
-            )
-            logger.info(f"WorkflowTask '{wt.name}' skipped ({reason})")
-            wt.status = TaskStatus.SKIPPED
-            state.update_task_status(wt.name, TaskStatus.SKIPPED, f"Skipped: {reason}", reason=reason)
-            return wt.name, {
-                "agent": wt.agent, "task": wt.task, "result": None, "data": None, "skipped": True
-            }
+        else:
+            reason = wt.gate_reason or "conditions not met"
+        logger.info(f"WorkflowTask '{wt.name}' skipped ({reason})")
+        wt.status = TaskStatus.SKIPPED
+        state.update_task_status(wt.name, TaskStatus.SKIPPED, f"Skipped: {reason}", reason=reason)
+        return wt.name, {
+            "agent": wt.agent, "task": wt.task, "result": None, "data": None, "skipped": True
+        }
 
-        agent = self.get_agent(wt.agent)
-        if not agent:
-            err = f"Agent '{wt.agent}' not found"
-            wt.status = TaskStatus.FAILED
-            state.update_task_status(wt.name, TaskStatus.FAILED, err)
-            state.add_error(wt.name, err)
-            logger.error(f"WorkflowTask '{wt.name}' failed: {err}")
-            return wt.name, None
-
-        # Build context from completed (non-skipped) dependency outputs.
+    @staticmethod
+    def _dependency_context(wt: WorkflowTask, results: Dict) -> dict:
+        """Context from completed (non-skipped) dependency outputs."""
         context: dict = {}
         for dep in wt.dependencies:
             dep_result = results.get(dep)
@@ -685,45 +717,46 @@ class AgentManager:
                     context[dep] = dep_result["data"]
                 if dep_result.get("result") is not None:
                     context[f"{dep}__result"] = dep_result["result"]
+        return context
 
-        if wt.approval is not None:
-            assert approval_store is not None  # enforced in _run_workflow_tasks
-            ctx = context or {}
-            try:
-                key = wt.approval.key_fn(ctx)
-                summary = wt.approval.summary_fn(ctx) if wt.approval.summary_fn else wt.task
-                decision = approval_store.check(state.workflow_id, wt.name, key, summary)
-            except Exception as e:  # fail closed: never run on an approval error
-                err = f"approval check failed: {e}"
-                wt.status = TaskStatus.FAILED
-                state.update_task_status(wt.name, TaskStatus.FAILED, err, reason=err)
-                state.add_error(wt.name, err)
-                logger.error(f"WorkflowTask '{wt.name}' failed: {err}")
-                return wt.name, None
-            if decision is ApprovalDecision.PENDING:
-                reason = f"awaiting approval: {summary}"
-                logger.info(f"WorkflowTask '{wt.name}' {reason}")
-                wt.status = TaskStatus.AWAITING_APPROVAL
-                wt.gate_reason = reason
-                state.update_task_status(wt.name, TaskStatus.AWAITING_APPROVAL, None, reason=reason)
-                return wt.name, {
-                    "agent": wt.agent, "task": wt.task, "result": None, "data": None,
-                    "awaiting_approval": True,
-                }
-            if decision is ApprovalDecision.REJECTED:
-                reason = "approval rejected"
-                logger.info(f"WorkflowTask '{wt.name}' skipped ({reason})")
-                wt.status = TaskStatus.SKIPPED
-                wt.gate_reason = reason
-                state.update_task_status(wt.name, TaskStatus.SKIPPED, f"Skipped: {reason}", reason=reason)
-                return wt.name, {
-                    "agent": wt.agent, "task": wt.task, "result": None, "data": None, "skipped": True
-                }
+    @staticmethod
+    def _approval_gate(wt: WorkflowTask, context: dict, state: WorkflowState, approval_store: ApprovalStore):
+        """``(name, result)`` if the task is parked, rejected or failed at its approval gate, else None."""
+        ctx = context or {}
+        try:
+            key = wt.approval.key_fn(ctx)
+            summary = wt.approval.summary_fn(ctx) if wt.approval.summary_fn else wt.task
+            decision = approval_store.check(state.workflow_id, wt.name, key, summary)
+        except Exception as e:  # fail closed: never run on an approval error
+            err = f"approval check failed: {e}"
+            wt.status = TaskStatus.FAILED
+            state.update_task_status(wt.name, TaskStatus.FAILED, err, reason=err)
+            state.add_error(wt.name, err)
+            logger.error(f"WorkflowTask '{wt.name}' failed: {err}")
+            return wt.name, None
+        if decision is ApprovalDecision.PENDING:
+            reason = f"awaiting approval: {summary}"
+            logger.info(f"WorkflowTask '{wt.name}' {reason}")
+            wt.status = TaskStatus.AWAITING_APPROVAL
+            wt.gate_reason = reason
+            state.update_task_status(wt.name, TaskStatus.AWAITING_APPROVAL, None, reason=reason)
+            return wt.name, {
+                "agent": wt.agent, "task": wt.task, "result": None, "data": None,
+                "awaiting_approval": True,
+            }
+        if decision is ApprovalDecision.REJECTED:
+            reason = "approval rejected"
+            logger.info(f"WorkflowTask '{wt.name}' skipped ({reason})")
+            wt.status = TaskStatus.SKIPPED
+            wt.gate_reason = reason
+            state.update_task_status(wt.name, TaskStatus.SKIPPED, f"Skipped: {reason}", reason=reason)
+            return wt.name, {
+                "agent": wt.agent, "task": wt.task, "result": None, "data": None, "skipped": True
+            }
+        return None
 
-        wt.status = TaskStatus.IN_PROGRESS
-        start = time.time()
-        wt.timestamp = start
-
+    def _run_task(self, wt: WorkflowTask, agent: Any, context: dict, state: WorkflowState, start: float):
+        """Run the task (a loop, or one or more verified attempts) and record the outcome."""
         spec = wt.verify
         max_runs = spec.max_revisions + 1 if spec is not None else 1
         history: List[Dict[str, Any]] = []
@@ -746,22 +779,7 @@ class AgentManager:
                 return self._run_loop_task(wt, agent, context, state, start)
             for revision in range(max_runs):
                 wt.attempts += 1
-                run_context = dict(context)
-                if revision > 0:
-                    run_context["__verification_feedback"] = feedback
-                    run_context["__previous_result"] = previous
-                result = agent.execute_task_with_retry(
-                    wt.task,
-                    context=run_context or None,
-                    max_retries=wt.max_retries,
-                    retry_delay=wt.retry_delay
-                )
-                # verified tasks start each run clean so a stale payload never survives a revision
-                data = None if spec is not None else wt.data
-                if isinstance(result, TaskOutput):
-                    data = result.data
-                    result = result.text
-                wt.data = data
+                result, data = self._attempt(wt, agent, context, spec, revision, feedback, previous)
                 if spec is None:
                     break
                 verdict = self._run_verifier(wt, spec, result, data, context, revision)
@@ -769,24 +787,8 @@ class AgentManager:
                 if verdict.verdict is Verdict.ACCEPT:
                     break
                 if verdict.verdict is Verdict.BLOCK or revision == max_runs - 1:
-                    exhausted = verdict.verdict is Verdict.REVISE
-                    reason = (
-                        f"verification failed after {revision} revision(s): "
-                        if exhausted else "verification blocked: "
-                    ) + (verdict.fixes or verdict.evidence or "no detail")
-                    wt.status = TaskStatus.FAILED
-                    wt.gate_reason = reason
-                    wt.execution_time = time.time() - start
-                    state.update_task_status(
-                        wt.name, TaskStatus.FAILED, reason, wt.execution_time, reason=reason,
-                        verification=_verification_summary(verdict.verdict.value),
-                    )
-                    state.add_error(wt.name, reason)
-                    logger.warning(f"WorkflowTask '{wt.name}' {reason}")
-                    return wt.name, {
-                        "agent": wt.agent, "task": wt.task, "result": None, "data": None,
-                        "verification_failed": True,
-                    }
+                    return self._fail_verification(wt, state, verdict, revision, start,
+                                                   _verification_summary(verdict.verdict.value))
                 feedback = verdict.fixes or verdict.evidence
                 previous = result
 
@@ -815,6 +817,50 @@ class AgentManager:
             state.add_error(wt.name, str(e))
             logger.error(f"WorkflowTask '{wt.name}' failed: {str(e)}")
             return wt.name, None
+
+    @staticmethod
+    def _attempt(wt: WorkflowTask, agent: Any, context: dict, spec: Any, revision: int,
+                 feedback: Optional[str], previous: Any):
+        """One execution of the task; returns ``(text result, structured data)``."""
+        run_context = dict(context)
+        if revision > 0:
+            run_context["__verification_feedback"] = feedback
+            run_context["__previous_result"] = previous
+        result = agent.execute_task_with_retry(
+            wt.task,
+            context=run_context or None,
+            max_retries=wt.max_retries,
+            retry_delay=wt.retry_delay
+        )
+        # verified tasks start each run clean so a stale payload never survives a revision
+        data = None if spec is not None else wt.data
+        if isinstance(result, TaskOutput):
+            data = result.data
+            result = result.text
+        wt.data = data
+        return result, data
+
+    @staticmethod
+    def _fail_verification(wt: WorkflowTask, state: WorkflowState, verdict: VerifyResult, revision: int,
+                           start: float, summary: Optional[Dict[str, Any]]):
+        exhausted = verdict.verdict is Verdict.REVISE
+        reason = (
+            f"verification failed after {revision} revision(s): "
+            if exhausted else "verification blocked: "
+        ) + (verdict.fixes or verdict.evidence or "no detail")
+        wt.status = TaskStatus.FAILED
+        wt.gate_reason = reason
+        wt.execution_time = time.time() - start
+        state.update_task_status(
+            wt.name, TaskStatus.FAILED, reason, wt.execution_time, reason=reason,
+            verification=summary,
+        )
+        state.add_error(wt.name, reason)
+        logger.warning(f"WorkflowTask '{wt.name}' {reason}")
+        return wt.name, {
+            "agent": wt.agent, "task": wt.task, "result": None, "data": None,
+            "verification_failed": True,
+        }
 
     def _run_verifier(self, wt: WorkflowTask, spec: Any, result: Any, data: Any,
                       context: Dict, revision: int) -> VerifyResult:

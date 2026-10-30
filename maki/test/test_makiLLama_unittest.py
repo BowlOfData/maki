@@ -11,13 +11,13 @@ from unittest.mock import patch, MagicMock
 # Add the current directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from maki.makiLLama import MakiLLama, GenerationConfig, Message
+from maki.makiLLama import MakiLLama, GenerationConfig, Message  # noqa: E402
+
 
 class TestMakiLLama(unittest.TestCase):
 
     def test_initialization(self):
         """Test that MakiLLama can be initialized with parameters"""
-        
 
         # Test basic initialization
         with patch.object(MakiLLama, '_verify_connection'):
@@ -31,7 +31,6 @@ class TestMakiLLama(unittest.TestCase):
         # Test session creation and usage
         session = llm.session(system="You are a helpful assistant.")
         self.assertIsNotNone(session)
-
 
     @patch('requests.Session.post')
     @patch('requests.Session.get')
@@ -247,6 +246,7 @@ class TestMakiLLama(unittest.TestCase):
         # Unknown kwargs are still dropped with a warning, not passed through.
         with self.assertLogs('maki.makiLLama', level='WARNING'):
             llm("hello", bogus_param=42)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -7,13 +7,13 @@ import time as _time
 
 
 class BackendType(str, Enum):
-    OLLAMA     = "ollama"
-    OPENAI     = "openai"
-    ANTHROPIC  = "anthropic"
-    HF         = "huggingface"
+    OLLAMA = "ollama"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    HF = "huggingface"
     OPENROUTER = "openrouter"
-    LLAMACPP   = "llamacpp"
-    VLLM       = "vllm"
+    LLAMACPP = "llamacpp"
+    VLLM = "vllm"
 
 
 @dataclass
@@ -177,7 +177,7 @@ class GenerationConfig:
     seed: int = -1                # -1 = random
     stop: list[str] = field(default_factory=list)
     do_sample: bool = True        # HuggingFace: enable sampling (set False for greedy)
-    num_ctx: Optional[int] = None # Ollama only: total context window (input + output tokens)
+    num_ctx: Optional[int] = None  # Ollama only: total context window (input + output tokens)
 
     def __post_init__(self):
         if not isinstance(self.temperature, (int, float)):

@@ -25,7 +25,7 @@ def test_file_writer():
         result = file_writer.write_file(temp_file_path, "Hello, World!\nLine 2")
         print("Write file result:", result)
 
-        assert result['success'] == True
+        assert result['success'] is True
         assert result['file_path'] == temp_file_path
         assert result['bytes_written'] > 0
 
@@ -38,7 +38,7 @@ def test_file_writer():
         append_result = file_writer.append_to_file(temp_file_path, "\nAppended line")
         print("Append result:", append_result)
 
-        assert append_result['success'] == True
+        assert append_result['success'] is True
         assert append_result['bytes_written'] > 0
 
         # Test reading back to verify append
@@ -50,16 +50,16 @@ def test_file_writer():
         lines_result = file_writer.write_file_lines(temp_file_path, ["Line 1", "Line 2", "Line 3"])
         print("Write lines result:", lines_result)
 
-        assert lines_result['success'] == True
+        assert lines_result['success'] is True
         assert lines_result['lines_written'] == 3
 
         # Test getting file info
         info_result = file_writer.get_file_info(temp_file_path)
         print("File info result:", info_result)
 
-        assert info_result['success'] == True
-        assert info_result['is_file'] == True
-        assert info_result['exists'] == True
+        assert info_result['success'] is True
+        assert info_result['is_file'] is True
+        assert info_result['exists'] is True
         assert info_result['size'] > 0
 
         # Test with non-existent subdirectory inside base_dir (should create it)
@@ -69,7 +69,7 @@ def test_file_writer():
         dir_result = file_writer.write_file(new_file_path, "Content in subdirectory")
         print("Directory creation result:", dir_result)
 
-        assert dir_result['success'] == True
+        assert dir_result['success'] is True
         assert os.path.exists(new_file_path)
 
         # Clean up
@@ -81,7 +81,7 @@ def test_file_writer():
         traversal_result = file_writer.write_file("../../etc/evil.txt", "pwned")
         print("Traversal result:", traversal_result)
 
-        assert traversal_result['success'] == False
+        assert traversal_result['success'] is False
         assert 'resolves outside' in traversal_result['error'].lower()
 
         print("All tests passed!")

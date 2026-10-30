@@ -114,7 +114,8 @@ class TestMakiLLamaPayload(unittest.TestCase):
         llm._http.post.return_value = MagicMock()
         from maki import makiLLama as mod
         original = mod.Connector.json_or_raise
-        mod.Connector.json_or_raise = staticmethod(lambda r: {"message": {"content": '{"ok":true,"reason":"r"}'}, "done": True})
+        mod.Connector.json_or_raise = staticmethod(
+            lambda r: {"message": {"content": '{"ok":true,"reason":"r"}'}, "done": True})
         try:
             r = llm.chat("q", response_format=Verdict.model_json_schema())
         finally:

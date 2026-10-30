@@ -13,13 +13,11 @@ import inspect
 import json
 import logging
 import os
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple
 
 from ..exceptions import MakiValidationError
 from ..objects import ToolCall
 
-if TYPE_CHECKING:
-    from .protocols import PluginHostProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +89,79 @@ def _strip_tool_calls(text: str, extractions: List[Tuple[bool, str, object]]) ->
         if idx != -1:
             result = result[:idx] + result[idx + len(raw):]
     return "\n".join(line for line in result.split("\n") if line.strip()).strip()
+
+
+def _check_method_allowed(plugin, plugin_name: str, method_name: str) -> Optional[str]:
+    """Error string unless ``method_name`` is a public method the plugin whitelists."""
+    # Block private and dunder methods.
+    if method_name.startswith("_"):
+        return f"Method '{method_name}' is not callable via tool directives"
+
+    # Enforce the whitelist declared on the plugin class. Fail closed:
+    # a plugin that declares no ALLOWED_METHODS exposes nothing, and an
+    # ALLOWED_METHODS of an unrecognized collection type (e.g. an empty
+    # dict {}) blocks all calls rather than silently bypassing the
+    # whitelist. The attribute must live on the class/instance — a
+    # module-level constant is invisible here.
+    allowed = getattr(plugin, "ALLOWED_METHODS", None)
+    if allowed is None:
+        return (
+            f"Plugin '{plugin_name}' declares no ALLOWED_METHODS; "
+            f"no methods are exposed to tool calls"
+        )
+    if not isinstance(allowed, (list, set, tuple, frozenset)):
+        return (
+            f"Plugin '{plugin_name}' has an invalid ALLOWED_METHODS type "
+            f"'{type(allowed).__name__}'; all calls blocked"
+        )
+    if method_name not in allowed:
+        return (
+            f"Method '{method_name}' is not in the allowed methods "
+            f"for plugin '{plugin_name}'"
+        )
+    return None
+
+
+def _check_not_dangerous(plugin, plugin_name: str, method_name: str, allow_dangerous: bool) -> Optional[str]:
+    """Destructive methods (writes, uploads, deletes) may additionally be listed in
+    DANGEROUS_METHODS; they require the host agent to opt in via allow_dangerous_tools=True."""
+    dangerous = getattr(plugin, "DANGEROUS_METHODS", None)
+    if dangerous is not None and not isinstance(dangerous, (list, set, tuple, frozenset)):
+        return (
+            f"Plugin '{plugin_name}' has an invalid DANGEROUS_METHODS type "
+            f"'{type(dangerous).__name__}'; all calls blocked"
+        )
+    if dangerous and method_name in dangerous and not allow_dangerous:
+        return (
+            f"Method '{method_name}' on plugin '{plugin_name}' is marked "
+            f"dangerous; create the agent with allow_dangerous_tools=True "
+            f"to permit it"
+        )
+    return None
+
+
+def _check_args(args: dict) -> Optional[str]:
+    """Error string unless ``args`` is a plain dict of a few short, JSON-safe values."""
+    if not isinstance(args, dict):
+        return "Tool args must be a JSON object"
+
+    if len(args) > _MAX_ARGS_COUNT:
+        return f"Too many arguments ({len(args)} > {_MAX_ARGS_COUNT})"
+
+    for key, val in args.items():
+        if not isinstance(key, str):
+            return "Argument keys must be strings"
+        if not isinstance(val, _SAFE_ARG_TYPES):
+            return (
+                f"Argument '{key}' has unsupported type "
+                f"'{type(val).__name__}'"
+            )
+        if isinstance(val, str) and len(val) > _MAX_ARG_STRING_LENGTH:
+            return (
+                f"Argument '{key}' exceeds the maximum allowed length "
+                f"of {_MAX_ARG_STRING_LENGTH} characters"
+            )
+    return None
 
 
 class PluginHandler:
@@ -253,77 +324,12 @@ class PluginHandler:
         self, plugin, plugin_name: str, method_name: str, args: dict
     ) -> Optional[str]:
         """Return an error string if the call is not allowed, else None."""
-        # Block private and dunder methods.
-        if method_name.startswith("_"):
-            return f"Method '{method_name}' is not callable via tool directives"
-
-        # Enforce the whitelist declared on the plugin class. Fail closed:
-        # a plugin that declares no ALLOWED_METHODS exposes nothing, and an
-        # ALLOWED_METHODS of an unrecognized collection type (e.g. an empty
-        # dict {}) blocks all calls rather than silently bypassing the
-        # whitelist. The attribute must live on the class/instance — a
-        # module-level constant is invisible here.
-        allowed = getattr(plugin, "ALLOWED_METHODS", None)
-        if allowed is None:
-            return (
-                f"Plugin '{plugin_name}' declares no ALLOWED_METHODS; "
-                f"no methods are exposed to tool calls"
-            )
-        if not isinstance(allowed, (list, set, tuple, frozenset)):
-            return (
-                f"Plugin '{plugin_name}' has an invalid ALLOWED_METHODS type "
-                f"'{type(allowed).__name__}'; all calls blocked"
-            )
-        if method_name not in allowed:
-            return (
-                f"Method '{method_name}' is not in the allowed methods "
-                f"for plugin '{plugin_name}'"
-            )
-
-        # Destructive methods (writes, uploads, deletes) may additionally be
-        # listed in DANGEROUS_METHODS; they require the host agent to opt in
-        # via allow_dangerous_tools=True.
-        dangerous = getattr(plugin, "DANGEROUS_METHODS", None)
-        if dangerous is not None and not isinstance(
-            dangerous, (list, set, tuple, frozenset)
-        ):
-            return (
-                f"Plugin '{plugin_name}' has an invalid DANGEROUS_METHODS type "
-                f"'{type(dangerous).__name__}'; all calls blocked"
-            )
-        if (
-            dangerous
-            and method_name in dangerous
-            and not getattr(self, "allow_dangerous_tools", False)
-        ):
-            return (
-                f"Method '{method_name}' on plugin '{plugin_name}' is marked "
-                f"dangerous; create the agent with allow_dangerous_tools=True "
-                f"to permit it"
-            )
-
-        # args must be a plain dict.
-        if not isinstance(args, dict):
-            return "Tool args must be a JSON object"
-
-        if len(args) > _MAX_ARGS_COUNT:
-            return f"Too many arguments ({len(args)} > {_MAX_ARGS_COUNT})"
-
-        for key, val in args.items():
-            if not isinstance(key, str):
-                return "Argument keys must be strings"
-            if not isinstance(val, _SAFE_ARG_TYPES):
-                return (
-                    f"Argument '{key}' has unsupported type "
-                    f"'{type(val).__name__}'"
-                )
-            if isinstance(val, str) and len(val) > _MAX_ARG_STRING_LENGTH:
-                return (
-                    f"Argument '{key}' exceeds the maximum allowed length "
-                    f"of {_MAX_ARG_STRING_LENGTH} characters"
-                )
-
-        return None
+        return (
+            _check_method_allowed(plugin, plugin_name, method_name)
+            or _check_not_dangerous(plugin, plugin_name, method_name,
+                                    getattr(self, "allow_dangerous_tools", False))
+            or _check_args(args)
+        )
 
     def _allowed_methods(self, plugin) -> list:
         """Return the list of method names exposed by *plugin* to the LLM."""
@@ -470,6 +476,41 @@ class PluginHandler:
     # Legacy TOOL: directive path (fallback for non-native backends)
     # ------------------------------------------------------------------
 
+    def _run_tool_call(self, success: bool, raw_match: str, value) -> dict:
+        """Execute one parsed ``TOOL:`` directive; the result (or error) dict goes back to the model."""
+        if not success:
+            # Parse failure — feed the error back so the model can fix it.
+            return {"raw": raw_match, "error": value}
+
+        call = value  # already a dict
+        plugin_name = call.get("plugin")
+        method_name = call.get("method")
+        args = call.get("args", {})
+
+        if not isinstance(plugin_name, str) or not plugin_name:
+            return {"error": "Tool call missing 'plugin' name"}
+        if not isinstance(method_name, str) or not method_name:
+            return {"plugin": plugin_name, "error": "Tool call missing 'method' name"}
+
+        plugin = self.plugins.get(plugin_name)
+        if not plugin:
+            return {"plugin": plugin_name, "method": method_name,
+                    "error": f"Plugin '{plugin_name}' not loaded"}
+
+        validation_error = self._validate_plugin_call(plugin, plugin_name, method_name, args)
+        if validation_error:
+            logger.warning(f"Blocked plugin call {plugin_name}.{method_name}: {validation_error}")
+            return {"plugin": plugin_name, "method": method_name, "error": validation_error}
+        if not hasattr(plugin, method_name):
+            return {"plugin": plugin_name, "method": method_name,
+                    "error": f"Method '{method_name}' not found on plugin '{plugin_name}'"}
+        try:
+            output = getattr(plugin, method_name)(**args)
+        except Exception as exc:
+            logger.warning(f"Plugin call {plugin_name}.{method_name} failed: {exc}", exc_info=True)
+            return {"plugin": plugin_name, "method": method_name, "error": str(exc)}
+        return {"plugin": plugin_name, "method": method_name, "result": str(output)}
+
     def handle_plugin_calls(self, llm_response: str, task: str,
                             context: Optional[Dict]) -> str:
         """
@@ -490,76 +531,7 @@ class PluginHandler:
             if not extractions:
                 return llm_response
 
-            tool_results = []
-            for success, raw_match, value in extractions:
-                if not success:
-                    # Parse failure — feed the error back so the model can fix it.
-                    tool_results.append({"raw": raw_match, "error": value})
-                    continue
-
-                call = value  # already a dict
-                plugin_name = call.get("plugin")
-                method_name = call.get("method")
-                args = call.get("args", {})
-
-                if not isinstance(plugin_name, str) or not plugin_name:
-                    tool_results.append({"error": "Tool call missing 'plugin' name"})
-                    continue
-                if not isinstance(method_name, str) or not method_name:
-                    tool_results.append({
-                        "plugin": plugin_name,
-                        "error": "Tool call missing 'method' name",
-                    })
-                    continue
-
-                plugin = self.plugins.get(plugin_name)
-                if not plugin:
-                    tool_results.append({
-                        "plugin": plugin_name,
-                        "method": method_name,
-                        "error": f"Plugin '{plugin_name}' not loaded",
-                    })
-                    continue
-
-                validation_error = self._validate_plugin_call(
-                    plugin, plugin_name, method_name, args
-                )
-                if validation_error:
-                    logger.warning(
-                        f"Blocked plugin call {plugin_name}.{method_name}: "
-                        f"{validation_error}"
-                    )
-                    tool_results.append({
-                        "plugin": plugin_name,
-                        "method": method_name,
-                        "error": validation_error,
-                    })
-                elif hasattr(plugin, method_name):
-                    try:
-                        output = getattr(plugin, method_name)(**args)
-                        tool_results.append({
-                            "plugin": plugin_name,
-                            "method": method_name,
-                            "result": str(output),
-                        })
-                    except Exception as exc:
-                        logger.warning(
-                            f"Plugin call {plugin_name}.{method_name} failed: {exc}",
-                            exc_info=True,
-                        )
-                        tool_results.append({
-                            "plugin": plugin_name,
-                            "method": method_name,
-                            "error": str(exc),
-                        })
-                else:
-                    tool_results.append({
-                        "plugin": plugin_name,
-                        "method": method_name,
-                        "error": (
-                            f"Method '{method_name}' not found on plugin '{plugin_name}'"
-                        ),
-                    })
+            tool_results = [self._run_tool_call(*extraction) for extraction in extractions]
 
             clean_response = _strip_tool_calls(llm_response, extractions)
             role = getattr(self, "role", "")

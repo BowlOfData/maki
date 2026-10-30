@@ -6,7 +6,6 @@ This file contains unit tests for the FTPClient plugin functionality.
 
 import unittest
 from unittest.mock import Mock, patch
-import os
 
 # Import the FTPClient plugin
 from maki.plugins.ftp_client.ftp_client import FTPClient

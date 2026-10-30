@@ -286,7 +286,6 @@ class MakiOpenAI(LLMBackend):
         Returns ``(LLMResponse, None, messages)`` on a text answer, or
         ``(None, [ToolCall, ...], messages)`` when tool calls are requested.
         """
-        import json as _json
         import time as _t
         if self._rate_limiter:
             self._rate_limiter.acquire()
@@ -320,11 +319,24 @@ class MakiOpenAI(LLMBackend):
         choice = response.choices[0]
         msg = choice.message
 
-        # Reconstruct a serializable assistant turn.
-        assistant_entry: dict = {"role": "assistant", "content": msg.content or ""}
         raw_tool_calls = msg.tool_calls
-        if raw_tool_calls:
-            assistant_entry["tool_calls"] = [
+        updated = list(messages) + [self._assistant_entry(msg)]
+
+        if raw_tool_calls and choice.finish_reason == "tool_calls":
+            tool_calls = self._tool_calls_from(raw_tool_calls)
+            log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
+            return None, tool_calls, updated
+
+        result = self._parse_response(response, elapsed)
+        log.info("chat_with_tools (text): %.2fs, %d tokens", elapsed, result.total_tokens)
+        return result, None, updated
+
+    @staticmethod
+    def _assistant_entry(msg) -> dict:
+        """A serializable assistant turn rebuilt from a response message."""
+        entry: dict = {"role": "assistant", "content": msg.content or ""}
+        if msg.tool_calls:
+            entry["tool_calls"] = [
                 {
                     "id": tc.id,
                     "type": "function",
@@ -333,24 +345,21 @@ class MakiOpenAI(LLMBackend):
                         "arguments": tc.function.arguments,
                     },
                 }
-                for tc in raw_tool_calls
+                for tc in msg.tool_calls
             ]
-        updated = list(messages) + [assistant_entry]
+        return entry
 
-        if raw_tool_calls and choice.finish_reason == "tool_calls":
-            tool_calls = []
-            for tc in raw_tool_calls:
-                try:
-                    args = _json.loads(tc.function.arguments)
-                except _json.JSONDecodeError:
-                    args = {}
-                tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, args=args))
-            log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
-            return None, tool_calls, updated
-
-        result = self._parse_response(response, elapsed)
-        log.info("chat_with_tools (text): %.2fs, %d tokens", elapsed, result.total_tokens)
-        return result, None, updated
+    @staticmethod
+    def _tool_calls_from(raw_tool_calls) -> list:
+        import json as _json
+        tool_calls = []
+        for tc in raw_tool_calls:
+            try:
+                args = _json.loads(tc.function.arguments)
+            except _json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, args=args))
+        return tool_calls
 
     def append_tool_results(self, messages: list, results: list) -> list:
         """Append OpenAI-format tool result messages (one per call)."""

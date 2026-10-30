@@ -11,6 +11,7 @@ maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 # Initialize the web_to_md plugin
 web_to_md = WebToMd(maki)
 
+
 # Example: Fetch a web page and convert to markdown
 def fetch_and_save_webpage(url, output_file=None):
     """
@@ -29,6 +30,7 @@ def fetch_and_save_webpage(url, output_file=None):
         return f"Successfully fetched and saved {url} to {result['output_file']}"
     else:
         return f"Failed to fetch {url}: {result['error']}"
+
 
 if __name__ == "__main__":
     print("WebToMd plugin example usage")

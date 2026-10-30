@@ -8,7 +8,7 @@ It allows agents to upload and download files, list directories, remove folders,
 import os
 import posixpath
 import logging
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
 # Import FTP libraries - these might not be available in all environments
 # Import at module level for test mocking compatibility
@@ -16,7 +16,6 @@ try:
     import ftplib
     import paramiko
     from paramiko import SSHClient
-    from paramiko.ssh_exception import SSHException
     HAS_FTP_LIBS = True
 except ImportError as e:
     HAS_FTP_LIBS = False
@@ -139,7 +138,6 @@ class FTPClient:
                     'error': 'Absolute remote paths are not allowed'
                 }
 
-
         return {
             'valid': True,
             'normalized_path': normalized_path,
@@ -167,28 +165,14 @@ class FTPClient:
                 - 'error': Error message if connection failed
         """
         if not HAS_FTP_LIBS:
-            return {
-                'success': False,
-                'connection_type': None,
-                'host': host,
-                'error': 'FTP/SFTP libraries not available. Install with: pip install "maki-framework[ftp]"'
-            }
+            return self._connect_failure(
+                host, 'FTP/SFTP libraries not available. Install with: pip install "maki-framework[ftp]"')
 
         if not isinstance(host, str) or not host.strip():
-            return {
-                'success': False,
-                'connection_type': None,
-                'host': host,
-                'error': 'Host must be a non-empty string'
-            }
+            return self._connect_failure(host, 'Host must be a non-empty string')
 
         if not isinstance(username, str) or not username.strip():
-            return {
-                'success': False,
-                'connection_type': None,
-                'host': host,
-                'error': 'Username must be a non-empty string'
-            }
+            return self._connect_failure(host, 'Username must be a non-empty string')
 
         result = {
             'success': False,
@@ -199,63 +183,14 @@ class FTPClient:
 
         try:
             if protocol.lower() == 'ftp':
-                if port is None:
-                    port = 21
-
-                self.ftp_connection = ftplib.FTP()
-                self.ftp_connection.connect(host, port)
-                self.ftp_connection.login(username, password)
-                self.connected = True
-                self.connection_type = 'ftp'
-
+                self._connect_ftp(host, username, password, 21 if port is None else port)
                 result['success'] = True
                 # Log connection info without password for security
                 self.logger.info("Successfully connected to FTP server")
 
             elif protocol.lower() == 'sftp':
-                if port is None:
-                    port = 22
-
-                # For SFTP, we need SSH client
-                self.sftp_connection = SSHClient()
-
-                # Use known_hosts file for host key verification instead of auto_add
-                if known_hosts_path and os.path.exists(known_hosts_path):
-                    # Load host keys from a specific file
-                    self.sftp_connection.load_host_keys(known_hosts_path)
-                else:
-                    # Load system host keys (default behavior) - only if path is valid
-                    try:
-                        self.sftp_connection.load_system_host_keys()
-                    except Exception:
-                        # If we can't load system host keys, continue with rejection policy
-                        pass
-
-                # Set policy to reject unknown hosts, requiring verification
-                self.sftp_connection.set_missing_host_key_policy(paramiko.RejectPolicy())
-
-                # If certificate path is provided, use key-based authentication
-                if cert_path and os.path.exists(cert_path):
-                    self.sftp_connection.connect(
-                        hostname=host,
-                        port=port,
-                        username=username,
-                        key_filename=cert_path,
-                        timeout=30
-                    )
-                else:
-                    # Use password-based authentication
-                    self.sftp_connection.connect(
-                        hostname=host,
-                        port=port,
-                        username=username,
-                        password=password,
-                        timeout=30
-                    )
-
-                self.connected = True
-                self.connection_type = 'sftp'
-
+                self._connect_sftp(host, username, password, 22 if port is None else port,
+                                   cert_path, known_hosts_path)
                 result['success'] = True
                 # Log connection info without password for security
                 self.logger.info("Successfully connected to SFTP server")
@@ -269,6 +204,47 @@ class FTPClient:
             self.logger.error(f"Error connecting to server {host}: {str(e)}", exc_info=True)
 
         return result
+
+    @staticmethod
+    def _connect_failure(host: Any, message: str) -> Dict[str, Any]:
+        return {'success': False, 'connection_type': None, 'host': host, 'error': message}
+
+    def _connect_ftp(self, host: str, username: str, password: Optional[str], port: int) -> None:
+        self.ftp_connection = ftplib.FTP()
+        self.ftp_connection.connect(host, port)
+        self.ftp_connection.login(username, password)
+        self.connected = True
+        self.connection_type = 'ftp'
+
+    def _connect_sftp(self, host: str, username: str, password: Optional[str], port: int,
+                      cert_path: Optional[str], known_hosts_path: Optional[str]) -> None:
+        # For SFTP, we need SSH client
+        self.sftp_connection = SSHClient()
+
+        # Use known_hosts file for host key verification instead of auto_add
+        if known_hosts_path and os.path.exists(known_hosts_path):
+            # Load host keys from a specific file
+            self.sftp_connection.load_host_keys(known_hosts_path)
+        else:
+            # Load system host keys (default behavior) - only if path is valid
+            try:
+                self.sftp_connection.load_system_host_keys()
+            except Exception:
+                # If we can't load system host keys, continue with rejection policy
+                pass
+
+        # Set policy to reject unknown hosts, requiring verification
+        self.sftp_connection.set_missing_host_key_policy(paramiko.RejectPolicy())
+
+        # If certificate path is provided, use key-based authentication; otherwise a password
+        if cert_path and os.path.exists(cert_path):
+            auth = {'key_filename': cert_path}
+        else:
+            auth = {'password': password}
+        self.sftp_connection.connect(hostname=host, port=port, username=username, timeout=30, **auth)
+
+        self.connected = True
+        self.connection_type = 'sftp'
 
     def disconnect(self) -> Dict[str, Any]:
         """
@@ -305,6 +281,19 @@ class FTPClient:
 
         return result
 
+    def _upload_precheck(self, local_path: Any, remote_path: Any):
+        """``(error message or None, normalized remote path)`` for an upload request."""
+        if not self.connected:
+            return 'Not connected to server', remote_path
+        if not isinstance(local_path, str) or not local_path.strip():
+            return 'Local path must be a non-empty string', remote_path
+        if not isinstance(remote_path, str) or not remote_path.strip():
+            return 'Remote path must be a non-empty string', remote_path
+        validation = self._validate_path(remote_path, is_local=False)
+        if not validation['valid']:
+            return f"Invalid remote path: {validation['error']}", remote_path
+        return None, validation['normalized_path']
+
     def upload_file(self, local_path: str, remote_path: str) -> Dict[str, Any]:
         """
         Upload a file to the remote server.
@@ -321,43 +310,16 @@ class FTPClient:
                 - 'bytes_uploaded': Number of bytes uploaded
                 - 'error': Error message if upload failed
         """
-        if not self.connected:
+        error, normalized = self._upload_precheck(local_path, remote_path)
+        if error:
             return {
                 'success': False,
                 'local_path': local_path,
                 'remote_path': remote_path,
                 'bytes_uploaded': 0,
-                'error': 'Not connected to server'
+                'error': error
             }
-
-        if not isinstance(local_path, str) or not local_path.strip():
-            return {
-                'success': False,
-                'local_path': local_path,
-                'remote_path': remote_path,
-                'bytes_uploaded': 0,
-                'error': 'Local path must be a non-empty string'
-            }
-
-        if not isinstance(remote_path, str) or not remote_path.strip():
-            return {
-                'success': False,
-                'local_path': local_path,
-                'remote_path': remote_path,
-                'bytes_uploaded': 0,
-                'error': 'Remote path must be a non-empty string'
-            }
-
-        remote_validation = self._validate_path(remote_path, is_local=False)
-        if not remote_validation['valid']:
-            return {
-                'success': False,
-                'local_path': local_path,
-                'remote_path': remote_path,
-                'bytes_uploaded': 0,
-                'error': f"Invalid remote path: {remote_validation['error']}"
-            }
-        remote_path = remote_validation['normalized_path']
+        remote_path = normalized
 
         result = {
             'success': False,
@@ -724,6 +686,50 @@ class FTPClient:
             self.logger.error(f"Error in recursive removal of {path}: {str(e)}")
             raise
 
+    def _info_precheck(self, remote_path: Any):
+        """``(error message or None, normalized remote path)`` for a file-info request."""
+        if not self.connected:
+            return 'Not connected to server', remote_path
+        if not isinstance(remote_path, str) or not remote_path.strip():
+            return 'Remote path must be a non-empty string', remote_path
+        validation = self._validate_path(remote_path, is_local=False)
+        if not validation['valid']:
+            return f"Invalid remote path: {validation['error']}", remote_path
+        return None, validation['normalized_path']
+
+    def _ftp_info(self, remote_path: str, result: Dict[str, Any]) -> None:
+        # For FTP, we'll need to determine if it's a file or directory
+        # This is a bit tricky, so we'll try to get size and if that fails, treat as directory
+        try:
+            # Try to get file size
+            result['size'] = self.ftp_connection.size(remote_path)
+            result['is_file'] = True
+            result['is_directory'] = False
+            result['exists'] = True
+        except ftplib.error_perm:
+            # If size fails, it might be a directory
+            try:
+                # Try to list directory
+                self.ftp_connection.cwd(remote_path)
+                result['is_file'] = False
+                result['is_directory'] = True
+                result['exists'] = True
+                result['size'] = 0
+            except ftplib.error_perm:
+                result['exists'] = False
+
+    def _sftp_info(self, remote_path: str, result: Dict[str, Any]) -> None:
+        sftp = self.sftp_connection.open_sftp()
+        try:
+            stat = sftp.stat(remote_path)
+            result['size'] = stat.st_size
+            result['is_file'] = stat.st_mode & 0o100000 != 0  # S_IFREG
+            result['is_directory'] = stat.st_mode & 0o040000 != 0  # S_IFDIR
+            result['exists'] = True
+        except IOError:
+            result['exists'] = False
+        sftp.close()
+
     def get_file_info(self, remote_path: str) -> Dict[str, Any]:
         """
         Get information about a file or directory on the remote server.
@@ -741,7 +747,8 @@ class FTPClient:
                 - 'exists': Boolean indicating if path exists
                 - 'error': Error message if operation failed
         """
-        if not self.connected:
+        error, normalized = self._info_precheck(remote_path)
+        if error:
             return {
                 'success': False,
                 'remote_path': remote_path,
@@ -749,32 +756,9 @@ class FTPClient:
                 'is_file': False,
                 'is_directory': False,
                 'exists': False,
-                'error': 'Not connected to server'
+                'error': error
             }
-
-        if not isinstance(remote_path, str) or not remote_path.strip():
-            return {
-                'success': False,
-                'remote_path': remote_path,
-                'size': 0,
-                'is_file': False,
-                'is_directory': False,
-                'exists': False,
-                'error': 'Remote path must be a non-empty string'
-            }
-
-        remote_validation = self._validate_path(remote_path, is_local=False)
-        if not remote_validation['valid']:
-            return {
-                'success': False,
-                'remote_path': remote_path,
-                'size': 0,
-                'is_file': False,
-                'is_directory': False,
-                'exists': False,
-                'error': f"Invalid remote path: {remote_validation['error']}"
-            }
-        remote_path = remote_validation['normalized_path']
+        remote_path = normalized
 
         result = {
             'success': False,
@@ -788,38 +772,9 @@ class FTPClient:
 
         try:
             if self.connection_type == 'ftp':
-                # For FTP, we'll need to determine if it's a file or directory
-                # This is a bit tricky, so we'll try to get size and if that fails, treat as directory
-                try:
-                    # Try to get file size
-                    size = self.ftp_connection.size(remote_path)
-                    result['size'] = size
-                    result['is_file'] = True
-                    result['is_directory'] = False
-                    result['exists'] = True
-                except ftplib.error_perm:
-                    # If size fails, it might be a directory
-                    try:
-                        # Try to list directory
-                        self.ftp_connection.cwd(remote_path)
-                        result['is_file'] = False
-                        result['is_directory'] = True
-                        result['exists'] = True
-                        result['size'] = 0
-                    except ftplib.error_perm:
-                        result['exists'] = False
-
+                self._ftp_info(remote_path, result)
             elif self.connection_type == 'sftp':
-                sftp = self.sftp_connection.open_sftp()
-                try:
-                    stat = sftp.stat(remote_path)
-                    result['size'] = stat.st_size
-                    result['is_file'] = stat.st_mode & 0o100000 != 0  # S_IFREG
-                    result['is_directory'] = stat.st_mode & 0o040000 != 0  # S_IFDIR
-                    result['exists'] = True
-                except IOError:
-                    result['exists'] = False
-                sftp.close()
+                self._sftp_info(remote_path, result)
 
             result['success'] = True
             self.logger.info(f"Retrieved file info for: {remote_path}")

@@ -11,6 +11,7 @@ maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 # Initialize the file writer plugin
 file_writer = FileWriter(maki)
 
+
 # Example: Write content to a file
 def save_content(file_path, content):
     # Write content to file
@@ -20,6 +21,7 @@ def save_content(file_path, content):
         return f"Successfully wrote {result['bytes_written']} bytes to {file_path}"
     else:
         return f"Failed to write file: {result['error']}"
+
 
 # Example: Append to a file
 def append_content(file_path, content):
@@ -31,6 +33,7 @@ def append_content(file_path, content):
     else:
         return f"Failed to append to file: {result['error']}"
 
+
 # Example: Write lines to a file
 def save_lines(file_path, lines):
     # Write lines to file
@@ -40,6 +43,7 @@ def save_lines(file_path, lines):
         return f"Successfully wrote {result['lines_written']} lines to {file_path}"
     else:
         return f"Failed to write lines: {result['error']}"
+
 
 if __name__ == "__main__":
     print("FileWriter plugin example usage")

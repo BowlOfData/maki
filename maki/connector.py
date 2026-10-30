@@ -112,31 +112,35 @@ def _resolve_and_validate(host: str, port: Optional[int]) -> list:
     except ValueError:
         ip = None
     if ip is not None:
-        try:
-            Utils._validate_ip(ip, host)
-        except ValueError as e:
-            raise MakiValidationError(str(e)) from e
+        _validate_address(ip, host)
         return [host]
 
+    # Reject the whole host if *any* resolved address is private: a mix of
+    # public and private records is the classic rebinding/round-robin trick.
+    addresses = []
+    for addr in _resolve_addresses(bare, host, port):
+        _validate_address(ipaddress.ip_address(addr), f"{host} -> {addr}")
+        if addr not in addresses:
+            addresses.append(addr)
+    return addresses
+
+
+def _validate_address(ip, label: str) -> None:
+    try:
+        Utils._validate_ip(ip, label)
+    except ValueError as e:
+        raise MakiValidationError(str(e)) from e
+
+
+def _resolve_addresses(bare: str, host: str, port: Optional[int]) -> list:
+    """Every address *bare* resolves to, in resolution order (duplicates included)."""
     try:
         infos = socket.getaddrinfo(bare, port, type=socket.SOCK_STREAM)
     except socket.gaierror as e:
         raise MakiNetworkError(f"DNS resolution failed for '{host}': {e}") from e
     if not infos:
         raise MakiNetworkError(f"DNS resolution returned no addresses for '{host}'")
-
-    # Reject the whole host if *any* resolved address is private: a mix of
-    # public and private records is the classic rebinding/round-robin trick.
-    addresses = []
-    for _family, _type, _proto, _canon, sockaddr in infos:
-        addr = sockaddr[0]
-        try:
-            Utils._validate_ip(ipaddress.ip_address(addr), f"{host} -> {addr}")
-        except ValueError as e:
-            raise MakiValidationError(str(e)) from e
-        if addr not in addresses:
-            addresses.append(addr)
-    return addresses
+    return [sockaddr[0] for _family, _type, _proto, _canon, sockaddr in infos]
 
 
 # ---------------------------------------------------------------------------

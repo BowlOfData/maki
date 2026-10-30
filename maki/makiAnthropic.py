@@ -323,21 +323,7 @@ class MakiAnthropic(LLMBackend):
             raise MakiAPIError(f"chat_with_tools() HTTP error {e.status_code}: {e}") from e
         elapsed = _t.perf_counter() - t0
 
-        # Build a serializable assistant content block list.
-        content_blocks = []
-        tool_use_blocks = []
-        for block in response.content:
-            if block.type == "text":
-                content_blocks.append({"type": "text", "text": block.text})
-            elif block.type == "tool_use":
-                content_blocks.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
-                tool_use_blocks.append(block)
-
+        content_blocks, tool_use_blocks = self._split_content(response)
         updated = list(messages) + [{"role": "assistant", "content": content_blocks}]
 
         if response.stop_reason == "tool_use" and tool_use_blocks:
@@ -351,6 +337,24 @@ class MakiAnthropic(LLMBackend):
         result = self._parse_response(response, elapsed)
         log.info("chat_with_tools (text): %.2fs, %d tokens", elapsed, result.total_tokens)
         return result, None, updated
+
+    @staticmethod
+    def _split_content(response) -> tuple:
+        """A serializable assistant content block list, and the ``tool_use`` blocks within it."""
+        content_blocks = []
+        tool_use_blocks = []
+        for block in response.content:
+            if block.type == "text":
+                content_blocks.append({"type": "text", "text": block.text})
+            elif block.type == "tool_use":
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                })
+                tool_use_blocks.append(block)
+        return content_blocks, tool_use_blocks
 
     def append_tool_results(self, messages: list, results: list) -> list:
         """Append Anthropic-format tool results (batched into one user message)."""

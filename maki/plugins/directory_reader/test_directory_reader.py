@@ -37,7 +37,7 @@ def test_directory_reader():
         result = directory_reader.read_directory(temp_dir)
         print("Reading directory result:", result)
 
-        assert result['success'] == True
+        assert result['success'] is True
         assert result['read_files'] == 2
         assert result['failed_files'] == 0
         assert result['total_files'] == 2
@@ -49,7 +49,7 @@ def test_directory_reader():
         )
         print("Recursive directory result:", recursive_result)
 
-        assert recursive_result['success'] == True
+        assert recursive_result['success'] is True
         assert recursive_result['read_files'] == 2
         assert recursive_result['total_files'] == 2
         assert all(
@@ -65,7 +65,7 @@ def test_directory_reader():
         )
         print("Aggregated directory result:", aggregated_result)
 
-        assert aggregated_result['success'] == True
+        assert aggregated_result['success'] is True
         assert aggregated_result['content_file_count'] == 2
         assert "=== " in aggregated_result['content']
         assert "Line 1" in aggregated_result['content']
@@ -77,14 +77,14 @@ def test_directory_reader():
         )
         print("Non-existent directory result:", non_existent_result)
 
-        assert non_existent_result['success'] == False
+        assert non_existent_result['success'] is False
         assert 'not found' in non_existent_result['error'].lower()
 
         # Path traversal outside base_dir must be blocked
         traversal_result = directory_reader.read_directory("../../etc")
         print("Traversal result:", traversal_result)
 
-        assert traversal_result['success'] == False
+        assert traversal_result['success'] is False
         assert 'resolves outside' in traversal_result['error'].lower()
 
         print("All tests passed!")

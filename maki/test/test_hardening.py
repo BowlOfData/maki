@@ -8,17 +8,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
-from fastapi.testclient import TestClient as _TestClient
+from fastapi.testclient import TestClient as _TestClient  # noqa: E402
 
-from maki.agents import Agent
-from maki.objects import LLMResponse
-from maki.exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
-from maki.distributed.circuit_breaker import CircuitBreaker, CircuitState
-from maki.distributed.proxy import AgentProxy, TRACE_HEADER
-from maki.distributed.server import create_app
+from maki.agents import Agent  # noqa: E402
+from maki.objects import LLMResponse  # noqa: E402
+from maki.exceptions import MakiAPIError, MakiNetworkError  # noqa: E402
+from maki.distributed.circuit_breaker import CircuitBreaker, CircuitState  # noqa: E402
+from maki.distributed.proxy import AgentProxy, TRACE_HEADER  # noqa: E402
+from maki.distributed.server import create_app  # noqa: E402
 
 # App-routing helpers shared with test_agent_proxy.py
-from maki.test.test_agent_proxy import _make_connector, _mock_info_response
+from maki.test.test_agent_proxy import _make_connector, _mock_info_response  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +330,6 @@ class TestDistributedTracing(unittest.TestCase):
         self.assertEqual(result, "result")
         self.assertIsNotNone(proxy.last_trace_id)
         # trace_id should look like a UUID (32 hex chars + 4 dashes)
-        import re
         self.assertRegex(proxy.last_trace_id,
                          r'^[0-9a-f\-]{36}$')
 
@@ -423,9 +422,7 @@ class TestProxySSL(unittest.TestCase):
 class TestServeCLI(unittest.TestCase):
 
     def _parse(self, args):
-        import argparse
         from maki.__main__ import main
-        import sys
         with patch("sys.argv", ["maki"] + args):
             with patch("maki.__main__._cmd_serve") as mock_serve:
                 try:

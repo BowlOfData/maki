@@ -11,6 +11,7 @@ from unittest.mock import patch, MagicMock
 # Add the current directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+
 def test_makillama_initialization():
     """Test that MakiLLama can be initialized with parameters"""
     try:
@@ -47,6 +48,7 @@ def test_makillama_initialization():
         print(f"✗ MakiLLama initialization failed: {e}")
         raise
 
+
 def test_makillama_methods():
     """Test that MakiLLama has all the required methods"""
     try:
@@ -69,6 +71,7 @@ def test_makillama_methods():
     except Exception as e:
         print(f"✗ MakiLLama methods test failed: {e}")
         raise
+
 
 def test_makillama_chat_method():
     """Test the chat method functionality"""
@@ -106,6 +109,7 @@ def test_makillama_chat_method():
         print(f"✗ MakiLLama chat test failed: {e}")
         raise
 
+
 def test_makillama_stream_method():
     """Test the stream method functionality"""
     try:
@@ -138,6 +142,7 @@ def test_makillama_stream_method():
     except Exception as e:
         print(f"✗ MakiLLama stream test failed: {e}")
         raise
+
 
 def test_makillama_session():
     """Test the session functionality"""
@@ -175,6 +180,7 @@ def test_makillama_session():
     except Exception as e:
         print(f"✗ MakiLLama session test failed: {e}")
         raise
+
 
 def test_makillama_generation_config():
     """Test GenerationConfig functionality"""
@@ -221,6 +227,7 @@ def test_makillama_generation_config():
         print(f"✗ GenerationConfig test failed: {e}")
         raise
 
+
 def test_makillama_message():
     """Test Message dataclass functionality"""
     try:
@@ -241,6 +248,7 @@ def test_makillama_message():
     except Exception as e:
         print(f"✗ Message test failed: {e}")
         raise
+
 
 def test_makillama_factories():
     """Test factory functions"""
@@ -266,6 +274,7 @@ def test_makillama_factories():
     except Exception as e:
         print(f"✗ Factory functions test failed: {e}")
         raise
+
 
 if __name__ == "__main__":
     print("Testing MakiLLama class...")

@@ -24,7 +24,7 @@ import threading
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from ..agents.workflow import TaskStatus, WorkflowState
+from ..agents.workflow import WorkflowState
 
 logger = logging.getLogger(__name__)
 

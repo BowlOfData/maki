@@ -9,9 +9,9 @@ import os
 # Add the project root to Python path so imports work properly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from maki.connector import Connector
-from maki.utils import Utils
-from maki.agents import Agent, AgentManager
+from maki.utils import Utils  # noqa: E402
+from maki.agents import Agent, AgentManager  # noqa: E402
+
 
 class TestErrorHandling(unittest.TestCase):
 
@@ -166,6 +166,7 @@ class TestErrorHandling(unittest.TestCase):
         # Test invalid maki_instance
         with self.assertRaises(TypeError):
             manager.add_agent("TestAgent", "researcher", "You are a researcher", "not_a_maki_instance")
+
 
 if __name__ == '__main__':
     unittest.main()

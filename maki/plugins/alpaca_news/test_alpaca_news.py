@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 pytest.importorskip("feedparser")
 
-from maki.plugins.alpaca_news.alpaca_news import _symbol_keywords, _match_symbols, _parse_feed_date
+from maki.plugins.alpaca_news.alpaca_news import _symbol_keywords, _match_symbols, _parse_feed_date  # noqa: E402
 
 
 def test_symbol_keywords_crypto():

@@ -150,17 +150,8 @@ class ObsidianMemory:
                 fm, body = _split_frontmatter(content)
                 if fm is None:
                     fm = {}
-                if cutoff:
-                    mtime = datetime.fromtimestamp(fp.stat().st_mtime, tz=timezone.utc)
-                    if mtime < cutoff:
-                        continue
-                if tags:
-                    note_tags = fm.get("tags") or []
-                    if not any(t in note_tags for t in tags):
-                        continue
-                if frontmatter_filters:
-                    if not all(fm.get(k) == v for k, v in frontmatter_filters.items()):
-                        continue
+                if not self._note_matches(fp, fm, cutoff, tags, frontmatter_filters):
+                    continue
                 results.append({
                     "path": str(fp.relative_to(self._vault)),
                     "frontmatter": fm,
@@ -171,6 +162,21 @@ class ObsidianMemory:
             except Exception as e:
                 logger.warning(f"query_notes: skipping {fp}: {e}")
         return results
+
+    @staticmethod
+    def _note_matches(fp, fm: Dict[str, Any], cutoff, tags, frontmatter_filters) -> bool:
+        """True if the note is recent enough, carries one of ``tags`` and matches every frontmatter filter."""
+        if cutoff:
+            mtime = datetime.fromtimestamp(fp.stat().st_mtime, tz=timezone.utc)
+            if mtime < cutoff:
+                return False
+        if tags:
+            note_tags = fm.get("tags") or []
+            if not any(t in note_tags for t in tags):
+                return False
+        if frontmatter_filters:
+            return all(fm.get(k) == v for k, v in frontmatter_filters.items())
+        return True
 
     def list_folder(self, folder: str) -> List[str]:
         """List relative paths of all .md files in *folder*."""

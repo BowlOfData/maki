@@ -12,9 +12,9 @@ pytest = __import__("pytest")
 fastapi = pytest.importorskip("fastapi", reason="fastapi not installed")
 TestClient = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient
 
-from maki.agents import Agent
-from maki.objects import LLMResponse
-from maki.distributed.server import create_app
+from maki.agents import Agent  # noqa: E402
+from maki.objects import LLMResponse  # noqa: E402
+from maki.distributed.server import create_app  # noqa: E402
 
 
 def _llm_response(content: str = "mock result") -> LLMResponse:
@@ -162,7 +162,7 @@ class TestStream(unittest.TestCase):
         client, _ = _make_client()
         with client.stream("POST", "/stream", json={"task": "go"}) as r:
             lines = r.read().decode().strip().splitlines()
-        data_lines = [l for l in lines if l.startswith("data: ")]
+        data_lines = [ln for ln in lines if ln.startswith("data: ")]
         self.assertTrue(len(data_lines) >= 2)
         first_event = json.loads(data_lines[0][len("data: "):])
         self.assertIn("chunk", first_event)

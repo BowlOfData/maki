@@ -21,7 +21,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus
 from maki.agents.agent_manager import _WORKFLOW_MAX_WORKERS
@@ -88,6 +88,7 @@ class TestExecutionLock(unittest.TestCase):
             return _llm("done")
 
         call_count = [0]
+
         def chat_dispatch(prompt, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -99,6 +100,7 @@ class TestExecutionLock(unittest.TestCase):
         agent = Agent("A", m, role="worker")
 
         errors = []
+
         def _run():
             try:
                 agent.execute_task("task")
@@ -280,13 +282,13 @@ class TestSkippedStatus(unittest.TestCase):
     def test_workflow_status_is_completed_with_skips(self):
         """run_workflow ends with completed_with_skips when any task is skipped."""
         # We check the WorkflowState indirectly via a state_store mock.
-        from maki.agents.workflow import WorkflowState
 
         saved_states = []
 
         class FakeStore:
             def load_workflow(self, wid):
                 return None
+
             def save_workflow(self, state):
                 saved_states.append(state.status)
 
@@ -303,6 +305,7 @@ class TestSkippedStatus(unittest.TestCase):
         class FakeStore:
             def load_workflow(self, wid):
                 return None
+
             def save_workflow(self, state):
                 saved_states.append(state.status)
 

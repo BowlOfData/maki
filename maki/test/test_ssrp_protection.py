@@ -2,15 +2,15 @@
 Unit tests for SSRF protection in Maki framework
 """
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import sys
 import os
 
 # Add the project root to Python path so imports work properly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from maki.utils import Utils
-from maki.connector import Connector
+from maki.utils import Utils  # noqa: E402
+
 
 class TestSSRFProtection(unittest.TestCase):
 
@@ -77,7 +77,7 @@ class TestSSRFProtection(unittest.TestCase):
         # We'll mock the file system operations to avoid actual file access
         with patch('maki.utils.os.path.exists') as mock_exists, \
              patch('maki.utils.os.path.isfile') as mock_isfile, \
-             patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')) as mock_file, \
+             patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')), \
              patch('maki.utils.os.getcwd') as mock_getcwd:
 
             # Mock that the current working directory is the parent of our test path
@@ -93,13 +93,14 @@ class TestSSRFProtection(unittest.TestCase):
         # This should work without raising an exception
         with patch('maki.utils.os.path.exists') as mock_exists, \
              patch('maki.utils.os.path.isfile') as mock_isfile, \
-             patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')) as mock_file:
+             patch('maki.utils.open', unittest.mock.mock_open(read_data=b'test data')):
 
             # Mock that the file exists and is a file (not a directory)
             mock_exists.return_value = True
             mock_isfile.return_value = True
             result = Utils.convert64("relative/path/to/image.jpg")
             self.assertIsNotNone(result)
+
 
 if __name__ == '__main__':
     unittest.main()

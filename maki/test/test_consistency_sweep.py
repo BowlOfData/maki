@@ -13,17 +13,15 @@ Covers:
 """
 
 import inspect
-import logging
 import time
-from typing import Optional
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from maki.exceptions import MakiAPIError, MakiNetworkError
 from maki.agents.agent import Agent
 from maki.agents.agent_manager import AgentManager
-from maki.agents.workflow import WorkflowTask, TaskStatus
+from maki.agents.workflow import WorkflowTask
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +145,7 @@ class TestRunWorkflowHomogeneity:
         mgr.agents["a"] = agent
         # dict-based steps use "name" key; falls back to step_N if absent
         workflow = [{"name": "step1", "agent": "a", "task": "t"}]
-        with patch.object(mgr, "assign_task", return_value="done") as mock_assign:
+        with patch.object(mgr, "assign_task", return_value="done"):
             result = mgr.run_workflow(workflow)
         assert "step1" in result
 
@@ -334,7 +332,8 @@ class TestMakiLLamaStreamImages:
                 b'{"message": {"content": "chunk"}, "done": false}',
                 b'{"message": {"content": ""}, "done": true}',
             ]):
-                with patch.object(llm, "_build_payload", wraps=llm._build_payload if hasattr(llm, "_build_payload") else None) as mock_build:
+                wrapped = llm._build_payload if hasattr(llm, "_build_payload") else None
+                with patch.object(llm, "_build_payload", wraps=wrapped) as mock_build:
                     mock_build.return_value = {"model": "llama3", "messages": []}
                     list(llm.stream("hello", images=["base64data"]))
 

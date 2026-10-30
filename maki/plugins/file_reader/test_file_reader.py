@@ -26,7 +26,7 @@ def test_file_reader():
         result = file_reader.read_file(temp_file_path)
         print("Reading file result:", result)
 
-        assert result['success'] == True
+        assert result['success'] is True
         assert result['file_path'] == temp_file_path
         assert 'Line 1' in result['content']
         assert result['line_count'] == 5
@@ -35,16 +35,16 @@ def test_file_reader():
         lines_result = file_reader.read_file_as_lines(temp_file_path)
         print("Reading as lines result:", lines_result)
 
-        assert lines_result['success'] == True
+        assert lines_result['success'] is True
         assert len(lines_result['lines']) == 5
 
         # Test getting file info
         info_result = file_reader.get_file_info(temp_file_path)
         print("File info result:", info_result)
 
-        assert info_result['success'] == True
-        assert info_result['is_file'] == True
-        assert info_result['exists'] == True
+        assert info_result['success'] is True
+        assert info_result['is_file'] is True
+        assert info_result['exists'] is True
         assert info_result['size'] > 0
 
         # Test with a non-existent file inside base_dir
@@ -53,14 +53,14 @@ def test_file_reader():
         )
         print("Non-existent file result:", non_existent_result)
 
-        assert non_existent_result['success'] == False
+        assert non_existent_result['success'] is False
         assert 'not found' in non_existent_result['error'].lower()
 
         # Test that path traversal outside base_dir is blocked
         traversal_result = file_reader.read_file("../../etc/passwd")
         print("Traversal result:", traversal_result)
 
-        assert traversal_result['success'] == False
+        assert traversal_result['success'] is False
         assert 'resolves outside' in traversal_result['error'].lower()
 
         print("All tests passed!")

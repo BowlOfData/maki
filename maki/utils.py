@@ -26,7 +26,7 @@ class Utils:
         "100.64.0.0/10",   # Shared address space (CGNAT)
         "192.0.0.0/24",    # IETF Protocol Assignments
         "192.0.2.0/24",    # TEST-NET-1
-        "198.51.100.0/24", # TEST-NET-2
+        "198.51.100.0/24",  # TEST-NET-2
         "203.0.113.0/24",  # TEST-NET-3
         "198.18.0.0/15",   # Benchmarking (RFC 2544)
         "240.0.0.0/4",     # Reserved for future use
@@ -107,7 +107,13 @@ class Utils:
             return  # valid (or explicitly permitted) IP
 
         # Not an IP address — validate as a domain name
-        if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$', domain):
+        Utils._validate_domain_name(domain)
+
+    @staticmethod
+    def _validate_domain_name(domain: str) -> None:
+        """Format checks for a hostname that is not an IP literal."""
+        label = r'[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?'
+        if not re.match(rf'^{label}(\.{label})*$', domain):
             raise ValueError(f"Invalid domain format: {domain}")
 
         if '..' in domain:
@@ -119,10 +125,8 @@ class Utils:
         if len(domain) > 253:
             raise ValueError("Domain name too long")
 
-        labels = domain.split('.')
-        for label in labels:
-            if len(label) > 63:
-                raise ValueError("Domain label too long")
+        if any(len(part) > 63 for part in domain.split('.')):
+            raise ValueError("Domain label too long")
 
     @staticmethod
     def jsonify(data) -> Any:
@@ -229,22 +233,26 @@ class Utils:
         # Clean up httpx.AsyncClient if provided
         if client is not None:
             try:
-                # For sync methods, we can close directly
-                if hasattr(client, 'close'):
-                    client.close()
-                # For async clients, run aclose() via the event loop
-                elif hasattr(client, 'aclose'):
-                    import asyncio
-                    try:
-                        loop = asyncio.get_running_loop()
-                        # A loop is already running; schedule cleanup as a
-                        # fire-and-forget task, holding a strong reference
-                        # until it completes.
-                        task = loop.create_task(client.aclose())
-                        _CLEANUP_TASKS.add(task)
-                        task.add_done_callback(_CLEANUP_TASKS.discard)
-                    except RuntimeError:
-                        # No running event loop — safe to block
-                        asyncio.run(client.aclose())
+                Utils._close_client(client)
             except Exception as e:
                 logger.debug(f"Failed to close client: {e}")
+
+    @staticmethod
+    def _close_client(client) -> None:
+        # For sync methods, we can close directly
+        if hasattr(client, 'close'):
+            client.close()
+        # For async clients, run aclose() via the event loop
+        elif hasattr(client, 'aclose'):
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running event loop — safe to block
+                asyncio.run(client.aclose())
+                return
+            # A loop is already running; schedule cleanup as a fire-and-forget
+            # task, holding a strong reference until it completes.
+            task = loop.create_task(client.aclose())
+            _CLEANUP_TASKS.add(task)
+            task.add_done_callback(_CLEANUP_TASKS.discard)

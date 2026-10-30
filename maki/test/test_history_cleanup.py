@@ -110,5 +110,6 @@ class TestHistoryCleanup(unittest.TestCase):
         # Check that history was cleaned up to max entries
         self.assertEqual(len(self.agent.reasoning_history), 1000)
 
+
 if __name__ == '__main__':
     unittest.main()

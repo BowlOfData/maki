@@ -127,48 +127,14 @@ class DirectoryReader(FileReader):
             return result
 
         try:
-            if not os.path.exists(safe_dir):
-                result['error'] = f"Directory not found: {dir_path}"
-                self.logger.error(f"Directory not found: {dir_path}")
+            problem = self._directory_problem(safe_dir, dir_path)
+            if problem:
+                result['error'] = problem
+                self.logger.error(problem)
                 return result
 
-            if not os.path.isdir(safe_dir):
-                result['error'] = f"Path is not a directory: {dir_path}"
-                self.logger.error(f"Path is not a directory: {dir_path}")
-                return result
-
-            for entry_path in self._collect_entries(safe_dir, recursive):
-                entry_name = os.path.basename(entry_path)
-
-                if not include_hidden and entry_name.startswith('.'):
-                    result['skipped_entries'] += 1
-                    continue
-
-                if not os.path.isfile(entry_path):
-                    result['skipped_entries'] += 1
-                    continue
-
-                if normalized_extensions:
-                    entry_extension = os.path.splitext(entry_path)[1].lower()
-                    if entry_extension not in normalized_extensions:
-                        result['skipped_entries'] += 1
-                        continue
-
-                if max_files is not None and result['total_files'] >= max_files:
-                    break
-
-                file_result = self.read_file(
-                    entry_path,
-                    encoding=encoding,
-                    max_lines=max_lines_per_file
-                )
-                result['files'].append(file_result)
-                result['total_files'] += 1
-
-                if file_result['success']:
-                    result['read_files'] += 1
-                else:
-                    result['failed_files'] += 1
+            self._read_matching_files(result, safe_dir, recursive, encoding, normalized_extensions,
+                                      max_files, max_lines_per_file, include_hidden)
 
             result['success'] = True
             self.logger.info(f"Successfully read directory: {dir_path}")
@@ -178,6 +144,48 @@ class DirectoryReader(FileReader):
             self.logger.error(f"Error reading directory {dir_path}: {str(e)}", exc_info=True)
 
         return result
+
+    def _read_matching_files(self, result: Dict[str, Any], safe_dir: str, recursive: bool, encoding: str,
+                             extensions, max_files: Optional[int], max_lines_per_file: Optional[int],
+                             include_hidden: bool) -> None:
+        """Read every matching file under ``safe_dir`` into ``result`` (files, counters)."""
+        for entry_path in self._collect_entries(safe_dir, recursive):
+            if self._skip_entry(entry_path, include_hidden, extensions):
+                result['skipped_entries'] += 1
+                continue
+
+            if max_files is not None and result['total_files'] >= max_files:
+                break
+
+            file_result = self.read_file(
+                entry_path,
+                encoding=encoding,
+                max_lines=max_lines_per_file
+            )
+            result['files'].append(file_result)
+            result['total_files'] += 1
+
+            if file_result['success']:
+                result['read_files'] += 1
+            else:
+                result['failed_files'] += 1
+
+    @staticmethod
+    def _directory_problem(safe_dir: str, dir_path: str) -> Optional[str]:
+        if not os.path.exists(safe_dir):
+            return f"Directory not found: {dir_path}"
+        if not os.path.isdir(safe_dir):
+            return f"Path is not a directory: {dir_path}"
+        return None
+
+    @staticmethod
+    def _skip_entry(entry_path: str, include_hidden: bool, extensions) -> bool:
+        """True for hidden entries (unless included), non-files and files outside ``extensions``."""
+        if not include_hidden and os.path.basename(entry_path).startswith('.'):
+            return True
+        if not os.path.isfile(entry_path):
+            return True
+        return bool(extensions) and os.path.splitext(entry_path)[1].lower() not in extensions
 
     def read_directory_as_text(
         self,

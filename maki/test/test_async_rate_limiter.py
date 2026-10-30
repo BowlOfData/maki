@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from maki.objects import GenerationConfig, RateLimiter
+from maki.objects import GenerationConfig, RateLimiter  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +113,7 @@ class TestMakiLLamaAsyncRateLimiter(unittest.TestCase):
         async def _run():
             with patch.object(llm._async_http, "post", return_value=fake_resp) as mock_post:
                 mock_post.return_value = fake_resp
+
                 # post is awaited, so make it an async function
                 async def _async_post(*a, **kw):
                     return fake_resp

@@ -201,10 +201,10 @@ class WorkflowState:
         self.error_log = []
 
     def update_task_status(self, task_name: str, status: TaskStatus, result: Any = None,
-                          execution_time: float = 0.0, resources_used: Dict = None,
-                          data: Optional[Dict[str, Any]] = None,
-                          reason: Optional[str] = None,
-                          verification: Optional[Dict[str, Any]] = None):
+                           execution_time: float = 0.0, resources_used: Dict = None,
+                           data: Optional[Dict[str, Any]] = None,
+                           reason: Optional[str] = None,
+                           verification: Optional[Dict[str, Any]] = None):
         """Update task status and metrics, including optional structured data payload.
 
         ``verification`` (verdict, evidence, revisions, history) is stored only for tasks

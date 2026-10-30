@@ -13,7 +13,7 @@ Covers:
 
 import collections
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 
 from maki.backend import LLMBackend
 from maki.objects import GenerationConfig, LLMResponse, Message

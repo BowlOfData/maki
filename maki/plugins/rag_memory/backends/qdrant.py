@@ -7,7 +7,7 @@ Optional dependency: ``qdrant-client>=1.7``
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 from urllib.parse import urlparse
 
 from .base import VectorStore

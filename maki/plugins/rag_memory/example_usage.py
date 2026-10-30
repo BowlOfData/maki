@@ -51,7 +51,8 @@ def main():
     print("Recall:", rag.search("instructions", "lighthouse", k=1)[0]["text"])
 
     # --- 3. Ingest a text file ---
-    import tempfile, os
+    import os
+    import tempfile
     with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
         f.write("The sky is blue. The sea is calm. Stars guide sailors home.")
         tmp_path = f.name

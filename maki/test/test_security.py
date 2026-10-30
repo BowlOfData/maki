@@ -19,9 +19,11 @@ from maki.objects import LLMResponse, RateLimiter
 def _r(content: str) -> LLMResponse:
     return LLMResponse(content=content, model="test", prompt_tokens=0,
                        completion_tokens=0, total_tokens=0, elapsed_seconds=0.0)
-from maki.agents import Agent, WorkflowTask
-from maki.agents.reasoning import _extract_json_array
-from maki.plugins.ftp_client.ftp_client import FTPClient
+
+
+from maki.agents import Agent, WorkflowTask  # noqa: E402
+from maki.agents.reasoning import _extract_json_array  # noqa: E402
+from maki.plugins.ftp_client.ftp_client import FTPClient  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +690,9 @@ class TestExtractJsonArray(unittest.TestCase):
     def test_decompose_task_handles_preamble_output(self):
         maki = MagicMock()
         agent = Agent("A", maki, "researcher", "Be helpful")
-        messy = 'Sure, here are the subtasks:\n[{"description": "Step 1", "resources": "none", "expected_outcome": "done"}]\nLet me know if you need changes!'
+        messy = ('Sure, here are the subtasks:\n'
+                 '[{"description": "Step 1", "resources": "none", "expected_outcome": "done"}]\n'
+                 'Let me know if you need changes!')
         with patch.object(maki, 'chat', return_value=_r(messy)):
             subtasks = agent.decompose_task("big task")
         self.assertEqual(subtasks[0]['description'], 'Step 1')

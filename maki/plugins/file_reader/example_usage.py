@@ -11,6 +11,7 @@ maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 # Initialize the file reader plugin
 file_reader = FileReader(maki)
 
+
 # Example: Read a file and process it with LLM
 def analyze_file_content(file_path):
     # Read the file
@@ -28,6 +29,7 @@ def analyze_file_content(file_path):
         return maki.request(prompt)
     else:
         return f"Failed to read file: {result['error']}"
+
 
 # Example: Read file as lines and process each line
 def process_file_lines(file_path):
@@ -51,6 +53,7 @@ def process_file_lines(file_path):
         return "\n".join(lines_summary)
     else:
         return f"Failed to read file: {result['error']}"
+
 
 if __name__ == "__main__":
     print("FileReader plugin example usage")

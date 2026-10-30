@@ -51,7 +51,8 @@ class ImageClassifier:
             Dict with keys: success (bool), label (str), image_path (str), error (str|None)
         """
         if self._maki is None:
-            return {"success": False, "label": fallback_label, "image_path": image_path, "error": "No maki instance configured"}
+            return {"success": False, "label": fallback_label, "image_path": image_path,
+                    "error": "No maki instance configured"}
 
         try:
             image_b64 = self._encode(image_path)
@@ -98,7 +99,8 @@ class ImageClassifier:
         fallback_label: str,
     ) -> Dict[str, Any]:
         if self._maki is None:
-            return {"success": False, "label": fallback_label, "image_path": image_path, "error": "No maki instance configured"}
+            return {"success": False, "label": fallback_label, "image_path": image_path,
+                    "error": "No maki instance configured"}
         try:
             image_b64 = await asyncio.to_thread(self._encode, image_path)
             response = await self._maki.async_chat(prompt, images=[image_b64], system=system)

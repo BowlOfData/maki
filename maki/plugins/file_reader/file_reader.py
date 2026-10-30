@@ -101,29 +101,13 @@ class FileReader:
             return result
 
         try:
-            # Check if file exists
-            if not os.path.exists(safe):
-                result['error'] = f"File not found: {file_path}"
-                self.logger.error(f"File not found: {file_path}")
+            problem = self._file_problem(safe, file_path)
+            if problem:
+                result['error'] = problem
+                self.logger.error(problem)
                 return result
 
-            # Check if it's actually a file (not a directory)
-            if not os.path.isfile(safe):
-                result['error'] = f"Path is not a file: {file_path}"
-                self.logger.error(f"Path is not a file: {file_path}")
-                return result
-
-            # Read the file
-            with open(safe, 'r', encoding=encoding) as file:
-                if max_lines is not None:
-                    lines = []
-                    for i, line in enumerate(file):
-                        if i >= max_lines:
-                            break
-                        lines.append(line)
-                    content = ''.join(lines)
-                else:
-                    content = file.read()
+            content = self._read_text(safe, encoding, max_lines)
 
             result['success'] = True
             result['content'] = content
@@ -136,6 +120,27 @@ class FileReader:
             self.logger.error(f"Error reading file {file_path}: {str(e)}", exc_info=True)
 
         return result
+
+    @staticmethod
+    def _file_problem(safe: str, file_path: str) -> Optional[str]:
+        if not os.path.exists(safe):
+            return f"File not found: {file_path}"
+        # It must be an actual file (not a directory)
+        if not os.path.isfile(safe):
+            return f"Path is not a file: {file_path}"
+        return None
+
+    @staticmethod
+    def _read_text(safe: str, encoding: str, max_lines: Optional[int]) -> str:
+        with open(safe, 'r', encoding=encoding) as file:
+            if max_lines is None:
+                return file.read()
+            lines = []
+            for i, line in enumerate(file):
+                if i >= max_lines:
+                    break
+                lines.append(line)
+            return ''.join(lines)
 
     def read_file_as_lines(self, file_path: str, encoding: str = 'utf-8') -> Dict[str, Any]:
         """

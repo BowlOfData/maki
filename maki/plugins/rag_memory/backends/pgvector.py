@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 from urllib.parse import urlparse, parse_qs
 
 from .base import VectorStore

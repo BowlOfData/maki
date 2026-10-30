@@ -16,9 +16,8 @@ Covers:
   - agent_manager synthesis prompt delimiting (coordinate_agents, collaborative_task)
 """
 
-import json
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from maki.agents import Agent, AgentManager
 from maki.agents.plugin_handler import (
@@ -392,7 +391,7 @@ class TestHandlePluginCallsLoop(unittest.TestCase):
         backend.chat = MagicMock(
             return_value=_r('TOOL: {"plugin": "p", "method": "loop", "args": {}}')
         )
-        result = agent.handle_plugin_calls(
+        agent.handle_plugin_calls(
             'TOOL: {"plugin": "p", "method": "loop", "args": {}}',
             "task", None
         )

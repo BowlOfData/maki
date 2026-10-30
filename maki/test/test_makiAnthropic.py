@@ -9,12 +9,12 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from maki.objects import BackendType, GenerationConfig, Message
-from maki.exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
+from maki.objects import BackendType, GenerationConfig, Message  # noqa: E402
+from maki.exceptions import MakiAPIError, MakiNetworkError  # noqa: E402
 
 
 def _make_anthropic_response(text="Test response", model="claude-sonnet-4-6",
-                              input_tokens=10, output_tokens=20):
+                             input_tokens=10, output_tokens=20):
     resp = MagicMock()
     resp.content = [MagicMock()]
     resp.content[0].text = text

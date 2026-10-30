@@ -42,28 +42,11 @@ class HFBackend(LLMBackend):
 
         self._model_id = model_id
 
-        # ── Device selection ──────────────────────────────────────────────
-        if device is None:
-            if torch.cuda.is_available():
-                device = "cuda"
-            elif torch.backends.mps.is_available():
-                device = "mps"
-            else:
-                device = "cpu"
+        device = self._select_device(device)
         self._device = device
         self.logger.info("HFBackend · model=%s · device=%s", model_id, device)
 
-        # ── Quantization ──────────────────────────────────────────────────
-        bnb_config = None
-        if load_in_4bit or load_in_8bit:
-            try:
-                bnb_config = BitsAndBytesConfig(
-                    load_in_4bit=load_in_4bit,
-                    load_in_8bit=load_in_8bit,
-                    bnb_4bit_compute_dtype=torch.float16,
-                )
-            except Exception as e:
-                self.logger.warning("BitsAndBytes quantization not available; loading in full precision. Reason: %s", e)
+        bnb_config = self._quantization_config(load_in_4bit, load_in_8bit)
 
         # ── Load tokenizer ────────────────────────────────────────────────
         self.logger.info("Loading tokenizer …")
@@ -85,11 +68,7 @@ class HFBackend(LLMBackend):
         if bnb_config:
             load_kwargs["quantization_config"] = bnb_config
         elif torch_dtype:
-            load_kwargs["torch_dtype"] = (
-                torch.float16 if torch_dtype == "float16"
-                else torch.bfloat16 if torch_dtype == "bfloat16"
-                else "auto"
-            )
+            load_kwargs["torch_dtype"] = self._resolve_dtype(torch_dtype)
 
         self._model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
 
@@ -98,6 +77,39 @@ class HFBackend(LLMBackend):
 
         self._model.eval()
         self.logger.info("Model loaded successfully.")
+
+    @staticmethod
+    def _select_device(device: Optional[str]) -> str:
+        """The requested device, or the best available one (CUDA, then Apple MPS, then CPU)."""
+        if device is not None:
+            return device
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    def _quantization_config(self, load_in_4bit: bool, load_in_8bit: bool):
+        """A BitsAndBytes config when quantization was requested and is available, else None."""
+        if not (load_in_4bit or load_in_8bit):
+            return None
+        try:
+            return BitsAndBytesConfig(
+                load_in_4bit=load_in_4bit,
+                load_in_8bit=load_in_8bit,
+                bnb_4bit_compute_dtype=torch.float16,
+            )
+        except Exception as e:
+            self.logger.warning("BitsAndBytes quantization not available; loading in full precision. Reason: %s", e)
+            return None
+
+    @staticmethod
+    def _resolve_dtype(torch_dtype: str):
+        if torch_dtype == "float16":
+            return torch.float16
+        if torch_dtype == "bfloat16":
+            return torch.bfloat16
+        return "auto"
 
     @property
     def model_name(self) -> str:

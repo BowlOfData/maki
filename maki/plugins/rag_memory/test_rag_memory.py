@@ -5,7 +5,7 @@ All tests use the zero-dependency ``memory://`` backend — no external DB neede
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from .rag_memory import RagMemory, _chunk_text, register_plugin
 from .backends import store_from_dsn

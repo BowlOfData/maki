@@ -4,12 +4,12 @@ from unittest.mock import MagicMock, patch
 pytest.importorskip("alpaca")
 
 
-def _make_bar(t, o, h, l, c, v):
+def _make_bar(t, o, h, low, c, v):
     bar = MagicMock()
     bar.timestamp.isoformat.return_value = t
     bar.open = o
     bar.high = h
-    bar.low = l
+    bar.low = low
     bar.close = c
     bar.volume = v
     return bar
@@ -35,7 +35,6 @@ def plugin():
 
 
 def test_get_crypto_bars_returns_ohlcv(plugin):
-    from maki.plugins.alpaca_data.alpaca_data import AlpacaData
 
     bar = _make_bar("2024-01-01T00:00:00+00:00", 40000, 41000, 39000, 40500, 1.5)
     plugin._client.get_crypto_bars.return_value = {"BTC/USD": [bar]}
@@ -45,7 +44,6 @@ def test_get_crypto_bars_returns_ohlcv(plugin):
          patch("alpaca.data.timeframe.TimeFrame", MagicMock()), \
          patch("alpaca.data.timeframe.TimeFrameUnit", MagicMock()):
         # Call the internal logic directly via the client mock
-        from alpaca.data.requests import CryptoBarsRequest
         result = plugin._client.get_crypto_bars(MagicMock())
         bars = result["BTC/USD"]
 
@@ -58,7 +56,6 @@ def test_get_crypto_latest_quote_keys(plugin):
     plugin._client.get_crypto_latest_quote.return_value = {"BTC/USD": q}
 
     with patch("alpaca.data.requests.CryptoLatestQuoteRequest", MagicMock()):
-        from alpaca.data.requests import CryptoLatestQuoteRequest
         result = plugin._client.get_crypto_latest_quote(MagicMock())
         quote = result["BTC/USD"]
 

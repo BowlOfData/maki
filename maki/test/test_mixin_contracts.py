@@ -312,7 +312,7 @@ class TestInitSubclassEnforcement(unittest.TestCase):
 
     def test_reasoning_engine_subclass_partial_attrs_raises(self):
         """Setting only 'maki' but not 'reasoning_history' still raises."""
-        from collections import deque
+
         class PartialReasoning(ReasoningEngine):
             def __init__(self):
                 self.maki = _mock_maki()
@@ -325,6 +325,7 @@ class TestInitSubclassEnforcement(unittest.TestCase):
     def test_reasoning_engine_subclass_correct_attrs_does_not_raise(self):
         """A ReasoningEngine subclass that sets all attrs without super() is OK."""
         from collections import deque
+
         class GoodReasoning(ReasoningEngine):
             def __init__(self):
                 self.maki = _mock_maki()
@@ -341,7 +342,7 @@ class TestInitSubclassEnforcement(unittest.TestCase):
         calling super() must fail immediately at instantiation, not silently
         produce a broken agent.
         """
-        maki = MagicMock()
+        MagicMock()
 
         class BrokenAgent(Agent):
             def __init__(self, name):

@@ -5,7 +5,6 @@ round-trips must survive to_dict() → JSON → from_dict() without data loss.
 import json
 import time
 import unittest
-from collections import deque
 from unittest.mock import MagicMock
 
 from maki.agents import Agent
@@ -110,7 +109,6 @@ class TestAgentSerialization(unittest.TestCase):
 
     def test_agent_id_is_uuid(self):
         agent = Agent("tester", _mock_backend())
-        import re
         self.assertRegex(agent.agent_id,
                          r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 

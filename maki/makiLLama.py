@@ -16,7 +16,6 @@ import time
 import logging
 from typing import Generator, Optional, Union
 
-from urllib.parse import urlparse
 
 from .backend import LLMBackend
 from .config import (
@@ -39,6 +38,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Core wrapper
 # ---------------------------------------------------------------------------
+
 
 class MakiLLama(LLMBackend):
     """
@@ -577,4 +577,3 @@ def llama(variant: str = "llama3.2", system: Optional[str] = None, **kwargs) -> 
 def mistral(system: Optional[str] = None, **kwargs) -> MakiLLama:
     """Pre-configured wrapper for Mistral."""
     return MakiLLama(model="mistral", system_prompt=system, **kwargs)
-

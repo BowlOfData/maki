@@ -172,7 +172,6 @@ def _match_symbols(text: str, symbols: List[str]) -> List[str]:
 
 
 def _parse_feed_date(entry) -> Optional[datetime]:
-    import email.utils
     for attr in ("published_parsed", "updated_parsed"):
         val = getattr(entry, attr, None)
         if val:

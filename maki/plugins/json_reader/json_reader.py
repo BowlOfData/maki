@@ -8,7 +8,7 @@ suitable for LLM context. Generic — no domain-specific knowledge.
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 class JsonReader:
@@ -29,6 +29,39 @@ class JsonReader:
                 f"Path '{path}' resolves outside the allowed directory '{self.base_dir}'"
             )
         return resolved
+
+    def _load_array(self, file_path: str):
+        """``(top-level array, None)`` for a readable JSON array file, else ``(None, error message)``."""
+        try:
+            safe = self._safe_path(file_path)
+        except ValueError as exc:
+            return None, str(exc)
+
+        if not os.path.isfile(safe):
+            return None, f"File not found: {file_path}"
+
+        try:
+            with open(safe, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (json.JSONDecodeError, OSError) as exc:
+            return None, f"Could not read JSON: {exc}"
+
+        if not isinstance(data, list):
+            return None, "JSON file must contain a top-level array"
+        return data, None
+
+    @staticmethod
+    def _format_items(items: List[Any], fields: List[str]) -> List[str]:
+        lines: List[str] = []
+        for idx, item in enumerate(items, start=1):
+            parts = []
+            for field in fields:
+                value = item.get(field, "")
+                if isinstance(value, list):
+                    value = ", ".join(str(v) for v in value)
+                parts.append(f"{field}: {value!r}")
+            lines.append(f"[{idx}] " + " | ".join(parts))
+        return lines
 
     def read_json_fields(
         self,
@@ -65,37 +98,13 @@ class JsonReader:
             result["error"] = "fields must be a non-empty list"
             return result
 
-        try:
-            safe = self._safe_path(file_path)
-        except ValueError as exc:
-            result["error"] = str(exc)
-            return result
-
-        if not os.path.isfile(safe):
-            result["error"] = f"File not found: {file_path}"
-            return result
-
-        try:
-            with open(safe, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (json.JSONDecodeError, OSError) as exc:
-            result["error"] = f"Could not read JSON: {exc}"
-            return result
-
-        if not isinstance(data, list):
-            result["error"] = "JSON file must contain a top-level array"
+        data, error = self._load_array(file_path)
+        if error:
+            result["error"] = error
             return result
 
         items = data if max_items == 0 else data[:max_items]
-        lines: List[str] = []
-        for idx, item in enumerate(items, start=1):
-            parts = []
-            for field in fields:
-                value = item.get(field, "")
-                if isinstance(value, list):
-                    value = ", ".join(str(v) for v in value)
-                parts.append(f"{field}: {value!r}")
-            lines.append(f"[{idx}] " + " | ".join(parts))
+        lines = self._format_items(items, fields)
 
         result["success"] = True
         result["content"] = "\n".join(lines)

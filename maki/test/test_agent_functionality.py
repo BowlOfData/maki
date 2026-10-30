@@ -110,7 +110,7 @@ class TestAgentFunctionality(unittest.TestCase):
     def test_agent_manager_remove_agent(self):
         """Test removing agents from manager"""
         # Add an agent
-        agent = self.agent_manager.add_agent(
+        self.agent_manager.add_agent(
             name="TestAgent",
             role="researcher",
             instructions="You are a researcher"
@@ -137,7 +137,7 @@ class TestAgentFunctionality(unittest.TestCase):
     def test_agent_manager_assign_task(self):
         """Test assigning tasks to agents"""
         # Add an agent
-        agent = self.agent_manager.add_agent(
+        self.agent_manager.add_agent(
             name="TestAgent",
             role="researcher",
             instructions="You are a researcher"

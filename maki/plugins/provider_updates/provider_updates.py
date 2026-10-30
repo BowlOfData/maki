@@ -78,7 +78,8 @@ class ProviderUpdates:
                         text = text[match.start():]
                 elif text.count("Loading") > 5:
                     match = re.search(
-                        r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}|\b20\d{2}-\d{2}-\d{2}\b",
+                        r"\b(January|February|March|April|May|June|July|August|September|October|November|December)"
+                        r"\s+\d{1,2},?\s+20\d{2}|\b20\d{2}-\d{2}-\d{2}\b",
                         text,
                     )
                     if match:

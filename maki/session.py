@@ -75,7 +75,6 @@ class ChatSession:
     def print_history(self) -> None:
         """Pretty-print the full conversation."""
         for msg in self._memory.messages():
-            color = "cyan" if msg.role == "user" else "green"
             print(f"\033[1m{msg.role.upper()}\033[0m")
             print(msg.content)
             print()

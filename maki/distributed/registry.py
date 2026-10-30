@@ -24,7 +24,6 @@ import logging
 from typing import Optional
 
 from ..agents.agent_manager import AgentManager
-from ..backend import LLMBackend
 from .proxy import AgentProxy
 
 logger = logging.getLogger(__name__)

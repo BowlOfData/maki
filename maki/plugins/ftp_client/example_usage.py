@@ -14,6 +14,7 @@ maki = MakiLLama(model="llama3", base_url="http://localhost:11434")
 # Initialize the FTP client plugin
 ftp_client = FTPClient(maki)
 
+
 def example_ftp_operations():
     """Demonstrate FTP operations"""
     print("FTP Client Plugin Example Usage")
@@ -57,6 +58,7 @@ def example_ftp_operations():
 
     else:
         print(f"✗ Failed to connect to FTP server: {connect_result['error']}")
+
 
 def example_sftp_operations():
     """Demonstrate SFTP operations"""
@@ -102,6 +104,7 @@ def example_sftp_operations():
 
     else:
         print(f"✗ Failed to connect to SFTP server: {connect_result['error']}")
+
 
 if __name__ == "__main__":
     print("FTPClient plugin example usage")

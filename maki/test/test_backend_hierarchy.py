@@ -31,8 +31,8 @@ def _concrete_backend() -> LLMBackend:
     backend = MagicMock(spec=LLMBackend)
     from maki.objects import LLMResponse
     backend.request.return_value = LLMResponse(content="mock response", model="test",
-                                                prompt_tokens=0, completion_tokens=0,
-                                                total_tokens=0, elapsed_seconds=0.0)
+                                               prompt_tokens=0, completion_tokens=0,
+                                               total_tokens=0, elapsed_seconds=0.0)
     return backend
 
 
@@ -235,11 +235,13 @@ class TestStreamContract(unittest.TestCase):
 
     def test_base_class_stream_raises_not_implemented(self):
         """LLMBackend.stream() must raise NotImplementedError by default."""
-        backend = _concrete_backend()
+        _concrete_backend()
+
         # _concrete_backend() is a MagicMock(spec=LLMBackend); test with a real subclass.
         class NoStream(LLMBackend):
             model = "test"
             temperature = 0.0
+
             def request(self, prompt):
                 return MagicMock()
 

@@ -139,10 +139,6 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
             self._rate_limiter.acquire()
         cfg = config or self.config
         messages = self._build_messages(prompt, history, system=system, images=images)
-        content: list[str] = []
-        reasoning: list[str] = []
-        usage = None
-        model = self.model
         t0 = time.perf_counter()
         try:
             with self._client.chat.completions.create(
@@ -152,19 +148,7 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
                 stream_options={"include_usage": True},
                 **self._request_kwargs(cfg),
             ) as stream:
-                for chunk in stream:
-                    if getattr(chunk, "usage", None) is not None:
-                        usage = chunk.usage
-                    if isinstance(getattr(chunk, "model", None), str) and chunk.model:
-                        model = chunk.model
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if isinstance(delta.content, str) and delta.content:
-                        content.append(delta.content)
-                    thinking = self._reasoning_of(delta)
-                    if thinking:
-                        reasoning.append(thinking)
+                content, reasoning, usage, model = self._collect_stream(stream)
         except makiOpenAI._openai_sdk.APITimeoutError as e:
             raise MakiTimeoutError(f"chat_collect() timed out: {e}") from e
         except makiOpenAI._openai_sdk.APIConnectionError as e:
@@ -185,6 +169,27 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
         )
         log.info("chat_collect: %.2fs, %d tokens", elapsed, result.total_tokens)
         return result
+
+    def _collect_stream(self, stream) -> tuple:
+        """Drain a chat-completions stream into ``(content parts, reasoning parts, usage, model)``."""
+        content: list[str] = []
+        reasoning: list[str] = []
+        usage = None
+        model = self.model
+        for chunk in stream:
+            if getattr(chunk, "usage", None) is not None:
+                usage = chunk.usage
+            if isinstance(getattr(chunk, "model", None), str) and chunk.model:
+                model = chunk.model
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if isinstance(delta.content, str) and delta.content:
+                content.append(delta.content)
+            thinking = self._reasoning_of(delta)
+            if thinking:
+                reasoning.append(thinking)
+        return content, reasoning, usage, model
 
     # ------------------------------------------------------------------
     # Native endpoints beyond chat

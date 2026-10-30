@@ -10,19 +10,19 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
-from maki.plugins.web_search.web_search import (
+from maki.plugins.web_search.web_search import (  # noqa: E402
     WebSearch,
     register_plugin,
     ALLOWED_METHODS,
 )
-from maki.plugins._web_utils import (
+from maki.plugins._web_utils import (  # noqa: E402
     is_current_week as _is_current_week,
     parse_published as _parse_published,
     struct_time_to_datetime as _struct_time_to_datetime,
     week_start_utc as _week_start_utc,
 )
 
-import time as _time
+import time as _time  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -38,10 +38,10 @@ def _mock_feed_response(entries):
     for e in entries:
         items += f"""
         <item>
-            <title>{e.get('title','')}</title>
-            <link>{e.get('link','')}</link>
-            <pubDate>{e.get('pubDate','')}</pubDate>
-            <description>{e.get('description','')}</description>
+            <title>{e.get('title', '')}</title>
+            <link>{e.get('link', '')}</link>
+            <pubDate>{e.get('pubDate', '')}</pubDate>
+            <description>{e.get('description', '')}</description>
         </item>"""
     mock_resp.text = f"""<?xml version="1.0"?>
     <rss version="2.0"><channel><title>Feed</title>{items}</channel></rss>"""
@@ -271,7 +271,8 @@ class TestSearchHackerNews(unittest.TestCase):
         mock_resp.json.return_value = {
             "hits": [
                 {"title": "No URL", "url": "", "points": 10, "num_comments": 5, "created_at": "2026-04-17"},
-                {"title": "Has URL", "url": "https://example.com", "points": 20, "num_comments": 2, "created_at": "2026-04-17"},
+                {"title": "Has URL", "url": "https://example.com", "points": 20, "num_comments": 2,
+                 "created_at": "2026-04-17"},
             ]
         }
         mock_resp.raise_for_status = MagicMock()
@@ -392,7 +393,8 @@ class TestFetchGithubTrending(unittest.TestCase):
     def test_skips_items_without_url(self):
         items = [
             {"html_url": "", "full_name": "no/url", "description": "", "topics": [], "stargazers_count": 5, "created_at": ""},
-            {"html_url": "https://github.com/real/repo", "full_name": "real/repo", "description": "ok", "topics": [], "stargazers_count": 20, "created_at": ""},
+            {"html_url": "https://github.com/real/repo", "full_name": "real/repo", "description": "ok",
+             "topics": [], "stargazers_count": 20, "created_at": ""},
         ]
         with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_github_response(items)):
@@ -487,7 +489,8 @@ class TestFetchLobsters(unittest.TestCase):
         self.assertEqual(results, [])
 
     def test_result_structure(self):
-        entries = [{"title": "Cool article", "link": "https://example.com/cool", "pubDate": self.today_rfc, "description": "A summary"}]
+        entries = [{"title": "Cool article", "link": "https://example.com/cool", "pubDate": self.today_rfc,
+                    "description": "A summary"}]
         with patch("maki.plugins.web_search.web_search._http_get",
                    return_value=self._mock_rss_response(entries)):
             results = self.ws.fetch_lobsters()

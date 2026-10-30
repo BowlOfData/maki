@@ -119,10 +119,10 @@ def main() -> None:
         _cmd_serve(args)
     else:
         parser.print_help()
-        print(f"\nExample:")
+        print("\nExample:")
         print(f"  {DEFAULT_MODEL!r} via Ollama at {DEFAULT_OLLAMA_BASE_URL}")
-        print(f"  from maki import MakiLLama")
-        print(f"  from maki import Agent")
+        print("  from maki import MakiLLama")
+        print("  from maki import Agent")
 
 
 if __name__ == "__main__":

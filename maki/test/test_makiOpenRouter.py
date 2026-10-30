@@ -18,8 +18,8 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from maki.objects import BackendType, GenerationConfig
-from maki.exceptions import MakiAPIError, MakiNetworkError
+from maki.objects import BackendType, GenerationConfig  # noqa: E402
+from maki.exceptions import MakiAPIError, MakiNetworkError  # noqa: E402
 
 
 def _make_openai_response(

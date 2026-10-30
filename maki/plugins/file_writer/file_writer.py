@@ -7,7 +7,7 @@ It allows agents to write content to files with various options for handling exi
 
 import os
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 
 class FileWriter:

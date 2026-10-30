@@ -17,9 +17,9 @@ Covers:
 
 import unittest
 from collections import deque
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
-from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus, WorkflowState
+from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus
 from maki.exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 from maki.objects import LLMResponse
 
@@ -44,7 +44,7 @@ class Base(unittest.TestCase):
 class TestUsePlugins(Base):
     def test_no_plugins_loaded_use_plugins_false(self):
         """execute_task works normally when no plugins are loaded"""
-        with patch.object(self.maki, 'chat', return_value=_r("ok")) as mock:
+        with patch.object(self.maki, 'chat', return_value=_r("ok")):
             result = self.agent.execute_task("do something", use_plugins=False)
         self.assertEqual(result, "ok")
 

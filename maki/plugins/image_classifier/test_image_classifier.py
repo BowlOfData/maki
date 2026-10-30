@@ -6,7 +6,7 @@ import asyncio
 import base64
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from maki.plugins.image_classifier.image_classifier import ImageClassifier, register_plugin
 

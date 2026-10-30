@@ -57,6 +57,9 @@ except ImportError:
     _HTML2TEXT_AVAILABLE = False
 
 
+_HTML_CONTENT_TYPES = ("text/html", "application/xhtml", "text/xml", "application/xml")
+
+
 class WebToMd:
     """
     Fetches a web page and converts only its article content to Markdown.
@@ -94,15 +97,10 @@ class WebToMd:
         Returns:
             Dict with keys: success, url, output_file, content, error, status_code.
         """
-        if not isinstance(url, str) or not url.strip():
-            return self._err(url, output_file, "URL must be a non-empty string")
-
-        try:
-            parsed_url = urlparse(url)
-            if not parsed_url.scheme or not parsed_url.netloc:
-                return self._err(url, output_file, "Invalid URL format")
-        except Exception as exc:
-            return self._err(url, output_file, f"Invalid URL format: {exc}")
+        invalid = self._invalid_url_message(url)
+        if invalid:
+            return self._err(url, output_file, invalid)
+        parsed_url = urlparse(url)
 
         result: Dict[str, Any] = {
             "success": False, "url": url, "final_url": url,
@@ -122,7 +120,7 @@ class WebToMd:
                 return result
 
             content_type = response.headers.get("Content-Type", "")
-            if not any(t in content_type for t in ("text/html", "application/xhtml", "text/xml", "application/xml")):
+            if not any(t in content_type for t in _HTML_CONTENT_TYPES):
                 result["error"] = f"Unsupported content type: {content_type}"
                 return result
 
@@ -130,9 +128,7 @@ class WebToMd:
             markdown_content = self._to_markdown(title, article_html)
 
             if output_file is None:
-                path = parsed_url.path
-                slug = re.sub(r"[^a-zA-Z0-9\-_.]", "_", path.split("/")[-1]) or "page"
-                output_file = f"{parsed_url.netloc}_{slug}.md"
+                output_file = self._default_output_file(parsed_url)
                 result["output_file"] = output_file
 
             write_result = self.file_writer.write_file(output_file, markdown_content)
@@ -155,6 +151,23 @@ class WebToMd:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _invalid_url_message(url: Any) -> Optional[str]:
+        if not isinstance(url, str) or not url.strip():
+            return "URL must be a non-empty string"
+        try:
+            parsed_url = urlparse(url)
+            if not parsed_url.scheme or not parsed_url.netloc:
+                return "Invalid URL format"
+        except Exception as exc:
+            return f"Invalid URL format: {exc}"
+        return None
+
+    @staticmethod
+    def _default_output_file(parsed_url) -> str:
+        slug = re.sub(r"[^a-zA-Z0-9\-_.]", "_", parsed_url.path.split("/")[-1]) or "page"
+        return f"{parsed_url.netloc}_{slug}.md"
 
     @staticmethod
     def _err(url: Any, output_file: Optional[str], msg: str) -> Dict[str, Any]:

@@ -6,7 +6,6 @@ the TRANDING_VAULT_PATH environment variable.
 """
 
 import tempfile
-from pathlib import Path
 from maki.plugins.obsidian_memory.obsidian_memory import ObsidianMemory
 
 

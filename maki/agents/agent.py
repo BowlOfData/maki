@@ -205,8 +205,8 @@ class Agent(PluginHandler, ReasoningEngine):
         self._conversation_memory.clear()
 
     def execute_task_with_retry(self, task: str, context: Optional[Dict] = None,
-                               max_retries: int = 3, retry_delay: float = 1.0,
-                               use_plugins: bool = False) -> str:
+                                max_retries: int = 3, retry_delay: float = 1.0,
+                                use_plugins: bool = False) -> str:
         """
         Execute a task with retry logic.
 
@@ -439,4 +439,3 @@ class Agent(PluginHandler, ReasoningEngine):
         self.task_history = deque(self.task_history, maxlen=max_entries)
         # max_entries setter trims immediately if the new cap is smaller
         self._conversation_memory.max_entries = max(2, max_entries)
-

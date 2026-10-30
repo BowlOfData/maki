@@ -6,7 +6,7 @@ ChatSession integration, and Agent stateful-mode integration.
 """
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from maki.objects import ConversationMemory, LLMResponse, Message
 from maki.session import ChatSession
@@ -81,7 +81,7 @@ class TestTokenEstimation(unittest.TestCase):
     def test_total_tokens_sums_all_messages(self):
         mem = ConversationMemory()
         mem._messages.append(_msg("user", "a" * 40))      # 10 tokens
-        mem._messages.append(_msg("assistant", "b" * 20)) # 5 tokens
+        mem._messages.append(_msg("assistant", "b" * 20))  # 5 tokens
         self.assertEqual(mem._total_tokens(), 15)
 
 
@@ -112,9 +112,12 @@ class TestAppendAndEviction(unittest.TestCase):
         u1, a1 = _pair("task1", "r1")
         u2, a2 = _pair("task2", "r2")
         u3, a3 = _pair("task3", "r3")
-        mem.append(u1); mem.append(a1)
-        mem.append(u2); mem.append(a2)
-        mem.append(u3); mem.append(a3)
+        mem.append(u1)
+        mem.append(a1)
+        mem.append(u2)
+        mem.append(a2)
+        mem.append(u3)
+        mem.append(a3)
         # After 6 appends with cap=4: oldest pair (task1/r1) evicted
         self.assertEqual(len(mem), 4)
         msgs = mem.messages()
@@ -144,14 +147,16 @@ class TestAppendAndEviction(unittest.TestCase):
     def test_clear_empties_memory(self):
         mem = ConversationMemory()
         u, a = _pair("q", "a")
-        mem.append(u); mem.append(a)
+        mem.append(u)
+        mem.append(a)
         mem.clear()
         self.assertEqual(len(mem), 0)
 
     def test_messages_returns_snapshot(self):
         mem = ConversationMemory()
         u, a = _pair("q", "a")
-        mem.append(u); mem.append(a)
+        mem.append(u)
+        mem.append(a)
         snap = mem.messages()
         mem.clear()
         self.assertEqual(len(snap), 2)  # snapshot unaffected

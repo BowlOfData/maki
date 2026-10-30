@@ -10,12 +10,10 @@ import json
 import logging
 import re
 import time
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, List
 
 from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 
-if TYPE_CHECKING:
-    from .protocols import ReasoningHostProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +42,37 @@ def _extract_json_array(text: str) -> str:
         return cleaned[start:end + 1]
 
     return cleaned
+
+
+def _parse_subtasks(result: str, max_subtasks: int) -> List[Dict]:
+    """Turn the LLM's decomposition reply into at most ``max_subtasks`` complete subtask dicts.
+
+    Raises:
+        ValueError: if the reply holds no valid JSON array.
+    """
+    json_str = _extract_json_array(result)
+
+    try:
+        subtasks = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"LLM did not return valid JSON for task decomposition: {str(e)}. "
+            f"Raw response (first 300 chars): {result[:300]}"
+        ) from e
+
+    if not isinstance(subtasks, list):
+        raise ValueError("LLM response is not a JSON array")
+
+    validated = []
+    for i, subtask in enumerate(subtasks[:max_subtasks]):
+        if not isinstance(subtask, dict):
+            subtask = {"description": str(subtask)}
+        validated.append({
+            "description": subtask.get("description", f"Subtask {i + 1}"),
+            "resources": subtask.get("resources", "Not specified"),
+            "expected_outcome": subtask.get("expected_outcome", "Not specified")
+        })
+    return validated
 
 
 class ReasoningEngine:
@@ -241,27 +270,4 @@ class ReasoningEngine:
             'timestamp': time.time()
         })
 
-        json_str = _extract_json_array(result)
-
-        try:
-            subtasks = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"LLM did not return valid JSON for task decomposition: {str(e)}. "
-                f"Raw response (first 300 chars): {result[:300]}"
-            ) from e
-
-        if not isinstance(subtasks, list):
-            raise ValueError("LLM response is not a JSON array")
-
-        validated = []
-        for i, subtask in enumerate(subtasks[:max_subtasks]):
-            if not isinstance(subtask, dict):
-                subtask = {"description": str(subtask)}
-            validated.append({
-                "description": subtask.get("description", f"Subtask {i + 1}"),
-                "resources": subtask.get("resources", "Not specified"),
-                "expected_outcome": subtask.get("expected_outcome", "Not specified")
-            })
-
-        return validated
+        return _parse_subtasks(result, max_subtasks)

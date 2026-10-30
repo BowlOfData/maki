@@ -15,15 +15,15 @@ import requests
 pytest = __import__("pytest")
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
-from fastapi.testclient import TestClient as _TestClient
+from fastapi.testclient import TestClient as _TestClient  # noqa: E402
 
-from maki.agents import Agent
-from maki.connector import Connector
-from maki.objects import LLMResponse
-from maki.exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
-from maki.distributed.server import create_app
-from maki.distributed.proxy import AgentProxy
-from maki.distributed.registry import DistributedAgentManager
+from maki.agents import Agent  # noqa: E402
+from maki.connector import Connector  # noqa: E402
+from maki.objects import LLMResponse  # noqa: E402
+from maki.exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError  # noqa: E402
+from maki.distributed.server import create_app  # noqa: E402
+from maki.distributed.proxy import AgentProxy  # noqa: E402
+from maki.distributed.registry import DistributedAgentManager  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

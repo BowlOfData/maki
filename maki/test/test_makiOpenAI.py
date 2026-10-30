@@ -5,12 +5,12 @@ import asyncio
 import sys
 import os
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from maki.objects import BackendType, GenerationConfig, Message
-from maki.exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
+from maki.objects import BackendType, GenerationConfig, Message  # noqa: E402
+from maki.exceptions import MakiAPIError, MakiNetworkError  # noqa: E402
 
 
 def _make_openai_response(content="Test response", model="gpt-4o-mini",
@@ -115,7 +115,7 @@ class TestMakiOpenAI(unittest.TestCase):
         llm = self._make_llm()
         llm._client.chat.completions.create.return_value = _make_openai_response(content="Sure!")
         history = [Message("user", "Hi"), Message("assistant", "Hello")]
-        response = llm.chat("How are you?", history=history)
+        llm.chat("How are you?", history=history)
         call_args = llm._client.chat.completions.create.call_args
         messages = call_args.kwargs["messages"]
         self.assertEqual(messages[0]["content"], "Hi")
@@ -133,7 +133,7 @@ class TestMakiOpenAI(unittest.TestCase):
     def test_chat_with_image(self):
         llm = self._make_llm()
         llm._client.chat.completions.create.return_value = _make_openai_response(content="A cat")
-        response = llm.chat("What is in the image?", images=["base64encodeddata"])
+        llm.chat("What is in the image?", images=["base64encodeddata"])
         messages = llm._client.chat.completions.create.call_args.kwargs["messages"]
         user_content = messages[0]["content"]
         self.assertIsInstance(user_content, list)

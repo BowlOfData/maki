@@ -10,7 +10,8 @@ import sys
 # Add the project root to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from maki.plugins.web_to_md.web_to_md import WebToMd
+from maki.plugins.web_to_md.web_to_md import WebToMd  # noqa: E402
+
 
 class TestWebToMd(unittest.TestCase):
 
@@ -68,6 +69,7 @@ class TestWebToMd(unittest.TestCase):
 
         self.assertIn('# Test Title', markdown_content)
         self.assertIn('**test**', markdown_content)
+
 
 def _addrinfo(ip, port):
     import socket

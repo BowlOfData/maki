@@ -1,14 +1,12 @@
 """
 Phase 4 tests: StateStore implementations and workflow checkpointing/resume.
 """
-import json
 import os
 import tempfile
-import time
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-from maki.agents import Agent, AgentManager, WorkflowTask, TaskStatus
+from maki.agents import AgentManager, WorkflowTask, TaskStatus
 from maki.agents.workflow import WorkflowState
 from maki.objects import LLMResponse
 from maki.distributed.state_store import LocalStateStore, RedisStateStore, _sanitize
@@ -111,7 +109,7 @@ class TestLocalStateStore(unittest.TestCase):
     def test_roundtrip_with_tasks(self):
         state = WorkflowState("wf-003")
         state.update_task_status("step1", TaskStatus.COMPLETED, result="done",
-                                  execution_time=1.5, data={"score": 0.9})
+                                 execution_time=1.5, data={"score": 0.9})
         state.update_task_status("step2", TaskStatus.FAILED, result="boom")
         state.add_error("step2", "backend timeout")
         self.store.save_workflow(state)
@@ -156,7 +154,7 @@ class TestLocalStateStore(unittest.TestCase):
         self.store.save_workflow(state)
 
         self.store.update_task("wf-upd", "t1", {"status": TaskStatus.COMPLETED.value,
-                                                  "result": "patched"})
+                                                "result": "patched"})
         restored = self.store.load_workflow("wf-upd")
         # from_dict re-hydrates the status string back to a TaskStatus enum
         self.assertEqual(restored.tasks["t1"]["status"], TaskStatus.COMPLETED)
@@ -333,7 +331,7 @@ class TestRedisStateStore(unittest.TestCase):
         store.save_workflow(state)
 
         store.update_task("upd-wf", "t1", {"status": TaskStatus.COMPLETED.value,
-                                            "result": "patched"})
+                                           "result": "patched"})
         restored = store.load_workflow("upd-wf")
         self.assertEqual(restored.tasks["t1"]["result"], "patched")
 
@@ -469,7 +467,7 @@ class TestWorkflowCheckpointing(unittest.TestCase):
         store = self._store()
         manager, backend = _make_manager()
         # No workflow_id → all tasks run, state saved under auto-generated ID
-        results = manager.run_workflow(_three_task_workflow(), state_store=store)
+        manager.run_workflow(_three_task_workflow(), state_store=store)
         self.assertEqual(backend.chat.call_count, 3)
         # A file was created
         self.assertTrue(len(store.list_workflows()) > 0)
@@ -478,7 +476,7 @@ class TestWorkflowCheckpointing(unittest.TestCase):
         store = self._store()
         manager, _ = _make_manager()
         manager.run_workflow(_three_task_workflow(), workflow_id="wf-final",
-                              state_store=store)
+                             state_store=store)
         state = store.load_workflow("wf-final")
         self.assertEqual(state.status, "completed")
         self.assertIsNotNone(state.end_time)
@@ -490,7 +488,6 @@ class TestWorkflowCheckpointing(unittest.TestCase):
         # First run: complete all 3 tasks
         manager.run_workflow(_three_task_workflow(), workflow_id="wf-ctx",
                              state_store=store)
-        first_call_count = backend.chat.call_count
 
         # Second run: t1 is completed, t2 and t3 should receive context from t1
         backend.chat.reset_mock()
@@ -500,7 +497,7 @@ class TestWorkflowCheckpointing(unittest.TestCase):
         store2 = self._store()
         prior = WorkflowState("wf-ctx2")
         prior.update_task_status("t1", TaskStatus.COMPLETED, result="t1-value",
-                                  data={"key": "val"})
+                                 data={"key": "val"})
         store2.save_workflow(prior)
 
         results = manager.run_workflow(

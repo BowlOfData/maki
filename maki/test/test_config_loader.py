@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 pytest = __import__("pytest")
 pytest.importorskip("yaml", reason="PyYAML not installed")
 
-from maki.distributed.config_loader import load_agent_from_config
+from maki.distributed.config_loader import load_agent_from_config  # noqa: E402
 
 
 def _write_config(body: str) -> str:

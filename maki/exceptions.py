@@ -2,6 +2,7 @@
 Custom exception classes for the Maki framework
 """
 
+
 class MakiError(Exception):
     """Base exception for all Maki framework errors"""
     pass

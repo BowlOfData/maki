@@ -15,12 +15,11 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote as urlquote, urlparse
+from urllib.parse import quote as urlquote
 
 from maki.config import DEFAULT_HTTP_TIMEOUT, DEFAULT_WEB_USER_AGENT
 from maki.connector import Connector
 from maki.plugins._web_utils import (
-    is_current_week as _is_current_week,
     is_media_url as _is_media_url,
     now_utc as _now_utc,
     parse_published as _parse_published,
@@ -75,6 +74,16 @@ def _cdn_get(url, **kwargs):
 # WebSearch plugin
 # ---------------------------------------------------------------------------
 
+def _entry_datetime(entry) -> Optional[datetime]:
+    """When a feed entry was published: feedparser's pre-parsed UTC struct_time first (more reliable),
+    then its date string."""
+    dt = _struct_time_to_datetime(entry.get("published_parsed") or entry.get("updated_parsed"))
+    if dt is None:
+        raw_date = entry.get("published", "") or entry.get("updated", "")
+        dt = _parse_published(raw_date)
+    return dt
+
+
 class WebSearch:
     """
     A plugin class for searching recent tech articles.
@@ -101,6 +110,64 @@ class WebSearch:
     # ------------------------------------------------------------------
     # Public methods
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _arxiv_paper(entry, since, now) -> Optional[Dict[str, Any]]:
+        """The article dict for an arXiv feed entry, or None if it has no link or is older than ``since``."""
+        abs_url = entry.get("link", "")
+        if not abs_url:
+            return None
+
+        dt = _entry_datetime(entry)
+        if dt is not None and not (since <= dt <= now):
+            return None
+
+        title = entry.get("title", "").replace("\n", " ").strip()
+        summary = entry.get("summary", "").replace("\n", " ").strip()
+        # Use the HTML full-paper URL (/html/) instead of the abstract
+        # page (/abs/) so web_to_md extracts rich content (2-3 KB) rather
+        # than the JS-rendered abstract stub (< 100 chars).
+        url = abs_url.replace("/abs/", "/html/")
+
+        return {
+            "title": title,
+            "url": url,
+            "snippet": summary[:400].strip() if summary else "",
+            "source": "arXiv",
+            "published": entry.get("published", ""),
+        }
+
+    @staticmethod
+    def _rss_article(entry, source: str, week_start, now, kw_lower: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+        """The article dict for a feed entry, or None if it has no link, is outside the current ISO week
+        or matches none of ``kw_lower``."""
+        url = entry.get("link", "")
+        if not url:
+            return None
+
+        dt = _entry_datetime(entry)
+        published_str = entry.get("published", "") or entry.get("updated", "")
+
+        # Drop articles published before this ISO week
+        if dt is not None and not (week_start <= dt <= now):
+            return None
+
+        title = entry.get("title", "")
+        summary = entry.get("summary", "")
+
+        # Optional keyword pre-filter
+        if kw_lower:
+            text = (title + " " + summary).lower()
+            if not any(kw in text for kw in kw_lower):
+                return None
+
+        return {
+            "title": title,
+            "url": url,
+            "snippet": summary[:400].strip() if summary else "",
+            "source": source,
+            "published": published_str,
+        }
 
     def search_rss(
         self,
@@ -155,41 +222,10 @@ class WebSearch:
                 if count >= max_per_feed:
                     break
 
-                url = entry.get("link", "")
-                if not url:
+                article = self._rss_article(entry, source, week_start, now, kw_lower)
+                if article is None:
                     continue
-
-                # Prefer feedparser's pre-parsed UTC struct_time for reliability
-                dt = _struct_time_to_datetime(entry.get("published_parsed") or entry.get("updated_parsed"))
-                if dt is None:
-                    # Fall back to string parsing
-                    raw_date = entry.get("published", "") or entry.get("updated", "")
-                    dt = _parse_published(raw_date)
-
-                published_str = entry.get("published", "") or entry.get("updated", "")
-
-                # Drop articles published before this ISO week
-                if dt is not None and not (week_start <= dt <= now):
-                    continue
-
-                title = entry.get("title", "")
-                summary = entry.get("summary", "")
-
-                # Optional keyword pre-filter
-                if kw_lower:
-                    text = (title + " " + summary).lower()
-                    if not any(kw in text for kw in kw_lower):
-                        continue
-
-                results.append(
-                    {
-                        "title": title,
-                        "url": url,
-                        "snippet": summary[:400].strip() if summary else "",
-                        "source": source,
-                        "published": published_str,
-                    }
-                )
+                results.append(article)
                 count += 1
 
             self.logger.debug(
@@ -429,40 +465,62 @@ class WebSearch:
                 if len(results) >= max_results:
                     break
 
-                abs_url = entry.get("link", "")
-                if not abs_url:
-                    continue
-
-                dt = _struct_time_to_datetime(
-                    entry.get("published_parsed") or entry.get("updated_parsed")
-                )
-                if dt is None:
-                    raw_date = entry.get("published", "") or entry.get("updated", "")
-                    dt = _parse_published(raw_date)
-
-                if dt is not None and not (since <= dt <= now):
-                    continue
-
-                title = entry.get("title", "").replace("\n", " ").strip()
-                summary = entry.get("summary", "").replace("\n", " ").strip()
-                # Use the HTML full-paper URL (/html/) instead of the abstract
-                # page (/abs/) so web_to_md extracts rich content (2-3 KB) rather
-                # than the JS-rendered abstract stub (< 100 chars).
-                url = abs_url.replace("/abs/", "/html/")
-
-                results.append({
-                    "title": title,
-                    "url": url,
-                    "snippet": summary[:400].strip() if summary else "",
-                    "source": "arXiv",
-                    "published": entry.get("published", ""),
-                })
+                paper = self._arxiv_paper(entry, since, now)
+                if paper is not None:
+                    results.append(paper)
 
         except Exception as exc:
             self.logger.warning("fetch_arxiv_recent: request failed: %s", exc)
 
         self.logger.info("fetch_arxiv_recent: %d papers found this week", len(results))
         return results
+
+    @staticmethod
+    def _hf_ranked(items: list, since, now) -> list:
+        """Daily-paper items inside the 7-day window (undated ones are kept), most upvoted first."""
+        filtered = []
+        for item in items:
+            paper = item.get("paper", {})
+            published_str = paper.get("publishedAt", "")
+            try:
+                pub_date = datetime.fromisoformat(published_str.replace("Z", "+00:00"))
+                if not (since <= pub_date <= now):
+                    continue
+            except (ValueError, AttributeError):
+                pass
+            filtered.append((paper.get("upvotes", 0), item))
+
+        filtered.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in filtered]
+
+    @staticmethod
+    def _hf_paper(item: dict) -> Optional[Dict[str, Any]]:
+        """The article dict for a daily-paper item, or None when it has no arXiv id."""
+        paper = item.get("paper", {})
+        arxiv_id = paper.get("id", "")
+        # Use /html/ so dedup aligns with fetch_arxiv_recent and
+        # web_to_md gets rich paper content (not the JS-rendered stub).
+        url = f"https://arxiv.org/html/{arxiv_id}" if arxiv_id else ""
+        if not url:
+            return None
+
+        abstract = (paper.get("summary") or "").strip()
+        upvotes = paper.get("upvotes", 0)
+        stars = paper.get("githubStars") or 0
+
+        snippet_parts = [abstract[:350]] if abstract else []
+        if upvotes:
+            snippet_parts.append(f"({upvotes} HF upvotes)")
+        if stars:
+            snippet_parts.append(f"({stars} GitHub stars)")
+
+        return {
+            "title": paper.get("title", ""),
+            "url": url,
+            "snippet": "  ".join(snippet_parts)[:400],
+            "source": "arXiv" if "arxiv.org" in url else "HuggingFace Papers",
+            "published": paper.get("publishedAt", ""),
+        }
 
     def fetch_huggingface_papers(
         self,
@@ -482,8 +540,6 @@ class WebSearch:
             List of article dicts with keys:
             ``title``, ``url``, ``snippet``, ``source``, ``published``.
         """
-        from datetime import datetime as _dt
-
         now = _now_utc()
         since = now - timedelta(days=7)
 
@@ -500,55 +556,95 @@ class WebSearch:
             )
             items = resp.json()
 
-            # Filter to 7-day window, sort by upvotes descending
-            filtered = []
-            for item in items:
-                paper = item.get("paper", {})
-                published_str = paper.get("publishedAt", "")
-                try:
-                    pub_date = _dt.fromisoformat(published_str.replace("Z", "+00:00"))
-                    if not (since <= pub_date <= now):
-                        continue
-                except (ValueError, AttributeError):
-                    pass
-                filtered.append((paper.get("upvotes", 0), item))
-
-            filtered.sort(key=lambda x: x[0], reverse=True)
-
-            for _, item in filtered[:max_results]:
-                paper = item.get("paper", {})
-                arxiv_id = paper.get("id", "")
-                # Use /html/ so dedup aligns with fetch_arxiv_recent and
-                # web_to_md gets rich paper content (not the JS-rendered stub).
-                url = f"https://arxiv.org/html/{arxiv_id}" if arxiv_id else ""
-                if not url:
-                    continue
-
-                title = paper.get("title", "")
-                abstract = (paper.get("summary") or "").strip()
-                upvotes = paper.get("upvotes", 0)
-                stars = paper.get("githubStars") or 0
-                published_str = paper.get("publishedAt", "")
-
-                snippet_parts = [abstract[:350]] if abstract else []
-                if upvotes:
-                    snippet_parts.append(f"({upvotes} HF upvotes)")
-                if stars:
-                    snippet_parts.append(f"({stars} GitHub stars)")
-
-                results.append({
-                    "title": title,
-                    "url": url,
-                    "snippet": "  ".join(snippet_parts)[:400],
-                    "source": "arXiv" if "arxiv.org" in url else "HuggingFace Papers",
-                    "published": published_str,
-                })
+            for item in self._hf_ranked(items, since, now)[:max_results]:
+                paper = self._hf_paper(item)
+                if paper is not None:
+                    results.append(paper)
 
         except Exception as exc:
             self.logger.warning("fetch_huggingface_papers: request failed: %s", exc)
 
         self.logger.info("fetch_huggingface_papers: %d papers found this week", len(results))
         return results
+
+    def _reddit_entries(self, sub: str, url: str, headers: dict, max_retries: int, jitter: float) -> list:
+        """Feed entries for a subreddit, retrying on errors and honouring 429 Retry-After; ``[]`` on failure."""
+        import feedparser
+        import random
+
+        for attempt in range(max_retries):
+            try:
+                # raise_on_status=False so we can inspect 429 before raising.
+                # _cdn_get bypasses DNS pinning to avoid HTTP 421 from Fastly.
+                resp = _cdn_get(url, headers=headers, raise_on_status=False)
+
+                if resp.status_code == 429:
+                    retry_after = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
+                    wait = retry_after + random.uniform(0, jitter)
+                    self.logger.warning(
+                        "fetch_reddit_hot: r/%s rate-limited (429), "
+                        "waiting %.1fs before retry %d/%d",
+                        sub, wait, attempt + 1, max_retries,
+                    )
+                    time.sleep(wait)
+                    continue
+
+                from maki.connector import Connector
+                Connector.raise_for_response(resp)
+                return feedparser.parse(resp.text).entries
+
+            except Exception as exc:
+                if attempt < max_retries - 1:
+                    wait = (2 ** attempt) + random.uniform(0, jitter)
+                    self.logger.warning(
+                        "fetch_reddit_hot: r/%s error (attempt %d/%d): %s — retrying in %.1fs",
+                        sub, attempt + 1, max_retries, exc, wait,
+                    )
+                    time.sleep(wait)
+                else:
+                    self.logger.warning(
+                        "fetch_reddit_hot: r/%s failed after %d attempts: %s",
+                        sub, max_retries, exc,
+                    )
+        return []
+
+    def _reddit_post(self, entry, sub: str, week_start, now) -> Optional[Dict[str, Any]]:
+        """The article dict for a subreddit RSS entry, or None for self-posts, media links and posts
+        outside the current ISO week."""
+        import re as _re
+
+        # Extract the external URL from the entry content HTML
+        html = ""
+        if entry.get("content"):
+            html = entry.content[0].get("value", "")
+        elif entry.get("summary"):
+            html = entry.summary
+
+        hrefs = _re.findall(r'href="(https?://[^"]+)"', html)
+        external_url = next((h for h in hrefs if "reddit.com" not in h), "")
+        if not external_url:
+            return None
+
+        # Skip direct media/image URLs — these are not articles
+        if _is_media_url(external_url):
+            self.logger.debug("fetch_reddit_hot: skipping media URL %s", external_url)
+            return None
+
+        published_str = ""
+        if entry.get("published_parsed"):
+            post_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+            if not (week_start <= post_dt <= now):
+                return None
+            published_str = post_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        title = entry.get("title", "")
+        return {
+            "title": title,
+            "url": external_url,
+            "snippet": title.strip(),
+            "source": f"Reddit r/{sub}",
+            "published": published_str,
+        }
 
     def fetch_reddit_hot(
         self,
@@ -571,9 +667,7 @@ class WebSearch:
             Self-posts (no external URL) and very-low-score posts (< 10) are
             excluded.
         """
-        import feedparser
         import random
-        import re as _re
 
         _MAX_RETRIES = 4
         _BASE_DELAY = 2.0   # seconds between subreddits (Reddit RSS ~2 req/s for bots)
@@ -592,85 +686,16 @@ class WebSearch:
         for sub in subreddits:
             # Reddit's .json API returns 403 — use the RSS feed instead
             url = f"https://www.reddit.com/r/{sub}/hot.rss?limit={max_per_sub + 5}"
-            entries = []
-
-            for attempt in range(_MAX_RETRIES):
-                try:
-                    # raise_on_status=False so we can inspect 429 before raising.
-                    # _cdn_get bypasses DNS pinning to avoid HTTP 421 from Fastly.
-                    resp = _cdn_get(url, headers=headers, raise_on_status=False)
-
-                    if resp.status_code == 429:
-                        retry_after = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
-                        wait = retry_after + random.uniform(0, _JITTER)
-                        self.logger.warning(
-                            "fetch_reddit_hot: r/%s rate-limited (429), "
-                            "waiting %.1fs before retry %d/%d",
-                            sub, wait, attempt + 1, _MAX_RETRIES,
-                        )
-                        time.sleep(wait)
-                        continue
-
-                    from maki.connector import Connector
-                    Connector.raise_for_response(resp)
-                    entries = feedparser.parse(resp.text).entries
-                    break
-
-                except Exception as exc:
-                    if attempt < _MAX_RETRIES - 1:
-                        wait = (2 ** attempt) + random.uniform(0, _JITTER)
-                        self.logger.warning(
-                            "fetch_reddit_hot: r/%s error (attempt %d/%d): %s — retrying in %.1fs",
-                            sub, attempt + 1, _MAX_RETRIES, exc, wait,
-                        )
-                        time.sleep(wait)
-                    else:
-                        self.logger.warning(
-                            "fetch_reddit_hot: r/%s failed after %d attempts: %s",
-                            sub, _MAX_RETRIES, exc,
-                        )
+            entries = self._reddit_entries(sub, url, headers, _MAX_RETRIES, _JITTER)
 
             count = 0
             for entry in entries:
                 if count >= max_per_sub:
                     break
-
-                # Extract the external URL from the entry content HTML
-                html = ""
-                if entry.get("content"):
-                    html = entry.content[0].get("value", "")
-                elif entry.get("summary"):
-                    html = entry.summary
-
-                hrefs = _re.findall(r'href="(https?://[^"]+)"', html)
-                external_url = next(
-                    (h for h in hrefs if "reddit.com" not in h), ""
-                )
-                if not external_url:
+                post = self._reddit_post(entry, sub, week_start, now)
+                if post is None:
                     continue
-
-                # Skip direct media/image URLs — these are not articles
-                if _is_media_url(external_url):
-                    self.logger.debug("fetch_reddit_hot: skipping media URL %s", external_url)
-                    continue
-
-                published_str = ""
-                if entry.get("published_parsed"):
-                    post_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-                    if not (week_start <= post_dt <= now):
-                        continue
-                    published_str = post_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-                title = entry.get("title", "")
-                snippet = title.strip()
-
-                results.append({
-                    "title": title,
-                    "url": external_url,
-                    "snippet": snippet,
-                    "source": f"Reddit r/{sub}",
-                    "published": published_str,
-                })
+                results.append(post)
                 count += 1
 
             self.logger.debug("fetch_reddit_hot: r/%s → %d posts", sub, count)
@@ -685,6 +710,7 @@ class WebSearch:
 # ---------------------------------------------------------------------------
 # Plugin registration function (maki contract)
 # ---------------------------------------------------------------------------
+
 
 def register_plugin(maki_instance=None) -> WebSearch:
     """

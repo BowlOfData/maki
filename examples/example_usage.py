@@ -9,9 +9,10 @@ import os
 # Add the current directory to Python path so we can import maki
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from maki import MakiLLama
-from maki.objects import GenerationConfig
-from maki.agents import AgentManager, Agent
+from maki import MakiLLama  # noqa: E402
+from maki.objects import GenerationConfig  # noqa: E402
+from maki.agents import AgentManager  # noqa: E402
+
 
 def main():
     print("=== Maki Framework Example Usage ===")
@@ -34,12 +35,12 @@ def main():
         print("✓ AgentManager created successfully")
 
         # Add some agents
-        researcher = agent_manager.add_agent(
+        agent_manager.add_agent(
             name="Researcher",
             role="research analyst",
             instructions="You are an expert researcher who can find and analyze information on various topics."
         )
-        writer = agent_manager.add_agent(
+        agent_manager.add_agent(
             name="Writer",
             role="content writer",
             instructions="You are a skilled writer who can create clear, concise content based on research."
@@ -60,6 +61,7 @@ def main():
     print("\n=== Example Usage Complete ===")
     print("The Maki framework workflow is working correctly!")
     return True
+
 
 if __name__ == "__main__":
     main()
