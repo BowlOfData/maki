@@ -292,20 +292,7 @@ class AgentProxy:
             # trip the breaker, matching execute_task semantics.
             Connector.raise_for_response(response)
             self._circuit_breaker.record_success()
-            for raw in Connector.iter_lines(response):
-                line = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
-                if not line.startswith("data: "):
-                    continue
-                data_part = line[len("data: "):]
-                if data_part == "[DONE]":
-                    return
-                data = json.loads(data_part)
-                if "error" in data:
-                    raise MakiNetworkError(
-                        f"Stream error from remote agent: {data['error']}"
-                    )
-                if "chunk" in data:
-                    yield data["chunk"]
+            yield from self._stream_chunks(response)
         except _RETRYABLE:
             self._circuit_breaker.record_failure()
             raise
@@ -314,6 +301,22 @@ class AgentProxy:
                 response.close()
             except Exception:
                 pass
+
+    @staticmethod
+    def _stream_chunks(response: Any) -> Generator[str, None, None]:
+        """Chunks from the server's SSE stream, ending at ``[DONE]``; a remote error becomes MakiNetworkError."""
+        for raw in Connector.iter_lines(response):
+            line = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+            if not line.startswith("data: "):
+                continue
+            data_part = line[len("data: "):]
+            if data_part == "[DONE]":
+                return
+            data = json.loads(data_part)
+            if "error" in data:
+                raise MakiNetworkError(f"Stream error from remote agent: {data['error']}")
+            if "chunk" in data:
+                yield data["chunk"]
 
     # ------------------------------------------------------------------
     # Loops

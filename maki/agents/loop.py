@@ -127,6 +127,13 @@ Decision.CONTINUE = Decision()
 Decision.STOP = Decision(stop=True)
 
 
+def _check_int(name: str, value: Any, minimum: int, optional: bool = False) -> None:
+    if value is None and optional:
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"LoopSpec.{name} must be an integer >= {minimum}" + (" (or None)" if optional else ""))
+
+
 @dataclass
 class LoopSpec:
     """Everything that defines a loop run.
@@ -162,6 +169,19 @@ class LoopSpec:
     max_artifact_chars: Optional[int] = 20000
 
     def __post_init__(self) -> None:
+        self._validate_content()
+        for name in ("max_iterations", "stall_limit"):
+            _check_int(name, getattr(self, name), 1)
+        _check_int("max_tokens", self.max_tokens, 1, optional=True)
+        _check_int("max_artifact_chars", self.max_artifact_chars, 200, optional=True)
+        if self.max_seconds is not None and not self.max_seconds > 0:
+            raise ValueError("LoopSpec.max_seconds must be > 0")
+        if self.context not in ("shared", "fresh"):
+            raise ValueError("LoopSpec.context must be 'shared' or 'fresh'")
+        if self.artifact_fn is not None and not callable(self.artifact_fn):
+            raise ValueError("LoopSpec.artifact_fn must be callable")
+
+    def _validate_content(self) -> None:
         if not isinstance(self.goal, str) or not self.goal.strip():
             raise ValueError("LoopSpec.goal must be a non-empty string")
         self.requirements = tuple(self.requirements)
@@ -170,23 +190,6 @@ class LoopSpec:
         ids = [r.id for r in self.requirements]
         if len(set(ids)) != len(ids):
             raise ValueError("Requirement ids must be unique")
-        for name in ("max_iterations", "stall_limit"):
-            v = getattr(self, name)
-            if isinstance(v, bool) or not isinstance(v, int) or v < 1:
-                raise ValueError(f"LoopSpec.{name} must be an integer >= 1")
-        if self.max_seconds is not None and not self.max_seconds > 0:
-            raise ValueError("LoopSpec.max_seconds must be > 0")
-        if self.max_tokens is not None and (isinstance(self.max_tokens, bool) or not isinstance(self.max_tokens, int)
-                                            or self.max_tokens < 1):
-            raise ValueError("LoopSpec.max_tokens must be an integer >= 1 (or None)")
-        if self.max_artifact_chars is not None and (isinstance(self.max_artifact_chars, bool)
-                                                    or not isinstance(self.max_artifact_chars, int)
-                                                    or self.max_artifact_chars < 200):
-            raise ValueError("LoopSpec.max_artifact_chars must be an integer >= 200 (or None)")
-        if self.context not in ("shared", "fresh"):
-            raise ValueError("LoopSpec.context must be 'shared' or 'fresh'")
-        if self.artifact_fn is not None and not callable(self.artifact_fn):
-            raise ValueError("LoopSpec.artifact_fn must be callable")
 
 
 @dataclass

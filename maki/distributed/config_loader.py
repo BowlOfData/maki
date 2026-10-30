@@ -45,6 +45,7 @@ except ImportError as _e:
         'Install it with: pip install "maki-framework[distributed]"'
     ) from _e
 
+import importlib
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -56,66 +57,45 @@ from ..plugins import PLUGIN_REGISTRY
 from .loop_jobs import LoopCaps
 
 
+# backend name -> (module in maki, class)
+_BACKENDS = {
+    "ollama": ("makiLLama", "MakiLLama"),
+    "openai": ("makiOpenAI", "MakiOpenAI"),
+    "anthropic": ("makiAnthropic", "MakiAnthropic"),
+    "openrouter": ("makiOpenRouter", "MakiOpenRouter"),
+    "llamacpp": ("makiLlamaCpp", "MakiLlamaCpp"),
+    "vllm": ("makiVllm", "MakiVllm"),
+}
+_BASE_URL_BACKENDS = ("llamacpp", "vllm")
+
+
+def _ollama_kwargs(cfg: dict, judge: bool) -> dict:
+    kwargs: dict = {}
+    if "think" in cfg:  # False stops reasoning text leaking into replies
+        kwargs["think"] = bool(cfg["think"])
+    if judge:  # a thinking judge often returns truncated or reasoning-polluted verdicts
+        kwargs.update(json_format=True, think=False)
+    return kwargs
+
+
 def _build_backend(cfg: dict, judge: bool = False) -> LLMBackend:
     backend_name = cfg.get("backend", "ollama").lower()
-    model: Optional[str] = cfg.get("model")
-    temperature = float(cfg.get("temperature", 0.7))
-    gen_config = GenerationConfig(temperature=temperature)
+    if backend_name not in _BACKENDS:
+        raise ValueError(
+            f"Unknown backend: '{backend_name}'. "
+            "Supported values: ollama, openai, anthropic, openrouter, llamacpp, vllm"
+        )
+    module_name, class_name = _BACKENDS[backend_name]
+    backend_class = getattr(importlib.import_module(f"..{module_name}", __package__), class_name)
 
+    kwargs: dict = {"config": GenerationConfig(temperature=float(cfg.get("temperature", 0.7)))}
+    if cfg.get("model"):
+        kwargs["model"] = cfg["model"]
+    if backend_name in _BASE_URL_BACKENDS and cfg.get("base_url"):
+        kwargs["base_url"] = cfg["base_url"]
     if backend_name == "ollama":
-        from ..makiLLama import MakiLLama
-        kwargs: dict = {"config": gen_config}
-        if model:
-            kwargs["model"] = model
-        if "think" in cfg:  # ollama only: False stops reasoning text leaking into replies
-            kwargs["think"] = bool(cfg["think"])
-        if judge:  # a thinking judge often returns truncated or reasoning-polluted verdicts
-            kwargs.update(json_format=True, think=False)
-        return MakiLLama(**kwargs)
-
-    if backend_name == "openai":
-        from ..makiOpenAI import MakiOpenAI
-        kwargs = {"config": gen_config}
-        if model:
-            kwargs["model"] = model
-        return MakiOpenAI(**kwargs)
-
-    if backend_name == "anthropic":
-        from ..makiAnthropic import MakiAnthropic
-        kwargs = {"config": gen_config}
-        if model:
-            kwargs["model"] = model
-        return MakiAnthropic(**kwargs)
-
-    if backend_name == "openrouter":
-        from ..makiOpenRouter import MakiOpenRouter
-        kwargs = {"config": gen_config}
-        if model:
-            kwargs["model"] = model
-        return MakiOpenRouter(**kwargs)
-
-    if backend_name == "llamacpp":
-        from ..makiLlamaCpp import MakiLlamaCpp
-        kwargs = {"config": gen_config}
-        if model:
-            kwargs["model"] = model
-        if cfg.get("base_url"):
-            kwargs["base_url"] = cfg["base_url"]
-        return MakiLlamaCpp(**kwargs)
-
-    if backend_name == "vllm":
-        from ..makiVllm import MakiVllm
-        kwargs = {"config": gen_config}
-        if model:
-            kwargs["model"] = model
-        if cfg.get("base_url"):
-            kwargs["base_url"] = cfg["base_url"]
-        return MakiVllm(**kwargs)
-
-    raise ValueError(
-        f"Unknown backend: '{backend_name}'. "
-        "Supported values: ollama, openai, anthropic, openrouter, llamacpp, vllm"
-    )
+        kwargs.update(_ollama_kwargs(cfg, judge))
+    return backend_class(**kwargs)
 
 
 def _read_config(path: str) -> dict:

@@ -46,6 +46,39 @@ class CheckResult:
     feedback: str = ""
 
 
+class _OutputTail:
+    """Reads a process's merged output on a thread, keeping only the last ``limit`` characters."""
+
+    def __init__(self, proc: "subprocess.Popen", limit: int):
+        self.text, self._proc, self._limit = "", proc, limit
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def _pump(self) -> None:
+        while True:
+            chunk = self._proc.stdout.read(8192)
+            if not chunk:
+                return
+            self.text = (self.text + chunk)[-self._limit:]
+
+    def alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def join(self, timeout: float) -> None:
+        self._thread.join(max(0.0, timeout))
+
+
+def _finished(proc: "subprocess.Popen", reader: _OutputTail, timeout: float) -> bool:
+    """True if the command exited and closed its output within ``timeout`` seconds."""
+    deadline = time.monotonic() + timeout
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False
+    reader.join(deadline - time.monotonic())  # a grandchild may still hold the pipe
+    return not reader.alive()
+
+
 def run_command_check(argv: Sequence[str], cwd: Optional[str] = None,
                       timeout: float = 120.0, max_output: int = _MAX_OUTPUT_CHARS) -> CheckResult:
     """Run ``argv`` (no shell) and return pass on exit code 0, with its output as feedback.
@@ -67,32 +100,17 @@ def run_command_check(argv: Sequence[str], cwd: Optional[str] = None,
                                 start_new_session=True)
     except OSError as e:
         return CheckResult(False, f"command could not run: {e}")
-    tail: list = [""]
-
-    def pump() -> None:
-        while True:
-            chunk = proc.stdout.read(8192)
-            if not chunk:
-                return
-            tail[0] = (tail[0] + chunk)[-max_output:]
-
-    reader = threading.Thread(target=pump, daemon=True)
-    reader.start()
-    deadline = time.monotonic() + timeout
+    reader = _OutputTail(proc, max_output)
     try:
-        proc.wait(timeout=timeout)
-        reader.join(max(0.0, deadline - time.monotonic()))  # a grandchild may still hold the pipe
-        if reader.is_alive():
-            raise subprocess.TimeoutExpired(list(argv), timeout)
-    except subprocess.TimeoutExpired:
-        _kill_group(proc)
-        proc.wait()
-        reader.join(_REAP_SECONDS)
-        return CheckResult(False, f"command timed out after {timeout}s: {' '.join(argv)}")
+        if not _finished(proc, reader, timeout):
+            _kill_group(proc)
+            proc.wait()
+            reader.join(_REAP_SECONDS)
+            return CheckResult(False, f"command timed out after {timeout}s: {' '.join(argv)}")
     finally:
-        if not reader.is_alive():  # closing a pipe another thread is blocked on would hang; leave it
+        if not reader.alive():  # closing a pipe another thread is blocked on would hang; leave it
             proc.stdout.close()
-    output = tail[0]
+    output = reader.text
     if proc.returncode == 0:
         return CheckResult(True, output)
     return CheckResult(False, f"exit code {proc.returncode}\n{output}")

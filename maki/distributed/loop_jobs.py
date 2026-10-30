@@ -103,6 +103,26 @@ def _usable_state(state: Any) -> bool:
         ("iteration", 0, int), ("tokens", 0, int), ("status", "", str), ("loop_id", "", str)))
 
 
+def _parse_requirement(n: int, item: Union[str, Mapping[str, Any]]) -> Requirement:
+    if isinstance(item, str):
+        rid, text = f"r{n}", item
+    elif isinstance(item, Mapping):
+        unknown = set(item) - {"id", "text"}
+        if unknown:
+            raise ValueError(f"requirement {n}: unsupported field(s) {sorted(unknown)}; "
+                             "only text requirements are accepted over HTTP")
+        rid, text = str(item.get("id") or f"r{n}"), item.get("text")
+    else:
+        raise ValueError(f"requirement {n} must be a string or an object with 'text'")
+    if not _REQUIREMENT_ID.match(rid):
+        raise ValueError(f"requirement {n}: id must be 1-64 letters, digits, '_', '.' or '-'")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError(f"requirement {n} needs non-empty text")
+    if len(text) > _MAX_TEXT_CHARS:
+        raise ValueError(f"requirement {n} is longer than {_MAX_TEXT_CHARS} characters")
+    return Requirement(rid, text.strip())
+
+
 def parse_requirements(raw: Sequence[Union[str, Mapping[str, Any]]]) -> List[Requirement]:
     """Turn caller-supplied requirements into agent-judged ``Requirement`` objects.
 
@@ -116,25 +136,7 @@ def parse_requirements(raw: Sequence[Union[str, Mapping[str, Any]]]) -> List[Req
         raise ValueError("requirements must be a non-empty list")
     if len(raw) > _MAX_REQUIREMENTS:
         raise ValueError(f"at most {_MAX_REQUIREMENTS} requirements are allowed")
-    out: List[Requirement] = []
-    for n, item in enumerate(raw, 1):
-        if isinstance(item, str):
-            rid, text = f"r{n}", item
-        elif isinstance(item, Mapping):
-            unknown = set(item) - {"id", "text"}
-            if unknown:
-                raise ValueError(f"requirement {n}: unsupported field(s) {sorted(unknown)}; "
-                                 "only text requirements are accepted over HTTP")
-            rid, text = str(item.get("id") or f"r{n}"), item.get("text")
-        else:
-            raise ValueError(f"requirement {n} must be a string or an object with 'text'")
-        if not _REQUIREMENT_ID.match(rid):
-            raise ValueError(f"requirement {n}: id must be 1-64 letters, digits, '_', '.' or '-'")
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError(f"requirement {n} needs non-empty text")
-        if len(text) > _MAX_TEXT_CHARS:
-            raise ValueError(f"requirement {n} is longer than {_MAX_TEXT_CHARS} characters")
-        out.append(Requirement(rid, text.strip()))
+    out = [_parse_requirement(n, item) for n, item in enumerate(raw, 1)]
     if len({r.id for r in out}) != len(out):
         raise ValueError("requirement ids must be unique")
     return out

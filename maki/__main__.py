@@ -33,6 +33,16 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+def _refuse_open_loops(args: argparse.Namespace, server_cfg) -> None:
+    """Exit unless loops are off, or the server is loopback-only or has an API key."""
+    if server_cfg.judge is None or args.api_key or _is_loopback(args.host):
+        return
+    print("Error: loops are enabled (the config has a 'judge:' section) but the server would listen on "
+          f"{args.host} without --api-key; anyone who can reach it could start and approve loops. "
+          "Pass --api-key, bind to 127.0.0.1, or remove the 'judge:' section.", file=sys.stderr)
+    sys.exit(1)
+
+
 def _cmd_serve(args: argparse.Namespace) -> None:
     if args.tls_key and not args.tls_cert:
         print("Error: --tls-key requires --tls-cert", file=sys.stderr)
@@ -58,11 +68,7 @@ def _cmd_serve(args: argparse.Namespace) -> None:
         print(f"Error loading config: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if server_cfg.judge is not None and not args.api_key and not _is_loopback(args.host):
-        print("Error: loops are enabled (the config has a 'judge:' section) but the server would listen on "
-              f"{args.host} without --api-key; anyone who can reach it could start and approve loops. "
-              "Pass --api-key, bind to 127.0.0.1, or remove the 'judge:' section.", file=sys.stderr)
-        sys.exit(1)
+    _refuse_open_loops(args, server_cfg)
 
     agent = server_cfg.agent
     app = create_app(agent, api_key=args.api_key, judge=server_cfg.judge, loop_caps=server_cfg.loop_caps)
