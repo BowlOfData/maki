@@ -43,6 +43,7 @@ class LoopSpecTests(unittest.TestCase):
 
     def test_validation(self):
         for kw in ({"goal": ""}, {"requirements": []}, {"max_iterations": 0}, {"max_iterations": True},
+                   {"max_artifact_chars": 10}, {"max_artifact_chars": True},
                    {"stall_limit": 0}, {"max_seconds": 0}, {"context": "weird"},
                    {"requirements": [Requirement("a", "x"), Requirement("a", "y")]}):
             args = {"goal": "g", "requirements": self.reqs(), **kw}

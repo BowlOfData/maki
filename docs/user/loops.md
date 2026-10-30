@@ -39,10 +39,12 @@ print(result.artifact)
 | `timeout` | `max_seconds` of wall-clock time passed |
 | `token_budget` | `max_tokens` (maker plus judge) was crossed |
 | `stalled` | no improvement for `stall_limit` iterations (default 3) |
-| `blocked` | the judge says the goal cannot be met as written |
+| `blocked` | the judge says the goal cannot be met as written (only when some requirement still fails: success wins) |
 | `stopped` | your `on_iteration` hook returned `Decision.STOP`, or an approval was rejected |
 | `error` | the agent raised an error |
 | `suspended` | waiting for a human approval |
+
+Long artifacts are cut in the middle (marked) before the judge and the next prompt see them: `max_artifact_chars`, default 20000, `None` for no limit. Command checks, callable checks and `result.artifact` always get the full text. Reusing the `loop_id` of an unfinished loop is refused: use `resume_loop`, a new id, or `overwrite=True`.
 
 Caps are checked between iterations, so a model call in flight finishes first. The token budget can overshoot by one iteration. Tokens come from the backends' reported usage (`agent.usage`); a backend that reports none counts as zero.
 
@@ -111,6 +113,8 @@ loop:
 | `DELETE /loop/{id}` | cancel after the current iteration |
 | `POST /loop/{id}/approval` | answer a suspended loop: `{"approve": true, "note": ""}` |
 | `POST /loop/{id}/resume` | continue a stopped, interrupted or approved loop |
+
+`maki serve` refuses to start with a `judge:` section on a non-loopback host unless `--api-key` is set. Loop request bodies are limited to 256 KiB (413).
 
 Remote loops accept **text requirements only**; a command or any other field is rejected with 400. The server runs one loop at a time (409 when busy), answers 503 when no judge is configured, and the served agent never judges its own work.
 

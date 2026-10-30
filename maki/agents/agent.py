@@ -244,7 +244,7 @@ class Agent(PluginHandler, ReasoningEngine):
         raise RuntimeError(f"Task '{task}' failed after {max_retries} attempts")
 
     def run_loop(self, goal: str, requirements, judge, on_iteration=None, confirm_requirements=None,
-                 approvals=None, **options):
+                 approvals=None, overwrite=False, **options):
         """
         Work on ``goal`` in a loop until a judge confirms every requirement is met.
 
@@ -259,9 +259,10 @@ class Agent(PluginHandler, ReasoningEngine):
                 return False to cancel.
             approvals: An ``ApprovalStore`` for durable approval before every iteration; a
                 pending approval returns a suspended result, continued by ``resume_loop``.
+            overwrite: Start over even if ``loop_id``/``loop_dir`` holds an unfinished checkpoint.
             **options: ``LoopSpec`` fields: ``max_iterations``, ``max_seconds``,
                 ``stall_limit``, ``context`` ("shared" needs ``stateful=True``),
-                ``max_tokens``, ``use_plugins``, ``artifact_fn``, ``cwd``, ``loop_dir``, ``loop_id``.
+                ``max_tokens``, ``max_artifact_chars``, ``use_plugins``, ``artifact_fn``, ``cwd``, ``loop_dir``, ``loop_id``.
 
         Returns:
             A ``LoopResult``; see :mod:`maki.agents.loop`.
@@ -270,7 +271,7 @@ class Agent(PluginHandler, ReasoningEngine):
 
         spec = LoopSpec(goal, self._loop_requirements(requirements), **options)
         return run_loop(self, judge, spec, on_iteration=on_iteration,
-                        confirm_requirements=confirm_requirements, approvals=approvals)
+                        confirm_requirements=confirm_requirements, approvals=approvals, overwrite=overwrite)
 
     def resume_loop(self, goal: str, requirements, judge, on_iteration=None, approvals=None, **options):
         """Continue a loop from its checkpoint; ``options`` must include ``loop_id`` (or ``loop_dir``).

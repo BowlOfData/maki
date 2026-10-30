@@ -70,6 +70,7 @@ class CompletionTests(LoopWorkflowBase):
         self.assertIn("loop max_iterations after 2 iteration(s)", st.tasks["t"]["reason"])
         self.assertEqual(st.tasks["down"]["status"], TaskStatus.SKIPPED)
         self.assertEqual(st.tasks["down2"]["status"], TaskStatus.SKIPPED)
+        self.assertIn("did not complete its loop", st.tasks["down"]["reason"])
         self.assertEqual(st.tasks["free"]["status"], TaskStatus.COMPLETED)
         self.assertEqual([t for t, _ in echo.calls], ["independent"])
         self.assertTrue(res["t"]["loop_failed"] and res["t"]["verification_failed"])

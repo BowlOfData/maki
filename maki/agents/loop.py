@@ -132,6 +132,9 @@ class LoopSpec:
     """Everything that defines a loop run.
 
     max_seconds:  wall-clock cap, checked between iterations (``None`` = no cap).
+    max_artifact_chars: longest artifact the judge and the maker's prompts will carry (default 20000;
+                  the middle is cut and the cut is marked). ``None`` = no limit. Command and
+                  callable checks, and ``LoopResult.artifact``, always see the full text.
     max_tokens:   token budget for maker + judge together (``None`` = no budget). Checked after
                   each iteration, so a loop can overshoot by one iteration. Counted from the
                   backends' reported usage; an agent that reports none counts as zero.
@@ -156,6 +159,7 @@ class LoopSpec:
     loop_id: Optional[str] = None
     command_timeout: float = 120.0
     max_tokens: Optional[int] = None
+    max_artifact_chars: Optional[int] = 20000
 
     def __post_init__(self) -> None:
         if not isinstance(self.goal, str) or not self.goal.strip():
@@ -175,6 +179,10 @@ class LoopSpec:
         if self.max_tokens is not None and (isinstance(self.max_tokens, bool) or not isinstance(self.max_tokens, int)
                                             or self.max_tokens < 1):
             raise ValueError("LoopSpec.max_tokens must be an integer >= 1 (or None)")
+        if self.max_artifact_chars is not None and (isinstance(self.max_artifact_chars, bool)
+                                                    or not isinstance(self.max_artifact_chars, int)
+                                                    or self.max_artifact_chars < 200):
+            raise ValueError("LoopSpec.max_artifact_chars must be an integer >= 200 (or None)")
         if self.context not in ("shared", "fresh"):
             raise ValueError("LoopSpec.context must be 'shared' or 'fresh'")
         if self.artifact_fn is not None and not callable(self.artifact_fn):
@@ -205,6 +213,7 @@ class LoopTask:
     loop_dir_base: Optional[str] = None
     command_timeout: float = 120.0
     max_tokens: Optional[int] = None
+    max_artifact_chars: Optional[int] = 20000
 
     def __post_init__(self) -> None:
         if not isinstance(self.judge, str) or not self.judge.strip():
@@ -220,7 +229,8 @@ class LoopTask:
                         stall_limit=self.stall_limit, context=self.context, use_plugins=self.use_plugins,
                         artifact_fn=self.artifact_fn, cwd=self.cwd, loop_id=loop_id,
                         loop_dir=os.path.join(base, *(safe_id(part) for part in loop_id.split("/"))),
-                        command_timeout=self.command_timeout, max_tokens=self.max_tokens)
+                        command_timeout=self.command_timeout, max_tokens=self.max_tokens,
+                        max_artifact_chars=self.max_artifact_chars)
 
 
 class StallTracker:
@@ -334,13 +344,24 @@ def draft_requirements(agent: Any, goal: str, max_items: int = 8) -> Tuple[Requi
     return tuple(Requirement(f"d{n}", t.strip(), source="draft") for n, t in enumerate(texts[:max_items], 1))
 
 
+_MAX_NOTES_CHARS = 1500
+
+
 def _split_notes(reply: str) -> Tuple[str, str]:
+    """Split a trailing ``NOTES:`` block off the reply.
+
+    Only a short, single-paragraph tail counts as notes, so a "NOTES:" line inside the work
+    itself (code, a document) is left in the artifact.
+    """
     marker = "\nNOTES:"
     text = "\n" + reply
     idx = text.rfind(marker)
     if idx == -1:
         return reply, ""
-    return text[:idx].lstrip("\n"), text[idx + len(marker):].strip()
+    notes = text[idx + len(marker):].strip()
+    if len(notes) > _MAX_NOTES_CHARS or "\n\n" in notes:
+        return reply, ""
+    return text[:idx].lstrip("\n"), notes
 
 
 def _run_check(req: Requirement, artifact: str, cwd: str, timeout: float) -> CheckResult:
@@ -377,6 +398,14 @@ def _failing_text(reqs: Sequence[Requirement], results: Dict[str, CheckResult], 
     return "\n".join(lines)
 
 
+def _clip(text: str, limit: Optional[int]) -> str:
+    """Cut the middle of an over-long ``text`` to fit ``limit`` characters and say so."""
+    if limit is None or len(text) <= limit:
+        return text
+    keep = limit // 2
+    return f"{text[:keep]}\n[... {len(text) - 2 * keep} characters omitted ...]\n{text[-keep:]}"
+
+
 def _build_prompt(spec: LoopSpec, iteration: int, pad: Scratchpad, artifact: str, note: str,
                   full: bool = False) -> str:
     if iteration == 1:
@@ -390,7 +419,7 @@ def _build_prompt(spec: LoopSpec, iteration: int, pad: Scratchpad, artifact: str
     else:
         parts = [f"Goal:\n{spec.goal}",
                  f"Requirements (all must be met):\n{_requirement_listing(spec.requirements)}",
-                 f"Current artifact:\n{artifact}",
+                 f"Current artifact:\n{_clip(artifact, spec.max_artifact_chars)}",
                  f"Failing requirements and feedback:\n{pad.feedback}",
                  f"Your notes so far:\n{pad.notes or '(none)'}"]
     if note:
@@ -422,12 +451,13 @@ def _artifacts(spec: LoopSpec, body: str) -> Tuple[str, str]:
     function's output (for code: the files) and the judge also sees the reply.
     """
     if spec.artifact_fn is None:
-        return body, body
+        return body, _clip(body, spec.max_artifact_chars)
     try:
         current = str(spec.artifact_fn())
     except Exception as e:  # noqa: BLE001
         current = f"(artifact_fn failed: {type(e).__name__}: {e})"
-    return current, f"Agent reply:\n{body}\n\nArtifact:\n{current}"
+    limit = spec.max_artifact_chars
+    return current, f"Agent reply:\n{_clip(body, limit)}\n\nArtifact:\n{_clip(current, limit)}"
 
 
 def _check_requirements(judge: Any, spec: LoopSpec, artifact: str, current: str,
@@ -457,17 +487,19 @@ def _check_requirements(judge: Any, spec: LoopSpec, artifact: str, current: str,
 
 def _tokens_of(agent: Any) -> int:
     """Total tokens the agent's backend has reported so far (0 if it does not report any)."""
-    total = getattr(getattr(agent, "usage", None), "total_tokens", 0)
+    usage = getattr(agent, "usage", None)
+    counter = getattr(usage, "thread_tokens", None)  # only this thread's calls: others may share the backend
+    total = counter() if callable(counter) else getattr(usage, "total_tokens", 0)
     return total if isinstance(total, int) else 0
 
 
 def _after_iteration_stop(spec: LoopSpec, iteration: int, passing: Optional[int], total: int, blocked: str,
                           tracker: StallTracker, tokens_used: int = 0) -> Optional[Tuple[StopReason, str]]:
     """Return ``(reason, detail)`` if the loop must stop after this iteration, else None."""
+    if passing == total:  # every requirement passed: a judge "block" no longer matters
+        return StopReason.SUCCEEDED, ""
     if blocked:
         return StopReason.BLOCKED, blocked
-    if passing == total:
-        return StopReason.SUCCEEDED, ""
     if tracker.stalled:
         return StopReason.STALLED, f"no improvement for {tracker.streak} iterations"
     if spec.max_tokens is not None and tokens_used >= spec.max_tokens:
@@ -657,7 +689,11 @@ class _LoopRun:
         current, judged = _artifacts(spec, body)
         self.artifact = current
         judge_before = _tokens_of(self.judge)
-        results, judge_error, blocked = _check_requirements(self.judge, spec, judged, current, self.cwd)
+        try:
+            results, judge_error, blocked = _check_requirements(self.judge, spec, judged, current, self.cwd)
+        except Exception as e:  # noqa: BLE001 - stop cleanly (resumable) instead of leaving "running" behind
+            self._spend(spent + _tokens_of(self.judge) - judge_before)
+            return self.finish(StopReason.ERROR, error=f"checking failed: {type(e).__name__}: {e}")
         spent += _tokens_of(self.judge) - judge_before
         self._spend(spent)
 
@@ -687,7 +723,7 @@ class _LoopRun:
 def run_loop(agent: Any, judge: Any, spec: LoopSpec, on_iteration: Optional[OnIteration] = None,
              confirm_requirements: Optional[Callable[[Sequence[Requirement]], bool]] = None,
              approvals: Optional[ApprovalStore] = None,
-             clock: Callable[[], float] = time.monotonic) -> LoopResult:
+             clock: Callable[[], float] = time.monotonic, overwrite: bool = False) -> LoopResult:
     """Run ``agent`` on ``spec`` until the requirements are met or a limit is hit.
 
     Args:
@@ -703,14 +739,24 @@ def run_loop(agent: Any, judge: Any, spec: LoopSpec, on_iteration: Optional[OnIt
         approvals: an :class:`~maki.agents.approvals.ApprovalStore` for durable approval
             before every iteration. A pending approval returns a ``SUSPENDED`` result;
             continue it later with :func:`resume_loop`.
+        overwrite: start over even if the loop directory holds an unfinished checkpoint
+            (without it that is refused, so a resumable loop is never lost by reusing its id).
 
     Raises:
         ValueError: for an invalid setup (unapproved drafts, stateless agent in shared
-            mode, dangerous tools not allowed, ...).
+            mode, dangerous tools not allowed, an unfinished checkpoint in the way, ...).
         LoopBusyError: another process is already running a loop with the same directory.
     """
     run = _LoopRun(agent, judge, spec, on_iteration, approvals, clock)
     with run.lock:
+        if not overwrite:
+            try:
+                existing = run.store.load()
+            except (OSError, ValueError):
+                existing = None  # unreadable: nothing resumable to protect
+            if isinstance(existing, dict) and existing.get("status") != StopReason.SUCCEEDED.value:
+                raise ValueError(f"{run.store.path} holds an unfinished loop (status "
+                                 f"{existing.get('status')!r}); use resume_loop(), a new loop_id, or overwrite=True")
         if confirm_requirements is not None and not confirm_requirements(spec.requirements):
             return run.finish(StopReason.STOPPED, "requirements not confirmed")
         run.pad.flush()

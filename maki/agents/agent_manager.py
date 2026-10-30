@@ -589,7 +589,8 @@ class AgentManager:
                      and checkpoint.get("goal") == spec.goal
                      and checkpoint.get("requirements_fingerprint") == _fingerprint(spec.requirements))
         runner = resume_loop if resumable else run_loop
-        result = runner(agent, judge, spec, on_iteration=log_iteration)
+        extra = {} if resumable else {"overwrite": True}  # a changed goal/requirements replaces the old attempt
+        result = runner(agent, judge, spec, on_iteration=log_iteration, **extra)
 
         wt.attempts += result.iterations
         wt.execution_time = time.time() - start
@@ -652,7 +653,9 @@ class AgentManager:
             reason = (
                 f"dependency '{skipped_dep}' was skipped"
                 if skipped_dep is not None
-                else f"dependency '{unverified_dep}' failed verification"
+                else (f"dependency '{unverified_dep}' did not complete its loop"
+                      if results[unverified_dep].get("loop_failed")
+                      else f"dependency '{unverified_dep}' failed verification")
                 if unverified_dep is not None
                 else (wt.gate_reason or "conditions not met")
             )

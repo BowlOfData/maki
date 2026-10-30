@@ -62,6 +62,27 @@ class BudgetTests(unittest.TestCase):
                            clock=Clock())
         self.assertEqual((more.stop_reason, more.iterations, more.tokens), (StopReason.TOKEN_BUDGET, 2, 240))
 
+    def test_real_agents_report_their_backends_tokens_to_the_loop(self):
+        from maki.agents.agent import Agent
+        from maki.objects import BackendType, LLMResponse
+
+        class Backend:
+            supports_native_tools = False
+
+            def __init__(self, reply):
+                self.reply = reply
+
+            def request(self, prompt):
+                return self.chat(prompt)
+
+            def chat(self, prompt, system=None, **kw):
+                return LLMResponse(self.reply, "m", 10, 5, 15, 0.1, backend=BackendType.OLLAMA)
+
+        maker = Agent("maker", Backend("draft"), stateful=True)
+        judge = Agent("judge", Backend(ONE_FAIL))
+        result = run_loop(maker, judge, self.spec(max_tokens=40, stall_limit=9, max_iterations=5), clock=Clock())
+        self.assertEqual((result.stop_reason, result.iterations, result.tokens), (StopReason.TOKEN_BUDGET, 2, 60))
+
     def test_loop_task_passes_the_budget(self):
         task = LoopTask(judge="j", requirements=["x"], max_tokens=500)
         self.assertEqual(task.to_spec("w/t", "goal").max_tokens, 500)

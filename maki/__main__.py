@@ -23,6 +23,16 @@ from .agents import Agent, AgentManager
 __all__ = ['MakiLLama', 'Agent', 'AgentManager']
 
 
+def _is_loopback(host: str) -> bool:
+    import ipaddress
+    if host in ("localhost", ""):
+        return host == "localhost"
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
 def _cmd_serve(args: argparse.Namespace) -> None:
     if args.tls_key and not args.tls_cert:
         print("Error: --tls-key requires --tls-cert", file=sys.stderr)
@@ -48,6 +58,12 @@ def _cmd_serve(args: argparse.Namespace) -> None:
         print(f"Error loading config: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    if server_cfg.judge is not None and not args.api_key and not _is_loopback(args.host):
+        print("Error: loops are enabled (the config has a 'judge:' section) but the server would listen on "
+              f"{args.host} without --api-key; anyone who can reach it could start and approve loops. "
+              "Pass --api-key, bind to 127.0.0.1, or remove the 'judge:' section.", file=sys.stderr)
+        sys.exit(1)
+
     agent = server_cfg.agent
     app = create_app(agent, api_key=args.api_key, judge=server_cfg.judge, loop_caps=server_cfg.loop_caps)
 
@@ -57,7 +73,8 @@ def _cmd_serve(args: argparse.Namespace) -> None:
     print(f"  Auth          {'Bearer token' if args.api_key else 'disabled (trusted network)'}")
     print(f"  TLS           {'enabled' if args.tls_cert else 'disabled'}")
     print(f"  Plugins       {list(agent.plugins.keys()) or 'none'}")
-    print(f"  Loops         {'enabled (judge: ' + server_cfg.judge.name + ')' if server_cfg.judge else 'disabled (no judge: section)'}")
+    loops = f"enabled (judge: {server_cfg.judge.name})" if server_cfg.judge else "disabled (no judge: section)"
+    print(f"  Loops         {loops}")
 
     uvicorn_kwargs: dict = {"host": args.host, "port": args.port}
     if args.tls_cert:

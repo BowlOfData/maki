@@ -338,6 +338,35 @@ class RestartTests(JobsTestBase):
         maker.release.set()
         self.wait(resumed)
 
+    def test_old_corrupt_or_empty_loop_directories_are_pruned_too(self):
+        import time
+        jobs = self.jobs(FakeAgent(["a"]), [ALL_PASS])
+        long_ago = time.time() - 40 * 86400
+        corrupt = os.path.join(self.tmp.name, "loop-bbbbbbbbbbbb")
+        empty = os.path.join(self.tmp.name, "loop-cccccccccccc")
+        fresh = os.path.join(self.tmp.name, "loop-dddddddddddd")
+        for d in (corrupt, empty, fresh):
+            os.makedirs(d)
+        with open(os.path.join(corrupt, "state.json"), "w") as f:
+            f.write("{not json")
+        for path in (os.path.join(corrupt, "state.json"), empty):
+            os.utime(path, (long_ago, long_ago))
+        self.assertEqual(jobs.prune(), 2)
+        self.assertEqual(sorted(os.listdir(self.tmp.name)), [".approvals", "loop-dddddddddddd"])
+
+    def test_prune_skips_a_loop_another_process_is_running(self):
+        import time
+        from maki.agents.loop_scratchpad import LoopLock
+        jobs = self.jobs(FakeAgent(["a"]), [ALL_PASS])
+        job = jobs.start("goal", REQS)
+        self.wait(job)
+        long_ago = time.time() - 40 * 86400
+        os.utime(os.path.join(self.tmp.name, job.id, "state.json"), (long_ago, long_ago))
+        with LoopLock(os.path.join(self.tmp.name, job.id)):  # e.g. a resume running in another process
+            self.assertEqual(jobs.prune(), 0)
+            self.assertTrue(os.path.exists(os.path.join(self.tmp.name, job.id, "state.json")))
+        self.assertEqual(jobs.prune(), 1)
+
     def test_pruning_also_forgets_the_loops_approval_record(self):
         import time
         jobs = self.jobs(FakeAgent(["a"]), [ALL_PASS])
@@ -349,6 +378,25 @@ class RestartTests(JobsTestBase):
         os.utime(os.path.join(self.tmp.name, job.id, "state.json"), (long_ago, long_ago))
         self.assertEqual(jobs.prune(), 1)
         self.assertEqual(os.listdir(approvals), [])
+
+    def test_a_hand_edited_checkpoint_is_a_clean_error_not_a_crash(self):
+        import json
+        first = self.jobs(FakeAgent(["a"]), [ONE_FAIL])
+        job = first.start("goal", REQS, max_iterations=1)
+        self.wait(job)
+        path = os.path.join(self.tmp.name, job.id, "state.json")
+        with open(path) as f:
+            good = json.load(f)
+        for broken in ([1, 2], {**good, "stall": "oops"}, {**good, "requirements": [3]},
+                       {**good, "iteration": "many"}, {k: v for k, v in good.items() if k != "goal"}):
+            with open(path, "w") as f:
+                json.dump(broken, f)
+            fresh = self.jobs(FakeAgent(["a"]), [ALL_PASS])
+            with self.assertRaises(ValueError, msg=str(broken)[:40]):
+                fresh.resume(job.id)
+            with self.assertRaises(LoopJobNotFound):
+                fresh.snapshot(job.id)
+            fresh.list()  # must not raise
 
     def test_unknown_snapshot(self):
         with self.assertRaises(LoopJobNotFound):

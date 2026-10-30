@@ -498,6 +498,38 @@ class TestServeCLI(unittest.TestCase):
             self.assertNotIn("ssl_certfile", kwargs)
             self.assertNotIn("ssl_keyfile", kwargs)
 
+    def _serve_args(self, host, api_key=None):
+        import argparse
+        return argparse.Namespace(config="fake.yaml", host=host, port=8100, api_key=api_key,
+                                  tls_cert=None, tls_key=None)
+
+    def _serve(self, host, judge, api_key=None):
+        from maki.__main__ import _cmd_serve
+        agent = MagicMock()
+        agent.name, agent.role, agent.plugins = "a", "", {}
+        with patch("maki.distributed.config_loader.load_server_config",
+                   return_value=MagicMock(agent=agent, judge=judge)), \
+             patch("maki.distributed.server.create_app", return_value=MagicMock()), \
+             patch("uvicorn.run") as run:
+            _cmd_serve(self._serve_args(host, api_key))
+            return run
+
+    def test_loops_without_api_key_are_refused_off_loopback(self):
+        judge = MagicMock()
+        judge.name = "j"
+        for host in ("0.0.0.0", "192.168.1.5", "", "example.com"):
+            with self.assertRaises(SystemExit, msg=host):
+                self._serve(host, judge)
+
+    def test_loops_are_fine_on_loopback_or_with_an_api_key(self):
+        judge = MagicMock()
+        judge.name = "j"
+        for host, key in (("127.0.0.1", None), ("localhost", None), ("::1", None), ("0.0.0.0", "secret")):
+            self._serve(host, judge, key).assert_called_once()
+
+    def test_no_judge_means_no_new_restriction(self):
+        self._serve("0.0.0.0", None).assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

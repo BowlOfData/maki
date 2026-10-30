@@ -40,7 +40,7 @@ from ..agents.approvals import ApprovalStore, LocalApprovalStore
 from ..agents.loop import (
     GATE_TASK, Decision, LoopEvent, LoopResult, LoopSpec, Requirement, resume_loop, run_loop,
 )
-from ..agents.loop_scratchpad import LoopBusyError, LoopStore, default_loop_dir, safe_id
+from ..agents.loop_scratchpad import LoopBusyError, LoopLock, LoopStore, default_loop_dir, safe_id
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,23 @@ class LoopCaps:
             raise ValueError("LoopCaps.max_tokens must be an integer >= 1 (or None)")
         if self.retention_days is not None and not (self.retention_days > 0 and math.isfinite(self.retention_days)):
             raise ValueError("LoopCaps.retention_days must be > 0 (or None to keep everything)")
+
+
+def _usable_state(state: Any) -> bool:
+    """A checkpoint on disk is data a person may have edited: check the shape the server relies on."""
+    if not isinstance(state, dict) or not isinstance(state.get("goal"), str):
+        return False
+    reqs = state.get("requirements")
+    if not isinstance(reqs, list) or not all(
+            isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("text"), str)
+            and isinstance(r.get("kind"), str) for r in reqs):
+        return False
+    stall = state.get("stall")
+    limit = stall.get("limit") if isinstance(stall, dict) else None
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        return False
+    return all(isinstance(state.get(k, d), t) for k, d, t in (
+        ("iteration", 0, int), ("tokens", 0, int), ("status", "", str), ("loop_id", "", str)))
 
 
 def parse_requirements(raw: Sequence[Union[str, Mapping[str, Any]]]) -> List[Requirement]:
@@ -174,6 +191,11 @@ class LoopJob:
                 self.result = result
             self._cond.notify_all()
 
+    def events_from(self, index: int) -> "tuple[List[Dict[str, Any]], bool]":
+        """Events from ``index`` on, without waiting, and whether the job is over."""
+        with self._cond:
+            return list(self._events[index:]), self.finished
+
     def wait_events(self, index: int, timeout: float = 15.0) -> "tuple[List[Dict[str, Any]], bool]":
         """Events from ``index`` on (waiting up to ``timeout`` for new ones) and whether the job is over."""
         with self._cond:
@@ -228,8 +250,6 @@ class LoopJobs:
         if days is None:
             return 0
         cutoff = time.time() - days * 86400
-        with self._lock:
-            active = {i for i, j in self._jobs.items() if not j.finished}
         removed = 0
         try:
             names = os.listdir(self.caps.loop_dir_base)
@@ -237,21 +257,41 @@ class LoopJobs:
             return 0
         for name in names:
             path = os.path.join(self.caps.loop_dir_base, name)
-            state_file = os.path.join(path, "state.json")
-            if not LOOP_ID_PATTERN.match(name) or name in active or os.path.islink(path):
+            if not LOOP_ID_PATTERN.match(name) or os.path.islink(path):
                 continue
-            try:
-                if os.path.getmtime(state_file) >= cutoff:
+            with self._lock:  # a start/resume registers its job under this lock, so none can slip in
+                if name in self._jobs and not self._jobs[name].finished:
                     continue
-                state = self._load_state(name)
-                if state is None or state.get("status") == "running":
-                    continue
-                shutil.rmtree(path)
-                self.approvals.discard(name)
-                removed += 1
-            except OSError:
-                logger.warning("could not prune loop directory %s", path, exc_info=True)
+                removed += self._prune_one(name, path, cutoff)
         return removed
+
+    def _prune_one(self, name: str, path: str, cutoff: float) -> int:
+        lock = LoopLock(path)
+        try:
+            state_file = os.path.join(path, "state.json")
+            age_of = state_file if os.path.exists(state_file) else path  # no checkpoint yet: use the directory
+            if os.path.getmtime(age_of) >= cutoff:
+                return 0
+            try:
+                raw = LoopStore(path).load()
+            except (OSError, ValueError):
+                raw = None  # missing or corrupt and old: it can go
+            if isinstance(raw, dict) and raw.get("status") == "running":
+                return 0
+            lock.acquire()  # held by a loop running in another process: leave it alone
+        except LoopBusyError:
+            return 0
+        except OSError:
+            return 0
+        try:
+            shutil.rmtree(path)
+            self.approvals.discard(name)
+            return 1
+        except OSError:
+            logger.warning("could not prune loop directory %s", path, exc_info=True)
+            return 0
+        finally:
+            lock.release()
 
     # -- starting ----------------------------------------------------------------------------
 
@@ -311,6 +351,8 @@ class LoopJobs:
         """
         state = self._load_state(loop_id)
         if state is None:
+            if os.path.exists(os.path.join(self.caps.loop_dir_base, safe_id(loop_id), "state.json")):
+                raise ValueError("this loop's checkpoint is unreadable or corrupt")
             raise LoopJobNotFound(loop_id)
         if state.get("status") == "succeeded":
             raise ValueError("this loop already succeeded")
@@ -335,7 +377,7 @@ class LoopJobs:
             mode = "shared" if getattr(self.agent, "stateful", False) else "fresh"
         spec = LoopSpec(state["goal"], reqs, max_iterations=iters, max_seconds=seconds, context=mode,
                         use_plugins=state.get("use_plugins") is True, max_tokens=tokens,
-                        stall_limit=int(state.get("stall", {}).get("limit", 3)), loop_id=loop_id,
+                        stall_limit=state["stall"]["limit"], loop_id=loop_id,
                         loop_dir=os.path.join(self.caps.loop_dir_base, safe_id(loop_id)))
         spent = state.get("tokens")
         job = LoopJob(loop_id, spec.goal, reqs, base_tokens=spent if isinstance(spent, int) else 0)
@@ -413,7 +455,7 @@ class LoopJobs:
             state = LoopStore(directory).load()
         except (OSError, json.JSONDecodeError):
             return None
-        return state if isinstance(state, dict) else None
+        return state if _usable_state(state) else None
 
     def snapshot(self, loop_id: str) -> Dict[str, Any]:
         """A job's status: from memory when known, else rebuilt from its checkpoint on disk."""

@@ -27,8 +27,9 @@ class EngineBase(unittest.TestCase):
     def run_it(self, maker_replies, judge_replies, reqs=AB, hook=None, maker_kw=None, **spec_kw):
         maker = FakeAgent(maker_replies, **(maker_kw or {}))
         judge = FakeAgent(judge_replies, stateful=False)
+        overwrite = spec_kw.pop("overwrite", False)
         result = run_loop(maker, judge, self.spec(reqs, **spec_kw), on_iteration=hook,
-                          clock=spec_kw.pop("clock", None) or Clock())
+                          clock=spec_kw.pop("clock", None) or Clock(), overwrite=overwrite)
         return result, maker, judge
 
 
@@ -89,6 +90,82 @@ class StoppingTests(EngineBase):
         self.assertEqual(res.stop_reason, StopReason.ERROR)
         self.assertIn("model down", res.error)
         self.assertEqual(LoopStore(os.path.join(self.tmp.name, "loop")).load()["status"], "error")
+
+
+class NotesAndBlockTests(EngineBase):
+    def test_a_notes_line_inside_the_work_stays_in_the_artifact(self):
+        doc = "Intro\nNOTES: this heading is part of the document\n\nand a second paragraph of the document."
+        result, _, _ = self.run_it([doc], [verdict({"a": True, "b": True})])
+        self.assertEqual(result.artifact, doc)
+        long_tail = "work\nNOTES: " + "n" * 2000
+        result, _, _ = self.run_it([long_tail], [verdict({"a": True, "b": True})], overwrite=True)
+        self.assertEqual(result.artifact, long_tail)
+
+    def test_a_short_trailing_notes_block_is_still_split_off(self):
+        result, _, _ = self.run_it(["the work\nNOTES: tried A"], [verdict({"a": True, "b": True})])
+        self.assertEqual(result.artifact, "the work")
+
+    def test_success_beats_a_judge_block(self):
+        result, _, _ = self.run_it(["x"], [verdict({"a": True, "b": True}, ) .replace('"block": ""', '"block": "odd"')])
+        self.assertEqual(result.stop_reason, StopReason.SUCCEEDED)
+
+    def test_a_block_still_stops_a_failing_loop(self):
+        result, _, _ = self.run_it(["x"], [verdict({"a": True, "b": False}).replace('"block": ""', '"block": "impossible"')])
+        self.assertEqual((result.stop_reason, result.detail), (StopReason.BLOCKED, "impossible"))
+
+
+class ArtifactCapTests(EngineBase):
+    BIG = "START" + "x" * 5000 + "END"
+
+    def test_judge_and_next_prompt_see_a_clipped_artifact_but_the_result_keeps_the_full_one(self):
+        result, maker, judge = self.run_it([self.BIG], [verdict({"a": True, "b": False})], max_artifact_chars=400,
+                                           max_iterations=2, stall_limit=5, context="fresh",
+                                           maker_kw={"stateful": False})
+        self.assertEqual(result.artifact, self.BIG)
+        self.assertLess(len(judge.prompts[0]), 2000)
+        self.assertIn("characters omitted", judge.prompts[0])
+        self.assertIn("START", judge.prompts[0])
+        self.assertIn("END", judge.prompts[0])
+        self.assertIn("characters omitted", maker.prompts[1])
+        self.assertNotIn("x" * 1000, maker.prompts[1])
+
+    def test_callable_checks_get_the_full_artifact(self):
+        seen = []
+        req = Requirement("c", "full text", check=lambda t: seen.append(len(t)) or True)
+        run_loop(FakeAgent([self.BIG]), FakeAgent(["{}"], stateful=False),
+                 self.spec([req], max_artifact_chars=400), clock=Clock())
+        self.assertEqual(seen, [len(self.BIG)])
+
+    def test_none_disables_the_cap(self):
+        result, _, judge = self.run_it([self.BIG], [verdict({"a": True, "b": True})], max_artifact_chars=None)
+        self.assertNotIn("omitted", judge.prompts[0])
+
+
+class OverwriteTests(EngineBase):
+    def test_reusing_the_directory_of_an_unfinished_loop_is_refused_unless_overwritten(self):
+        first, _, _ = self.run_it(["a"], [verdict({"a": True, "b": False})], max_iterations=1)
+        self.assertEqual(first.stop_reason, StopReason.MAX_ITERATIONS)
+        with self.assertRaises(ValueError) as cm:
+            self.run_it(["a"], [verdict({"a": True, "b": True})])
+        self.assertIn("resume_loop", str(cm.exception))
+        again, _, _ = self.run_it(["a"], [verdict({"a": True, "b": True})], overwrite=True)
+        self.assertEqual(again.stop_reason, StopReason.SUCCEEDED)
+
+    def test_a_finished_loop_can_be_rerun(self):
+        self.run_it(["a"], [verdict({"a": True, "b": True})])
+        again, _, _ = self.run_it(["a"], [verdict({"a": True, "b": True})])
+        self.assertEqual(again.stop_reason, StopReason.SUCCEEDED)
+
+
+class UnexpectedFailureTests(EngineBase):
+    def test_an_exception_while_checking_ends_the_loop_with_error_and_a_checkpoint(self):
+        from unittest.mock import patch
+        with patch("maki.agents.loop._check_requirements", side_effect=RuntimeError("check blew up")):
+            result, _, _ = self.run_it(["draft"], [verdict({"a": True, "b": True})])
+        self.assertEqual(result.stop_reason, StopReason.ERROR)
+        self.assertIn("check blew up", result.error)
+        state = LoopStore(os.path.join(self.tmp.name, "loop")).load()
+        self.assertEqual(state["status"], "error")  # resumable, not left as "running"
 
 
 class CheckTests(EngineBase):

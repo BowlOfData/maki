@@ -223,6 +223,48 @@ class ApprovalAndBudgetTests(LoopServerBase):
         self.assertEqual(events[-1]["tokens"], status["tokens"])
 
 
+class BodyLimitTests(LoopServerBase):
+    def test_an_oversized_loop_request_is_413_by_content_length_and_when_chunked(self):
+        client, app = self.client()
+        big = {"goal": "g", "requirements": ["x"], "padding": "p" * 300_000}
+        self.assertEqual(client.post("/loop", json=big).status_code, 413)
+
+        def chunks():  # no Content-Length: counted as it arrives
+            for _ in range(40):
+                yield b"x" * 10_000
+        self.assertEqual(client.post("/loop", content=chunks(),
+                                     headers={"content-type": "application/json"}).status_code, 413)
+        self.assertEqual(app.state.loop_jobs.list(), [])
+
+    def test_normal_requests_and_other_endpoints_are_not_limited(self):
+        client, app = self.client()
+        loop_id = client.post("/loop", json=BODY).json()["id"]
+        self.finish(app, loop_id)
+        self.assertEqual(client.get("/loop").status_code, 200)
+
+
+class WatcherTests(LoopServerBase):
+    def test_many_concurrent_watchers_do_not_need_a_thread_each(self):
+        maker = GatedAgent(["a"])
+        client, app = self.client(maker)
+        loop_id = client.post("/loop", json=BODY).json()["id"]
+        maker.entered.wait(5)
+        results = []
+
+        def watch():
+            results.append(sse_events(client.get(f"/loop/{loop_id}/events")))
+
+        threads = [threading.Thread(target=watch) for _ in range(60)]
+        for t in threads:
+            t.start()
+        maker.release.set()
+        for t in threads:
+            t.join(15)
+        self.finish(app, loop_id)
+        self.assertEqual(len(results), 60)
+        self.assertTrue(all(done and events[-1]["type"] == "stopped" for events, done in results))
+
+
 class AuthTests(LoopServerBase):
     def test_approval_needs_the_api_key(self):
         client, _ = self.client(api_key="secret")

@@ -46,6 +46,7 @@ except ImportError as _e:
         'Install them with: pip install "maki-framework[distributed]"'
     ) from _e
 
+import asyncio
 import json
 import logging
 import secrets
@@ -66,6 +67,67 @@ from .loop_jobs import LOOP_ID_PATTERN, LoopCaps, LoopJobBusy, LoopJobNotFound, 
 logger = logging.getLogger(__name__)
 
 _bearer = HTTPBearer(auto_error=False)
+
+_LOOP_BODY_LIMIT = 256 * 1024  # bytes; a loop request is a goal plus at most 30 short requirements
+_SSE_POLL_SECONDS = 0.25
+
+
+class _BodyLimitMiddleware:
+    """Answer 413 to a request under ``prefix`` whose body is larger than ``max_bytes``.
+
+    Checks the declared Content-Length first, then counts the bytes actually received, so a
+    missing or false Content-Length (chunked uploads) cannot get around it.
+    """
+
+    def __init__(self, app, max_bytes: int, prefix: str):
+        self.app, self.max_bytes, self.prefix = app, max_bytes, prefix
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope["path"].startswith(self.prefix):
+            await self.app(scope, receive, send)
+            return
+        declared = dict(scope["headers"]).get(b"content-length", b"")
+        if declared.isdigit() and int(declared) > self.max_bytes:
+            await self._reject(send)
+            return
+        received, exceeded, replied = 0, False, False
+
+        async def limited():
+            nonlocal received, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    exceeded = True
+                    raise _TooLarge()
+            return message
+
+        async def tracking_send(message):
+            # The framework turns the read failure into its own 400; answer 413 instead.
+            nonlocal replied
+            if exceeded:
+                if not replied:
+                    replied = True
+                    await self._reject(send)
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, limited, tracking_send)
+        except _TooLarge:
+            pass
+        if exceeded and not replied:
+            await self._reject(send)
+
+    async def _reject(self, send):
+        body = json.dumps({"detail": f"Request body larger than {self.max_bytes} bytes"}).encode()
+        await send({"type": "http.response.start", "status": 413,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
+
+
+class _TooLarge(Exception):
+    pass
 
 
 class ExecuteRequest(BaseModel):
@@ -150,6 +212,7 @@ def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agen
             return response
 
     app.add_middleware(_TracingMiddleware)
+    app.add_middleware(_BodyLimitMiddleware, max_bytes=_LOOP_BODY_LIMIT, prefix="/loop")
 
     def _auth(
         request: Request,
@@ -316,17 +379,23 @@ def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agen
             return StreamingResponse(_from_disk(), media_type="text/event-stream")
         heartbeat: float = request.app.state.loop_heartbeat_seconds
 
-        def _sse():
-            index = start
+        async def _sse():
+            # Polls instead of blocking a worker thread per watcher, and a dropped client
+            # cancels this coroutine at the sleep.
+            index, quiet_since = start, time.monotonic()
             while True:
-                events, finished = job.wait_events(index, timeout=heartbeat)
+                events, finished = job.events_from(index)
                 for event in events:
                     yield f"id: {index}\ndata: {json.dumps(event)}\n\n"
                     index += 1
+                    quiet_since = time.monotonic()
                 if finished and not events:
                     break
                 if not events:
-                    yield ": keep-alive\n\n"
+                    if time.monotonic() - quiet_since >= heartbeat:
+                        yield ": keep-alive\n\n"
+                        quiet_since = time.monotonic()
+                    await asyncio.sleep(min(_SSE_POLL_SECONDS, heartbeat))
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_sse(), media_type="text/event-stream")

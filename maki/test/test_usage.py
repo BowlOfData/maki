@@ -1,4 +1,6 @@
 """Token usage counting on backends and agents."""
+import copy
+import pickle
 import unittest
 from unittest.mock import MagicMock
 
@@ -9,6 +11,14 @@ from maki.usage import Usage, attach_usage
 
 def resp(p, c, content="ok"):
     return LLMResponse(content, "m", p, c, p + c, 0.1, backend=BackendType.OLLAMA)
+
+
+class PicklableBackend:
+    """Module-level so pickle can find it; real bound methods like a genuine backend."""
+    supports_native_tools = False
+
+    def chat(self, prompt, system=None):
+        return resp(2, 1)
 
 
 class FakeBackend:
@@ -57,6 +67,35 @@ class UsageTests(unittest.TestCase):
         b.replies = [resp(1, 1)]
         b.chat("x")  # a later plain call still counts
         self.assertEqual((usage.total_tokens, usage.calls), (17, 2))
+
+    def test_a_counted_backend_can_still_be_copied_and_pickled(self):
+        b = PicklableBackend()
+        usage = attach_usage(b)
+        b.chat("x")
+        for clone in (copy.deepcopy(b), pickle.loads(pickle.dumps(b))):
+            self.assertEqual(clone.usage.total_tokens, 3)
+            clone.chat("x")  # the clone counts on its own usage
+            self.assertEqual((clone.usage.total_tokens, usage.total_tokens), (6, 3))
+
+    def test_thread_tokens_separate_concurrent_users_of_one_backend(self):
+        import threading
+        b = FakeBackend()
+        usage = attach_usage(b)
+        done = threading.Event()
+
+        def other():
+            b.replies = [resp(100, 100)]
+            b.chat("x")
+            done.set()
+
+        t = threading.Thread(target=other)
+        t.start()
+        done.wait(5)
+        t.join()
+        b.replies = [resp(1, 2)]
+        b.chat("x")
+        self.assertEqual(usage.total_tokens, 203)
+        self.assertEqual(usage.thread_tokens(), 3)  # this thread's calls only
 
     def test_attach_is_idempotent(self):
         b = FakeBackend()
