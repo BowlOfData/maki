@@ -24,7 +24,7 @@ plugins:
 maki serve --config agent.yaml --host 127.0.0.1 --port 8100
 ```
 
-Options: `--api-key KEY` (bearer-token auth), `--tls-cert FILE` and `--tls-key FILE` (HTTPS). The server exposes `/execute`, `/stream`, `/health` and memory endpoints.
+Options: `--api-key KEY` (bearer-token auth), `--tls-cert FILE` and `--tls-key FILE` (HTTPS). The server exposes `/execute`, `/stream`, `/health` and memory endpoints, plus `/loop` endpoints when the config has a `judge:` section (see [Agent loops](loops.md)).
 
 ## Connect from another process
 

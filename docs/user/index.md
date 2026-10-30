@@ -29,6 +29,7 @@ pip install maki-framework
 | Use OpenAI, Anthropic, llama.cpp, vLLM or HuggingFace | [Backends](backends.md) |
 | Give an agent memory, streaming or tools | [Agents](agents.md) |
 | Chain several agents together | [Workflows](workflows.md) |
+| Let an agent iterate until requirements are met | [Agent loops](loops.md) |
 | Let an agent read files or search the web | [Plugins](plugins.md) |
 | Give an agent a notes vault or a searchable knowledge base | [Memory: Obsidian and RAG](memory.md) |
 | Expose an agent over HTTP | [Serving agents](serving.md) |

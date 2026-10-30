@@ -186,7 +186,48 @@ class CancelAndResumeTests(LoopServerBase):
         self.assertEqual(client.post(f"/loop/{loop_id}/resume").status_code, 400)
 
 
+class ApprovalAndBudgetTests(LoopServerBase):
+    def test_gated_loop_suspends_is_approved_over_http_and_resumes(self):
+        client, app = self.client(FakeAgent(["a"]), (ALL_PASS,))
+        loop_id = client.post("/loop", json={**BODY, "require_approval": True}).json()["id"]
+        self.finish(app, loop_id)
+        status = client.get(f"/loop/{loop_id}").json()
+        self.assertEqual(status["status"], "suspended")
+        self.assertIn("Start loop", status["pending_approval"]["summary"])
+        r = client.post(f"/loop/{loop_id}/approval", json={"approve": True, "note": "careful"})
+        self.assertEqual((r.status_code, r.json()["pending_approval"]), (200, None))
+        self.assertEqual(client.post(f"/loop/{loop_id}/resume").status_code, 202)
+        self.finish(app, loop_id)
+        self.assertEqual(client.get(f"/loop/{loop_id}").json()["status"], "succeeded")
+
+    def test_approval_errors(self):
+        client, app = self.client()
+        self.assertEqual(client.post("/loop/loop-0123456789ab/approval", json={"approve": True}).status_code, 404)
+        self.assertEqual(client.post("/loop/not-an-id/approval", json={"approve": True}).status_code, 404)
+        loop_id = client.post("/loop", json=BODY).json()["id"]  # no gate
+        self.finish(app, loop_id)
+        self.assertEqual(client.post(f"/loop/{loop_id}/approval", json={"approve": True}).status_code, 409)
+        self.assertEqual(client.post(f"/loop/{loop_id}/approval", json={"approve": True, "x": 1}).status_code, 422)
+        self.assertEqual(client.post(f"/loop/{loop_id}/approval", json={}).status_code, 422)
+
+    def test_token_budget_over_http(self):
+        self.caps.max_tokens = 500
+        client, app = self.client(FakeAgent(["a"], tokens_per_call=100), (ONE_FAIL,))
+        self.assertEqual(client.post("/loop", json={**BODY, "max_tokens": 501}).status_code, 400)
+        loop_id = client.post("/loop", json={**BODY, "max_tokens": 150, "stall_limit": 5}).json()["id"]
+        self.finish(app, loop_id)
+        status = client.get(f"/loop/{loop_id}").json()
+        self.assertEqual((status["status"], status["iterations"]), ("token_budget", 2))
+        events, _ = sse_events(client.get(f"/loop/{loop_id}/events"))
+        self.assertEqual(events[-1]["stop_reason"], "token_budget")
+        self.assertEqual(events[-1]["tokens"], status["tokens"])
+
+
 class AuthTests(LoopServerBase):
+    def test_approval_needs_the_api_key(self):
+        client, _ = self.client(api_key="secret")
+        self.assertEqual(client.post("/loop/loop-0123456789ab/approval", json={"approve": True}).status_code, 401)
+
     def test_loop_endpoints_need_the_api_key(self):
         client, app = self.client(api_key="secret")
         self.assertEqual(client.post("/loop", json=BODY).status_code, 401)

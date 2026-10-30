@@ -30,6 +30,7 @@ judge:                      # optional; enables POST /loop. A separate, stateles
 loop:                       # optional caps for remote loops
   max_iterations: 20        # default 20
   max_seconds: 3600         # default 3600
+  max_tokens: 200000        # optional cap on a loop's token budget (maker + judge); default none
   loop_dir_base: ~/.maki/loops
   retention_days: 14        # finished loops older than this are deleted (null = keep all)
 
@@ -168,7 +169,7 @@ def load_agent_from_config(path: str) -> Agent:
 
 
 _JUDGE_KEYS = {"backend", "model", "base_url", "temperature", "instructions"}  # think/json are forced
-_LOOP_KEYS = {"max_iterations", "max_seconds", "loop_dir_base", "retention_days"}
+_LOOP_KEYS = {"max_iterations", "max_seconds", "max_tokens", "loop_dir_base", "retention_days"}
 
 
 def _judge_from_cfg(agent_name: str, section: dict) -> Agent:
@@ -193,6 +194,8 @@ def _caps_from_cfg(section: dict) -> LoopCaps:
         kwargs["max_iterations"] = section["max_iterations"]
     if "max_seconds" in section:
         kwargs["max_seconds"] = None if section["max_seconds"] is None else float(section["max_seconds"])
+    if "max_tokens" in section:
+        kwargs["max_tokens"] = section["max_tokens"]
     if "retention_days" in section:
         kwargs["retention_days"] = None if section["retention_days"] is None else float(section["retention_days"])
     if section.get("loop_dir_base"):

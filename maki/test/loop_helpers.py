@@ -1,17 +1,23 @@
 """Shared fakes for the agent-loop tests."""
 import json
 
+from maki.usage import Usage
+
 
 class FakeAgent:
     """Maker/judge stand-in returning scripted replies (the last one repeats)."""
 
-    def __init__(self, replies, stateful=True):
+    def __init__(self, replies, stateful=True, tokens_per_call=0):
         self.replies, self.stateful = list(replies), stateful
+        self.tokens_per_call = tokens_per_call
+        self.usage = Usage()
         self.prompts, self.resets = [], 0
         self.plugins, self.allow_dangerous_tools = {}, False
 
     def execute_task_with_retry(self, task, context=None, use_plugins=False, **kw):
         self.prompts.append(task)
+        if self.tokens_per_call:
+            self.usage.add(self.tokens_per_call, 0, self.tokens_per_call)
         out = self.replies[min(len(self.prompts) - 1, len(self.replies) - 1)]
         if isinstance(out, Exception):
             raise out

@@ -163,6 +163,32 @@ class ProxyLoopTests(unittest.TestCase):
         cancel.assert_called_once_with(loop["id"])
         app.state.loop_jobs.get(loop["id"]).thread.join(10)
 
+    def test_gated_remote_loop_suspends_then_approve_and_resume_finishes_it(self):
+        proxy, _ = self.proxy(judge_replies=(ALL_PASS,))
+        first = proxy.run_loop("goal", REQS, require_approval=True)
+        self.assertEqual((first.stop_reason, first.iterations), ("suspended", 0))
+        self.assertIn("pending_approval", proxy.loop_status(first.loop_id))
+        done = proxy.approve_loop(first.loop_id, True, "ok", resume=True)
+        self.assertIsInstance(done, RemoteLoopResult)
+        self.assertTrue(done.succeeded)
+
+    def test_approve_without_resume_returns_status_and_reject_stops(self):
+        proxy, _ = self.proxy(judge_replies=(ALL_PASS,))
+        first = proxy.run_loop("goal", REQS, require_approval=True)
+        snap = proxy.approve_loop(first.loop_id, False)
+        self.assertIsNone(snap["pending_approval"])
+        self.assertEqual(proxy.resume_loop(first.loop_id).stop_reason, "stopped")
+        with self.assertRaises(MakiAPIError) as cm:
+            proxy.approve_loop(first.loop_id, True)
+        self.assertEqual(cm.exception.status_code, 409)
+
+    def test_token_budget_reaches_the_result(self):
+        maker = _Info(["a"])
+        maker.tokens_per_call = 100
+        proxy, _ = self.proxy(maker=maker, judge_replies=(ONE_FAIL,))
+        result = proxy.run_loop("goal", REQS, max_tokens=150, stall_limit=5)
+        self.assertEqual((result.stop_reason, result.tokens), ("token_budget", 200))
+
     def test_loop_ids_are_validated_before_any_request(self):
         proxy, _ = self.proxy()
         for call in (proxy.loop_status, proxy.cancel_loop, proxy.resume_loop):

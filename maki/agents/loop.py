@@ -108,6 +108,7 @@ class StopReason(Enum):
     STOPPED = "stopped"
     ERROR = "error"
     SUSPENDED = "suspended"
+    TOKEN_BUDGET = "token_budget"
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,9 @@ class LoopSpec:
     """Everything that defines a loop run.
 
     max_seconds:  wall-clock cap, checked between iterations (``None`` = no cap).
+    max_tokens:   token budget for maker + judge together (``None`` = no budget). Checked after
+                  each iteration, so a loop can overshoot by one iteration. Counted from the
+                  backends' reported usage; an agent that reports none counts as zero.
     stall_limit:  consecutive non-improving iterations before stopping (default 3).
     context:      ``"shared"`` or ``"fresh"``.
     use_plugins:  let the agent call its plugins (tools) while working.
@@ -151,6 +155,7 @@ class LoopSpec:
     loop_dir: Optional[str] = None
     loop_id: Optional[str] = None
     command_timeout: float = 120.0
+    max_tokens: Optional[int] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.goal, str) or not self.goal.strip():
@@ -167,6 +172,9 @@ class LoopSpec:
                 raise ValueError(f"LoopSpec.{name} must be an integer >= 1")
         if self.max_seconds is not None and not self.max_seconds > 0:
             raise ValueError("LoopSpec.max_seconds must be > 0")
+        if self.max_tokens is not None and (isinstance(self.max_tokens, bool) or not isinstance(self.max_tokens, int)
+                                            or self.max_tokens < 1):
+            raise ValueError("LoopSpec.max_tokens must be an integer >= 1 (or None)")
         if self.context not in ("shared", "fresh"):
             raise ValueError("LoopSpec.context must be 'shared' or 'fresh'")
         if self.artifact_fn is not None and not callable(self.artifact_fn):
@@ -196,6 +204,7 @@ class LoopTask:
     cwd: Optional[str] = None
     loop_dir_base: Optional[str] = None
     command_timeout: float = 120.0
+    max_tokens: Optional[int] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.judge, str) or not self.judge.strip():
@@ -211,7 +220,7 @@ class LoopTask:
                         stall_limit=self.stall_limit, context=self.context, use_plugins=self.use_plugins,
                         artifact_fn=self.artifact_fn, cwd=self.cwd, loop_id=loop_id,
                         loop_dir=os.path.join(base, *(safe_id(part) for part in loop_id.split("/"))),
-                        command_timeout=self.command_timeout)
+                        command_timeout=self.command_timeout, max_tokens=self.max_tokens)
 
 
 class StallTracker:
@@ -254,6 +263,7 @@ class LoopEvent:
     reply: str
     elapsed_seconds: float
     scratchpad: ReloadReport = field(default_factory=ReloadReport)
+    tokens: int = 0  # maker + judge tokens spent on this iteration
 
     def summary(self) -> str:
         failing = [k for k, v in self.results.items() if not v.passed]
@@ -273,6 +283,7 @@ class LoopResult:
     final_results: Dict[str, CheckResult] = field(default_factory=dict)
     error: str = ""
     detail: str = ""
+    tokens: int = 0  # total maker + judge tokens spent, across resumes
 
     @property
     def succeeded(self) -> bool:
@@ -444,8 +455,14 @@ def _check_requirements(judge: Any, spec: LoopSpec, artifact: str, current: str,
     return {r.id: results[r.id] for r in spec.requirements}, judge_error, blocked
 
 
+def _tokens_of(agent: Any) -> int:
+    """Total tokens the agent's backend has reported so far (0 if it does not report any)."""
+    total = getattr(getattr(agent, "usage", None), "total_tokens", 0)
+    return total if isinstance(total, int) else 0
+
+
 def _after_iteration_stop(spec: LoopSpec, iteration: int, passing: Optional[int], total: int, blocked: str,
-                          tracker: StallTracker) -> Optional[Tuple[StopReason, str]]:
+                          tracker: StallTracker, tokens_used: int = 0) -> Optional[Tuple[StopReason, str]]:
     """Return ``(reason, detail)`` if the loop must stop after this iteration, else None."""
     if blocked:
         return StopReason.BLOCKED, blocked
@@ -453,12 +470,14 @@ def _after_iteration_stop(spec: LoopSpec, iteration: int, passing: Optional[int]
         return StopReason.SUCCEEDED, ""
     if tracker.stalled:
         return StopReason.STALLED, f"no improvement for {tracker.streak} iterations"
+    if spec.max_tokens is not None and tokens_used >= spec.max_tokens:
+        return StopReason.TOKEN_BUDGET, f"used {tokens_used} of {spec.max_tokens} tokens"
     if iteration == spec.max_iterations:
         return StopReason.MAX_ITERATIONS, ""
     return None
 
 
-_GATE_TASK = "loop-gate"
+GATE_TASK = "loop-gate"  # the (workflow, task) pair an approval store keeps a loop's gate under
 
 
 def _fingerprint(requirements: Sequence[Requirement]) -> str:
@@ -489,6 +508,7 @@ class _LoopRun:
         self.artifact, self.note = "", ""
         self.iteration_done = 0
         self.base_elapsed = 0.0
+        self.tokens_used = 0
         self.rebuild_prompt = False
         self.start = clock()
         self.result = LoopResult(self.loop_id, StopReason.STOPPED, 0, self.events, "", self.pad.path)
@@ -520,6 +540,8 @@ class _LoopRun:
                         for k, v in self.result.final_results.items()},
             "last_good": {k: {"passed": v.passed, "feedback": v.feedback} for k, v in self.last_good.items()},
             "uses_approvals": self.approvals is not None,
+            "tokens": self.tokens_used,
+            "max_tokens": self.spec.max_tokens,
             "context": self.spec.context,
             "use_plugins": self.spec.use_plugins,
             "history": list(self.history),
@@ -536,6 +558,7 @@ class _LoopRun:
             self.prev_passed = set(state["prev_passed"])
             self.artifact, self.note = str(state["artifact"]), str(state["note"])
             self.base_elapsed = float(state["elapsed"])
+            self.tokens_used = int(state.get("tokens", 0))
             self.pad.engine_log = [str(x) for x in state["engine_log"]]
             self.pad.feedback, self.pad.notes = str(state["feedback"]), str(state["notes"])
             self.history = [str(x) for x in state["history"]]
@@ -546,6 +569,7 @@ class _LoopRun:
         except (KeyError, TypeError, ValueError, AttributeError) as e:
             raise ValueError(f"loop checkpoint is corrupt ({type(e).__name__}: {e})") from e
         self.result.iterations, self.result.artifact = self.iteration_done, self.artifact
+        self.result.tokens = self.tokens_used
         self.rebuild_prompt = True  # a restarted process has lost any shared conversation
 
     def finish(self, reason: StopReason, detail: str = "", error: str = "") -> LoopResult:
@@ -570,10 +594,10 @@ class _LoopRun:
         if self.approvals is None:
             return None
         key = hashlib.sha256(f"{self.loop_id}:{number}".encode()).hexdigest()[:16]
-        decision = self.approvals.check(self.loop_id, _GATE_TASK, key, self._gate_summary(number))
+        decision = self.approvals.check(self.loop_id, GATE_TASK, key, self._gate_summary(number))
         if decision is ApprovalDecision.PENDING:
             return self.finish(StopReason.SUSPENDED, f"waiting for approval of gate {number}")
-        record = self.approvals.get(self.loop_id, _GATE_TASK)
+        record = self.approvals.get(self.loop_id, GATE_TASK)
         human_note = (record.note if record else "").strip()
         if decision is ApprovalDecision.REJECTED and not human_note:
             return self.finish(StopReason.STOPPED, f"gate {number} rejected")
@@ -588,6 +612,8 @@ class _LoopRun:
         for iteration in range(self.iteration_done + 1, spec.max_iterations + 1):
             if spec.max_seconds is not None and self.elapsed() >= spec.max_seconds:
                 return self.finish(StopReason.TIMEOUT, f"wall-clock cap of {spec.max_seconds}s reached")
+            if spec.max_tokens is not None and self.tokens_used >= spec.max_tokens:
+                return self.finish(StopReason.TOKEN_BUDGET, f"used {self.tokens_used} of {spec.max_tokens} tokens")
             blocked = self.gate(iteration - 1)
             if blocked is not None:
                 return blocked
@@ -602,6 +628,10 @@ class _LoopRun:
                 self.checkpoint("running")  # a pending reviewer note must survive a crash
         return self.finish(StopReason.MAX_ITERATIONS)
 
+    def _spend(self, tokens: int) -> None:
+        self.tokens_used += max(tokens, 0)
+        self.result.tokens = self.tokens_used
+
     def _iterate(self, iteration: int) -> Optional[LoopResult]:
         """Run one iteration; return a result if the loop ends here, else None."""
         spec, reqs, pad = self.spec, self.spec.requirements, self.pad
@@ -614,16 +644,22 @@ class _LoopRun:
         used_note = self.note
         prompt = _build_prompt(spec, iteration, pad, self.artifact, used_note, full=self.rebuild_prompt)
         self.rebuild_prompt = False
+        maker_before = _tokens_of(self.agent)
         try:
             reply = self.agent.execute_task_with_retry(prompt, use_plugins=spec.use_plugins)
         except Exception as e:  # noqa: BLE001 - stop cleanly; the checkpoint keeps the state
+            self._spend(_tokens_of(self.agent) - maker_before)
             return self.finish(StopReason.ERROR, error=f"{type(e).__name__}: {e}")
+        spent = _tokens_of(self.agent) - maker_before
         self.note = ""  # consumed; kept until now so a failed call can be resumed with it
         body, new_notes = _split_notes(getattr(reply, "text", reply))
         pad.append_note(new_notes)
         current, judged = _artifacts(spec, body)
         self.artifact = current
+        judge_before = _tokens_of(self.judge)
         results, judge_error, blocked = _check_requirements(self.judge, spec, judged, current, self.cwd)
+        spent += _tokens_of(self.judge) - judge_before
+        self._spend(spent)
 
         passing = None if judge_error else sum(c.passed for c in results.values())
         improved = self.tracker.update(passing)
@@ -632,7 +668,7 @@ class _LoopRun:
         if not judge_error:
             self.prev_passed = now_passed
         event = LoopEvent(iteration, results, passing, len(reqs), improved, self.tracker.streak, regressions,
-                          judge_error, current, body, self.clock() - iter_start, report)
+                          judge_error, current, body, self.clock() - iter_start, report, max(spent, 0))
         self.events.append(event)
         self.iteration_done = iteration
         self.result.iterations, self.result.artifact, self.result.final_results = iteration, current, results
@@ -644,7 +680,7 @@ class _LoopRun:
         pad.set_feedback(_failing_text(reqs, results, judge_error, self.last_good))
         pad.flush()
         self.checkpoint("running")
-        stop = _after_iteration_stop(spec, iteration, passing, len(reqs), blocked, self.tracker)
+        stop = _after_iteration_stop(spec, iteration, passing, len(reqs), blocked, self.tracker, self.tokens_used)
         return self.finish(*stop) if stop is not None else None
 
 

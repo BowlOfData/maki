@@ -1,0 +1,94 @@
+"""Token usage counting on backends and agents."""
+import unittest
+from unittest.mock import MagicMock
+
+from maki.agents.agent import Agent
+from maki.objects import BackendType, LLMResponse
+from maki.usage import Usage, attach_usage
+
+
+def resp(p, c, content="ok"):
+    return LLMResponse(content, "m", p, c, p + c, 0.1, backend=BackendType.OLLAMA)
+
+
+class FakeBackend:
+    """Real bound methods, like a genuine backend."""
+    supports_native_tools = False
+
+    def __init__(self):
+        self.replies = []
+
+    def request(self, prompt):
+        return self.replies.pop(0)
+
+    def chat(self, prompt, system=None):
+        return self.replies.pop(0)
+
+    def chat_collect(self, prompt, system=None):
+        return self.replies.pop(0)
+
+    def chat_with_tools(self, messages, tools, system=None):
+        return self.replies.pop(0), None, messages
+
+
+class DelegatingBackend(FakeBackend):
+    """Like the base LLMBackend: chat_collect falls back to chat()."""
+
+    def chat_collect(self, prompt, system=None):
+        return self.chat(prompt, system=system)
+
+
+class UsageTests(unittest.TestCase):
+    def test_chat_collect_and_tool_calls_are_counted(self):
+        b = FakeBackend()
+        usage = attach_usage(b)
+        b.replies = [resp(10, 5), resp(3, 2), resp(1, 1)]
+        b.chat("x")
+        b.chat_collect("x")
+        b.chat_with_tools([], [])
+        self.assertEqual(usage.to_dict(), {"prompt_tokens": 14, "completion_tokens": 8, "total_tokens": 22, "calls": 3})
+
+    def test_a_call_that_delegates_to_another_wrapped_method_is_counted_once(self):
+        b = DelegatingBackend()
+        usage = attach_usage(b)
+        b.replies = [resp(10, 5)]
+        b.chat_collect("x")
+        self.assertEqual((usage.total_tokens, usage.calls), (15, 1))
+        b.replies = [resp(1, 1)]
+        b.chat("x")  # a later plain call still counts
+        self.assertEqual((usage.total_tokens, usage.calls), (17, 2))
+
+    def test_attach_is_idempotent(self):
+        b = FakeBackend()
+        first = attach_usage(b)
+        self.assertIs(attach_usage(b), first)
+        b.replies = [resp(1, 1)]
+        b.chat("x")
+        self.assertEqual(first.calls, 1)  # not double counted
+
+    def test_snapshot_difference(self):
+        b = FakeBackend()
+        usage = attach_usage(b)
+        b.replies = [resp(1, 1), resp(4, 4)]
+        b.chat("x")
+        before = usage.snapshot()
+        b.chat("x")
+        self.assertEqual((usage - before).total_tokens, 8)
+
+    def test_mocks_are_left_alone(self):
+        m = MagicMock()
+        attach_usage(m)
+        m.chat("x")
+        m.chat.assert_called_once_with("x")
+
+    def test_agent_usage_counts_its_backend(self):
+        b = FakeBackend()
+        b.replies = [resp(7, 3, "answer")]
+        agent = Agent("a", b)
+        self.assertEqual(agent.execute_task("do it"), "answer")
+        self.assertEqual((agent.usage.total_tokens, agent.usage.calls), (10, 1))
+        self.assertIsInstance(agent.usage, Usage)
+
+
+if __name__ == "__main__":
+    unittest.main()

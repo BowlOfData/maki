@@ -5,7 +5,7 @@ import threading
 import unittest
 
 from maki.distributed.loop_jobs import (
-    LoopCaps, LoopJobBusy, LoopJobNotFound, LoopJobs, parse_requirements,
+    LoopCaps, LoopJobBusy, LoopJobNotFound, LoopJobs, NoPendingApproval, parse_requirements,
 )
 
 from .loop_helpers import FakeAgent, verdict
@@ -184,26 +184,74 @@ class RestartTests(JobsTestBase):
         with self.assertRaises(ValueError):
             jobs.resume(done.id)  # already succeeded
 
-    def test_loops_needing_approvals_are_not_resumable_over_http(self):
-        import json
-        first = self.jobs(FakeAgent(["a"]), [ONE_FAIL])
-        job = first.start("goal", REQS, max_iterations=1)
+    def test_approval_gate_suspends_until_answered_then_resume_continues(self):
+        jobs = self.jobs(FakeAgent(["a"]), [ONE_FAIL, ALL_PASS])
+        job = jobs.start("goal", REQS, require_approval=True)
         self.wait(job)
-        path = os.path.join(self.tmp.name, job.id, "state.json")
-        with open(path) as f:
-            state = json.load(f)
-        state["uses_approvals"] = True
-        with open(path, "w") as f:
-            json.dump(state, f)
+        snap = jobs.snapshot(job.id)
+        self.assertEqual((snap["status"], snap["iterations"], snap["resumable"]), ("suspended", 0, True))
+        self.assertIn("Start loop", snap["pending_approval"]["summary"])
+        answered = jobs.approve(job.id, True, "go carefully")
+        self.assertIsNone(answered["pending_approval"])
+        second = jobs.resume(job.id)
+        self.wait(second)
+        snap = jobs.snapshot(job.id)
+        self.assertEqual((snap["status"], snap["iterations"]), ("suspended", 1))  # gate before iteration 2
+        self.assertIn("passing", snap["pending_approval"]["summary"])
+        jobs.approve(job.id, True)
+        third = jobs.resume(job.id)
+        self.wait(third)
+        self.assertEqual(jobs.snapshot(job.id)["status"], "succeeded")
+
+    def test_rejection_without_a_note_stops_and_with_a_note_continues(self):
+        jobs = self.jobs(FakeAgent(["a"]), [ALL_PASS])
+        job = jobs.start("goal", REQS, require_approval=True)
+        self.wait(job)
+        jobs.approve(job.id, False)
+        stopped = jobs.resume(job.id)
+        self.wait(stopped)
+        self.assertEqual(jobs.snapshot(job.id)["status"], "stopped")
+
+        other = self.jobs(FakeAgent(["a"]), [ALL_PASS])
+        job2 = other.start("goal", REQS, require_approval=True)
+        self.wait(job2)
+        other.approve(job2.id, False, "try the other way")
+        resumed = other.resume(job2.id)
+        self.wait(resumed)
+        self.assertEqual(other.snapshot(job2.id)["status"], "succeeded")
+
+    def test_approve_refusals(self):
+        jobs = self.jobs(FakeAgent(["a"]), [ALL_PASS])
+        with self.assertRaises(LoopJobNotFound):
+            jobs.approve("loop-aaaaaaaaaaaa", True)
+        job = jobs.start("goal", REQS)  # no gate
+        self.wait(job)
+        with self.assertRaises(NoPendingApproval):
+            jobs.approve(job.id, True)
+        gated = jobs.start("goal", REQS, require_approval=True)
+        self.wait(gated)
+        for bad in ("x" * 2001, 5):
+            with self.assertRaises(ValueError):
+                jobs.approve(gated.id, True, bad)
+        jobs.approve(gated.id, True)
+        with self.assertRaises(NoPendingApproval):
+            jobs.approve(gated.id, True)  # already answered
+
+    def test_pending_approval_survives_a_restart(self):
+        first = self.jobs(FakeAgent(["a"]), [ALL_PASS])
+        job = first.start("goal", REQS, require_approval=True)
+        self.wait(job)
         second = self.jobs(FakeAgent(["a"]), [ALL_PASS])
-        self.assertFalse(second.snapshot(job.id)["resumable"])
-        with self.assertRaises(ValueError):
-            second.resume(job.id)
+        self.assertIsNotNone(second.snapshot(job.id)["pending_approval"])
+        second.approve(job.id, True)
+        self.wait(second.resume(job.id))
+        self.assertEqual(second.snapshot(job.id)["status"], "succeeded")
 
     def test_list_ignores_directories_that_are_not_server_loops(self):
         jobs = self.jobs(FakeAgent(["a"]), [ALL_PASS])
         job = jobs.start("goal", REQS)
         self.wait(job)
+        os.makedirs(os.path.join(self.tmp.name, ".approvals"), exist_ok=True)
         local = os.path.join(self.tmp.name, "my-local-loop")  # e.g. written by a local run_loop
         os.makedirs(local)
         with open(os.path.join(local, "state.json"), "w") as f:
@@ -250,6 +298,57 @@ class RestartTests(JobsTestBase):
         self.caps.retention_days = None
         jobs = self.jobs(FakeAgent(["a"]), [ALL_PASS])
         self.assertEqual(jobs.prune(), 0)
+
+    def test_token_budget_is_capped_and_reported(self):
+        self.caps.max_tokens = 300
+        maker = FakeAgent(["a"], tokens_per_call=100)
+        jobs = LoopJobs(maker, FakeAgent([ONE_FAIL], stateful=False, tokens_per_call=20), self.caps)
+        for bad in (301, 0, True):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                jobs.start("goal", REQS, max_tokens=bad)
+        job = jobs.start("goal", REQS, stall_limit=5)  # no request value: the cap is the budget
+        self.wait(job)
+        snap = job.snapshot()
+        self.assertEqual((snap["status"], snap["tokens"], snap["iterations"]), ("token_budget", 360, 3))
+        self.assertEqual([e["tokens"] for e in job._events if e["type"] == "iteration"], [120, 120, 120])
+        fresh = LoopJobs(maker, FakeAgent([ONE_FAIL], stateful=False), self.caps)
+        self.assertEqual(fresh.snapshot(job.id)["tokens"], 360)
+
+    def test_resume_keeps_the_saved_budget_and_clamps_it_to_the_cap(self):
+        self.caps.max_tokens = 1000
+        first = self.jobs(FakeAgent(["a"], tokens_per_call=100), [ONE_FAIL])
+        job = first.start("goal", REQS, max_iterations=1, max_tokens=500)
+        self.wait(job)
+        with open(os.path.join(self.tmp.name, job.id, "state.json")) as f:
+            self.assertEqual(__import__("json").load(f)["max_tokens"], 500)
+        second = self.jobs(FakeAgent(["a"], tokens_per_call=100), [ONE_FAIL])
+        self.caps.max_tokens = 300  # the operator lowered the cap since
+        resumed = second.resume(job.id, max_iterations=5)
+        self.wait(resumed)
+        self.assertEqual(resumed.snapshot()["status"], "token_budget")  # 120 already spent; budget 300 is hit at 360
+
+    def test_a_running_resumed_job_reports_the_total_tokens(self):
+        first = self.jobs(FakeAgent(["a"], tokens_per_call=100), [ONE_FAIL])
+        job = first.start("goal", REQS, max_iterations=1)
+        self.wait(job)
+        maker = GatedAgent(["b"])
+        second = LoopJobs(maker, FakeAgent([ALL_PASS], stateful=False), self.caps)
+        resumed = second.resume(job.id)
+        self.assertEqual(resumed.snapshot()["tokens"], 100)  # carried over before any new iteration
+        maker.release.set()
+        self.wait(resumed)
+
+    def test_pruning_also_forgets_the_loops_approval_record(self):
+        import time
+        jobs = self.jobs(FakeAgent(["a"]), [ALL_PASS])
+        job = jobs.start("goal", REQS, require_approval=True)
+        self.wait(job)
+        approvals = os.path.join(self.tmp.name, ".approvals")
+        self.assertTrue(os.listdir(approvals))
+        long_ago = time.time() - 40 * 86400
+        os.utime(os.path.join(self.tmp.name, job.id, "state.json"), (long_ago, long_ago))
+        self.assertEqual(jobs.prune(), 1)
+        self.assertEqual(os.listdir(approvals), [])
 
     def test_unknown_snapshot(self):
         with self.assertRaises(LoopJobNotFound):

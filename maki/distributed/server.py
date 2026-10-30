@@ -20,6 +20,7 @@ GET  /loop/{id}           Loop status.
 GET  /loop/{id}/events    SSE stream of loop events (replay with Last-Event-ID or ?after=N).
 DELETE /loop/{id}         Cancel a running loop (takes effect between iterations).
 POST /loop/{id}/resume    Continue a stopped or interrupted loop from its checkpoint.
+POST /loop/{id}/approval  Answer a suspended loop's pending approval ({approve, note}); then resume.
 POST /memory/set          Store a key/value in agent memory.
 GET  /memory/{key}        Retrieve a memory value.
 DELETE /memory/{key}      Remove a memory key.
@@ -60,7 +61,7 @@ from ..exceptions import (
     MakiTimeoutError,
     MakiValidationError,
 )
-from .loop_jobs import LOOP_ID_PATTERN, LoopCaps, LoopJobBusy, LoopJobNotFound, LoopJobs
+from .loop_jobs import LOOP_ID_PATTERN, LoopCaps, LoopJobBusy, LoopJobNotFound, LoopJobs, NoPendingApproval
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,15 @@ class LoopRequest(BaseModel):
     stall_limit: Optional[int] = None
     context: Optional[Literal["shared", "fresh"]] = None
     use_plugins: bool = False
+    max_tokens: Optional[int] = None
+    require_approval: bool = False
+
+
+class LoopApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approve: bool
+    note: str = ""
 
 
 class LoopResumeRequest(BaseModel):
@@ -98,6 +108,7 @@ class LoopResumeRequest(BaseModel):
 
     max_iterations: Optional[int] = None
     max_seconds: Optional[float] = None
+    max_tokens: Optional[int] = None
 
 
 class MemorySetRequest(BaseModel):
@@ -258,7 +269,8 @@ def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agen
         try:
             job = jobs.start(req.goal, req.requirements, max_iterations=req.max_iterations,
                              max_seconds=req.max_seconds, stall_limit=req.stall_limit,
-                             context=req.context, use_plugins=req.use_plugins)
+                             context=req.context, use_plugins=req.use_plugins, max_tokens=req.max_tokens,
+                             require_approval=req.require_approval)
         except LoopJobBusy as e:
             raise HTTPException(status_code=409, detail=str(e))
         except ValueError as e:
@@ -293,7 +305,8 @@ def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agen
             except LoopJobNotFound:
                 raise HTTPException(status_code=404, detail="Loop not found")
             stopped = {"type": "stopped", "stop_reason": snap["stop_reason"] or snap["status"],
-                       "iterations": snap["iterations"], "detail": snap["detail"], "error": snap["error"],
+                       "iterations": snap["iterations"], "tokens": snap["tokens"], "detail": snap["detail"],
+                       "error": snap["error"],
                        "artifact": snap["artifact"]}
 
             def _from_disk():
@@ -337,7 +350,8 @@ def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agen
         loop_id = _loop_id(loop_id)
         req = req or LoopResumeRequest()
         try:
-            job = jobs.resume(loop_id, max_iterations=req.max_iterations, max_seconds=req.max_seconds)
+            job = jobs.resume(loop_id, max_iterations=req.max_iterations, max_seconds=req.max_seconds,
+                              max_tokens=req.max_tokens)
         except LoopJobNotFound:
             raise HTTPException(status_code=404, detail="Loop not found")
         except LoopJobBusy as e:
@@ -345,6 +359,19 @@ def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agen
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return job.snapshot()
+
+    @app.post("/loop/{loop_id}/approval")
+    def loop_approval(loop_id: str, req: LoopApprovalRequest, request: Request, _: None = Depends(_auth)):
+        jobs = _jobs(request)
+        loop_id = _loop_id(loop_id)
+        try:
+            return jobs.approve(loop_id, req.approve, req.note)
+        except LoopJobNotFound:
+            raise HTTPException(status_code=404, detail="Loop not found")
+        except NoPendingApproval:
+            raise HTTPException(status_code=409, detail="Loop has no pending approval")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     # ------------------------------------------------------------------
     # Memory

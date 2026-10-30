@@ -17,6 +17,7 @@ import uuid
 from ..backend import LLMBackend
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
 from ..objects import ConversationMemory, Message
+from ..usage import Usage, attach_usage
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
 
@@ -69,6 +70,7 @@ class Agent(PluginHandler, ReasoningEngine):
         self.agent_id = str(uuid.uuid4())
         self.name = name.strip()
         self.maki = maki_instance
+        attach_usage(maki_instance)  # count tokens from the first call on
         self.role = role
         self.instructions = instructions
         self.stateful = stateful
@@ -193,6 +195,11 @@ class Agent(PluginHandler, ReasoningEngine):
 
         return result
 
+    @property
+    def usage(self) -> Usage:
+        """Token totals of this agent's backend since counting started (shared if the backend is)."""
+        return attach_usage(self.maki)
+
     def reset_conversation(self):
         """Clear the stateful conversation history."""
         self._conversation_memory.clear()
@@ -254,7 +261,7 @@ class Agent(PluginHandler, ReasoningEngine):
                 pending approval returns a suspended result, continued by ``resume_loop``.
             **options: ``LoopSpec`` fields: ``max_iterations``, ``max_seconds``,
                 ``stall_limit``, ``context`` ("shared" needs ``stateful=True``),
-                ``use_plugins``, ``artifact_fn``, ``cwd``, ``loop_dir``, ``loop_id``.
+                ``max_tokens``, ``use_plugins``, ``artifact_fn``, ``cwd``, ``loop_dir``, ``loop_id``.
 
         Returns:
             A ``LoopResult``; see :mod:`maki.agents.loop`.

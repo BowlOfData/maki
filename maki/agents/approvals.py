@@ -79,6 +79,9 @@ class ApprovalStore(ABC):
     def get(self, workflow_id: str, task: str) -> Optional[ApprovalRecord]:
         return self._load(workflow_id, task)
 
+    def discard(self, workflow_id: str) -> None:
+        """Forget every record of a workflow (or loop). Stores that cannot do so keep them."""
+
     def check(self, workflow_id: str, task: str, key: str, summary: str = "") -> ApprovalDecision:
         """Return the decision for (workflow, task, key), opening a request if needed.
 
@@ -145,6 +148,11 @@ class InMemoryApprovalStore(ApprovalStore):
         with self._lock:
             self._records[(record.workflow_id, record.task)] = ApprovalRecord(**record.to_dict())
 
+    def discard(self, workflow_id: str) -> None:
+        with self._lock:
+            for key in [k for k in self._records if k[0] == workflow_id]:
+                del self._records[key]
+
     def list_pending(self, workflow_id: Optional[str] = None) -> List[ApprovalRecord]:
         with self._lock:
             return [ApprovalRecord(**r.to_dict()) for (wf, _), r in self._records.items()
@@ -191,6 +199,13 @@ class LocalApprovalStore(ApprovalStore):
                 if os.path.exists(tmp):
                     os.unlink(tmp)
                 raise
+
+    def discard(self, workflow_id: str) -> None:
+        with self._lock:
+            try:
+                os.unlink(self._path(workflow_id))
+            except FileNotFoundError:
+                pass
 
     def list_pending(self, workflow_id: Optional[str] = None) -> List[ApprovalRecord]:
         with self._lock:

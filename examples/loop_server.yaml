@@ -16,4 +16,5 @@ judge:                  # enables POST /loop; ollama judges run in JSON mode wit
 loop:                   # caps on remote loops
   max_iterations: 6
   max_seconds: 900
+  max_tokens: 200000      # optional cap on a loop's token budget (maker + judge)
   retention_days: 14      # finished loops older than this are deleted (null = keep all)

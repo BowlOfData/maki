@@ -50,7 +50,7 @@ _RETRYABLE = (MakiNetworkError, MakiTimeoutError)
 
 TRACE_HEADER = "X-Maki-Trace-Id"
 
-_LOOP_OPTIONS = ("max_iterations", "max_seconds", "stall_limit", "context", "use_plugins")
+_LOOP_OPTIONS = ("max_iterations", "max_seconds", "stall_limit", "context", "use_plugins", "max_tokens", "require_approval")
 _MAX_STREAM_RECONNECTS = 5
 
 
@@ -63,6 +63,7 @@ class RemoteLoopResult:
     detail: str = ""
     error: str = ""
     artifact: str = ""
+    tokens: int = 0
     events: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -330,7 +331,7 @@ class AgentProxy:
         Requirements are text only (strings, ``{"id", "text"}`` dicts, or ``Requirement``
         objects without a command or check): the server never executes anything a caller
         sends, and the judge is the server's own ``judge:`` agent. ``options`` may hold
-        ``max_iterations``, ``max_seconds``, ``stall_limit``, ``context``, ``use_plugins``.
+        ``max_iterations``, ``max_seconds``, ``max_tokens``, ``stall_limit``, ``context``, ``use_plugins``.
 
         ``on_iteration`` is called with each iteration event dict (see
         :mod:`maki.distributed.loop_jobs`); returning ``Decision.STOP`` cancels the remote
@@ -356,12 +357,35 @@ class AgentProxy:
         **options: Any,
     ) -> RemoteLoopResult:
         """Continue a stopped or interrupted remote loop from its checkpoint and follow it."""
-        unknown = set(options) - {"max_iterations", "max_seconds"}
+        unknown = set(options) - {"max_iterations", "max_seconds", "max_tokens"}
         if unknown:
             raise ValueError(f"unsupported resume option(s): {sorted(unknown)}")
         body = {k: v for k, v in options.items() if v is not None}
         self._loop_call("post", f"/loop/{self._check_loop_id(loop_id)}/resume", body)
         return self._follow_loop(loop_id, on_iteration)
+
+    def approve_loop(
+        self,
+        loop_id: str,
+        approve: bool = True,
+        note: str = "",
+        resume: bool = False,
+        on_iteration: Optional[Callable[[Dict[str, Any]], Optional[Decision]]] = None,
+    ) -> Union[Dict[str, Any], RemoteLoopResult]:
+        """Answer a suspended remote loop's pending approval.
+
+        Approve (a note is shown to the agent) lets the next iteration run; reject with a
+        note continues with that note; reject without a note stops the loop. Returns the
+        loop's status, or with ``resume=True`` resumes it and follows it to its next stop.
+
+        Raises:
+            MakiAPIError: 404 unknown loop, 409 nothing pending.
+        """
+        snapshot = self._loop_call("post", f"/loop/{self._check_loop_id(loop_id)}/approval",
+                                   {"approve": bool(approve), "note": note})
+        if not resume:
+            return snapshot
+        return self.resume_loop(loop_id, on_iteration=on_iteration)
 
     def loop_status(self, loop_id: str) -> Dict[str, Any]:
         """The remote loop's status snapshot."""
@@ -419,7 +443,7 @@ class AgentProxy:
                         return RemoteLoopResult(
                             loop_id, str(event.get("stop_reason", "")), int(event.get("iterations", 0)),
                             str(event.get("detail", "")), str(event.get("error", "")),
-                            str(event.get("artifact", "")), events)
+                            str(event.get("artifact", "")), int(event.get("tokens", 0)), events)
                     if event.get("type") == "iteration" and on_iteration is not None and not cancelled:
                         try:
                             decision = on_iteration(event)
