@@ -23,7 +23,6 @@ Backends and plugins with heavier dependencies are opt-in:
 | `trends` | `pytrends` | `trend_search` |
 | `alpaca` | `alpaca-py`, `feedparser`, `yfinance` | Alpaca plugins |
 | `ftp` | `paramiko` | `ftp_client` |
-| `gui` | `PySide6` | `maki-gui` desktop app |
 | `structured` | `pydantic` | Structured output |
 | `postgres` | `psycopg` | Postgres-backed stores |
 | `all` | everything above | |

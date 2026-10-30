@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 780" width="1000" height="780" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" role="img">
+  <title>Maki architecture</title>
+  <desc>Layered architecture: public API, distributed layer, agent system, plugins and LLM backends, shared infrastructure.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#6B6A66" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .band { fill: #F8F8F6; stroke: #DAD9D3; stroke-width: 1; }
+      .lbl { font-size: 12px; font-weight: 600; fill: #5F5E5A; letter-spacing: .06em; text-transform: uppercase; }
+      .t { font-size: 14px; font-weight: 600; text-anchor: middle; }
+      .s { font-size: 11.5px; text-anchor: middle; }
+      .m { font-size: 12px; text-anchor: middle; font-family: ui-monospace, Menlo, Consolas, monospace; }
+      .arr { stroke: #6B6A66; stroke-width: 1.4; fill: none; marker-end: url(#a); }
+      .note { font-size: 11.5px; fill: #5F5E5A; }
+      .api rect.b { fill: #2C2C2A; } .api .t { fill: #F8F8F6; } .api .s { fill: #D3D1C7; }
+      .dist rect.b { fill: #FAEEDA; stroke: #BA7517; } .dist .t { fill: #633806; } .dist .s { fill: #854F0B; }
+      .agent rect.b { fill: #EEEDFE; stroke: #534AB7; } .agent .t { fill: #3C3489; } .agent .s, .agent .m { fill: #534AB7; }
+      .agent rect.in { fill: #CECBF6; stroke: #534AB7; stroke-width: .8; }
+      .plug rect.b { fill: #E1F5EE; stroke: #0F6E56; } .plug .t { fill: #085041; } .plug .s { fill: #0F6E56; }
+      .back rect.b { fill: #E6F1FB; stroke: #185FA5; } .back .t { fill: #0C447C; } .back .s { fill: #185FA5; }
+      .back rect.abs { stroke-dasharray: 5 3; }
+      .infra rect.b { fill: #F1EFE8; stroke: #5F5E5A; } .infra .t { fill: #444441; } .infra .s { fill: #5F5E5A; }
+    </style>
+  </defs>
+  <rect width="1000" height="780" fill="#FFFFFF"/>
+
+  <rect class="band" x="20" y="20" width="960" height="64" rx="10"/>
+  <text class="lbl" x="36" y="56">Public API</text>
+  <g class="api">
+    <rect class="b" x="150" y="34" width="812" height="36" rx="8"/>
+    <text class="t" x="556" y="57">maki/__init__.py <tspan class="s" dx="8">lazy-loaded exports: backends, Agent, AgentManager, data classes</tspan></text>
+  </g>
+
+  <rect class="band" x="20" y="108" width="960" height="96" rx="10"/>
+  <text class="lbl" x="36" y="144">Distributed</text>
+  <text class="note" x="36" y="162">extra: distributed</text>
+  <g class="dist">
+    <rect class="b" x="150" y="124" width="150" height="64" rx="8"/>
+    <text class="t" x="225" y="150">AgentServer</text><text class="s" x="225" y="168">FastAPI over HTTP</text>
+    <rect class="b" x="315" y="124" width="150" height="64" rx="8"/>
+    <text class="t" x="390" y="150">AgentProxy</text><text class="s" x="390" y="168">remote agent client</text>
+    <rect class="b" x="480" y="124" width="190" height="64" rx="8"/>
+    <text class="t" x="575" y="150">DistributedAgentManager</text><text class="s" x="575" y="168">local + remote agents</text>
+    <rect class="b" x="685" y="124" width="135" height="64" rx="8"/>
+    <text class="t" x="752" y="150">Circuit breaker</text><text class="s" x="752" y="168">per proxy</text>
+    <rect class="b" x="835" y="124" width="127" height="64" rx="8"/>
+    <text class="t" x="898" y="150">State stores</text><text class="s" x="898" y="168">local, Redis</text>
+  </g>
+
+  <rect class="band" x="20" y="228" width="960" height="200" rx="10"/>
+  <text class="lbl" x="36" y="264">Agent system</text>
+  <g class="agent">
+    <rect class="b" x="150" y="244" width="220" height="168" rx="8"/>
+    <text class="t" x="260" y="270">AgentManager</text>
+    <text class="m" x="260" y="304">assign_task()</text>
+    <text class="m" x="260" y="324">coordinate_agents()</text>
+    <text class="m" x="260" y="344">collaborative_task()</text>
+    <text class="m" x="260" y="364">run_workflow()</text>
+    <text class="s" x="260" y="395">orchestrates 1..n agents</text>
+
+    <rect class="b" x="390" y="244" width="270" height="168" rx="8"/>
+    <text class="t" x="525" y="270">Agent</text>
+    <text class="s" x="525" y="292">execute_task · stream_task · run_loop</text>
+    <text class="s" x="525" y="310">memory · history · retry</text>
+    <rect class="in" x="406" y="330" width="114" height="30" rx="6"/>
+    <text class="m" x="463" y="349">PluginHandler</text>
+    <rect class="in" x="530" y="330" width="114" height="30" rx="6"/>
+    <text class="m" x="587" y="349">ReasoningEngine</text>
+
+    <rect class="b" x="680" y="244" width="282" height="78" rx="8"/>
+    <text class="t" x="821" y="270">Workflow engine</text>
+    <text class="s" x="821" y="291">WorkflowTask · WorkflowState</text>
+    <text class="s" x="821" y="308">approvals · maker/checker verification</text>
+    <rect class="b" x="680" y="334" width="282" height="78" rx="8"/>
+    <text class="t" x="821" y="360">Agent loops</text>
+    <text class="s" x="821" y="381">requirements · judge · scratchpad</text>
+    <text class="s" x="821" y="398">checkpoint and resume</text>
+  </g>
+
+  <rect class="band" x="20" y="452" width="400" height="190" rx="10"/>
+  <text class="lbl" x="36" y="476">Plugins</text>
+  <g class="plug">
+    <rect class="b" x="35" y="488" width="185" height="40" rx="8"/>
+    <text class="t" x="127" y="505">Files</text><text class="s" x="127" y="521">reader · writer · directory · json</text>
+    <rect class="b" x="228" y="488" width="177" height="40" rx="8"/>
+    <text class="t" x="316" y="505">Web</text><text class="s" x="316" y="521">web_to_md · search · trends</text>
+    <rect class="b" x="35" y="536" width="185" height="40" rx="8"/>
+    <text class="t" x="127" y="553">Trading</text><text class="s" x="127" y="569">alpaca data · news · trading</text>
+    <rect class="b" x="228" y="536" width="177" height="40" rx="8"/>
+    <text class="t" x="316" y="553">Memory</text><text class="s" x="316" y="569">obsidian · rag</text>
+    <rect class="b" x="35" y="584" width="370" height="40" rx="8"/>
+    <text class="t" x="220" y="601">Fail-closed tool calls</text><text class="s" x="220" y="617">ALLOWED_METHODS · DANGEROUS_METHODS gate</text>
+  </g>
+
+  <rect class="band" x="440" y="452" width="540" height="190" rx="10"/>
+  <text class="lbl" x="456" y="476">LLM backends</text>
+  <g class="back">
+    <rect class="b abs" x="456" y="488" width="508" height="40" rx="8"/>
+    <text class="t" x="710" y="505">LLMBackend</text><text class="s" x="710" y="521">abstract contract · ChatSession for multi-turn</text>
+    <rect class="b" x="456" y="540" width="118" height="40" rx="8"/><text class="t" x="515" y="557">MakiLLama</text><text class="s" x="515" y="573">Ollama</text>
+    <rect class="b" x="586" y="540" width="118" height="40" rx="8"/><text class="t" x="645" y="557">MakiOpenAI</text><text class="s" x="645" y="573">OpenAI</text>
+    <rect class="b" x="716" y="540" width="118" height="40" rx="8"/><text class="t" x="775" y="557">MakiAnthropic</text><text class="s" x="775" y="573">Claude</text>
+    <rect class="b" x="846" y="540" width="118" height="40" rx="8"/><text class="t" x="905" y="557">MakiOpenRouter</text><text class="s" x="905" y="573">OpenRouter</text>
+    <rect class="b" x="456" y="588" width="118" height="40" rx="8"/><text class="t" x="515" y="605">MakiLlamaCpp</text><text class="s" x="515" y="621">llama.cpp</text>
+    <rect class="b" x="586" y="588" width="118" height="40" rx="8"/><text class="t" x="645" y="605">MakiVllm</text><text class="s" x="645" y="621">vLLM</text>
+    <rect class="b" x="716" y="588" width="118" height="40" rx="8"/><text class="t" x="775" y="605">HFBackend</text><text class="s" x="775" y="621">Transformers</text>
+    <rect class="b" x="846" y="588" width="118" height="40" rx="8" stroke-dasharray="5 3"/><text class="t" x="905" y="605">Your backend</text><text class="s" x="905" y="621">custom subclass</text>
+  </g>
+
+  <rect class="band" x="20" y="666" width="960" height="96" rx="10"/>
+  <text class="lbl" x="36" y="702">Core infra</text>
+  <g class="infra">
+    <rect class="b" x="150" y="682" width="152" height="64" rx="8"/><text class="t" x="226" y="708">Connector</text><text class="s" x="226" y="726">SSRF-safe HTTP layer</text>
+    <rect class="b" x="317" y="682" width="152" height="64" rx="8"/><text class="t" x="393" y="708">objects.py</text><text class="s" x="393" y="726">Message, LLMResponse</text>
+    <rect class="b" x="484" y="682" width="152" height="64" rx="8"/><text class="t" x="560" y="708">exceptions.py</text><text class="s" x="560" y="726">Maki*Error hierarchy</text>
+    <rect class="b" x="651" y="682" width="152" height="64" rx="8"/><text class="t" x="727" y="708">config.py</text><text class="s" x="727" y="726">defaults, env overrides</text>
+    <rect class="b" x="818" y="682" width="144" height="64" rx="8"/><text class="t" x="890" y="708">logging_config</text><text class="s" x="890" y="726">configure_logging()</text>
+  </g>
+
+  <path class="arr" d="M556 70 V120" transform="translate(0 0)"/>
+  <path class="arr" d="M556 188 V240" transform="translate(0 0)"/>
+  <path class="arr" d="M450 412 V434 H227 V484" stroke-dasharray="4 3"/>
+  <text class="note" x="236" y="447">TOOL: directive</text>
+  <path class="arr" d="M600 412 V434 H710 V484"/>
+  <text class="note" x="720" y="447">generate</text>
+  <path class="arr" d="M556 642 V662" />
+  <text class="note" x="566" y="656">all HTTP goes through Connector</text>
+</svg>

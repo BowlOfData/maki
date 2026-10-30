@@ -1,0 +1,427 @@
+{
+ "F": {
+  "one": false,
+  "two": false,
+  "seconds": 247,
+  "error": "",
+  "reply": "I attempted to create the files as requested, but the `file_writer` tool is currently encountering an internal error (`unsupported operand type(s) for +: 'PosixPath' and 'str'`) when processing file paths. This appears to be a bug in the tool's implementation regarding how it handles path concatenat"
+ },
+ "D": {
+  "pytest_catches_bug": true,
+  "pytest_output": "....F\n=================================== FAILURES ===================================\n______________________ test_max_length_no_trailing_hyphen ______________________\n\n    def test_max_length_no_trailing_hyphen():\n>       assert slugify(\"hello world foo\", max_length=6) == \"hello\"\nE       AssertionError: assert 'hello-' == 'hello'\nE         \nE         - hello\nE         + hello-\nE         ?      +\n\ntest_slug.py:17: AssertionError\n=========================== short test summary info ============================\nFAILED test_slug.py::test_max_length_no_trailing_hyphen - AssertionError: ass...\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed, 4 passed in 0.01s\n",
+  "judge_all_pass_runs": 0,
+  "judge_c8_pass_runs": 0,
+  "detail": [
+   {
+    "all_pass": false,
+    "c8_pass": false
+   },
+   {
+    "all_pass": false,
+    "c8_pass": false
+   },
+   {
+    "all_pass": false,
+    "c8_pass": false
+   },
+   {
+    "all_pass": false,
+    "c8_pass": false
+   },
+   {
+    "all_pass": false,
+    "c8_pass": false
+   }
+  ]
+ },
+ "A": {
+  "coding": {
+   "flip_rate": 0.8,
+   "flipped": [
+    "c1",
+    "c2",
+    "c3",
+    "c4",
+    "c5",
+    "c6",
+    "c7",
+    "c9"
+   ],
+   "runs": [
+    {
+     "c1": false,
+     "c2": false,
+     "c3": false,
+     "c4": false,
+     "c5": false,
+     "c6": false,
+     "c7": false,
+     "c8": false,
+     "c9": false,
+     "c10": false
+    },
+    {
+     "c1": true,
+     "c2": true,
+     "c3": true,
+     "c4": true,
+     "c5": true,
+     "c6": true,
+     "c7": true,
+     "c8": false,
+     "c9": true,
+     "c10": false
+    },
+    {
+     "c1": false,
+     "c2": false,
+     "c3": false,
+     "c4": false,
+     "c5": false,
+     "c6": false,
+     "c7": false,
+     "c8": false,
+     "c9": false,
+     "c10": false
+    },
+    {
+     "c1": true,
+     "c2": true,
+     "c3": true,
+     "c4": true,
+     "c5": true,
+     "c6": true,
+     "c7": true,
+     "c8": false,
+     "c9": true,
+     "c10": false
+    },
+    {
+     "c1": false,
+     "c2": false,
+     "c3": false,
+     "c4": false,
+     "c5": false,
+     "c6": false,
+     "c7": false,
+     "c8": false,
+     "c9": false,
+     "c10": false
+    }
+   ]
+  },
+  "writing": {
+   "flip_rate": 0.8,
+   "flipped": [
+    "w2",
+    "w3",
+    "w5",
+    "w6",
+    "w7",
+    "w8",
+    "w9",
+    "w10"
+   ],
+   "runs": [
+    {
+     "w1": false,
+     "w2": true,
+     "w3": true,
+     "w4": false,
+     "w5": true,
+     "w6": true,
+     "w7": true,
+     "w8": true,
+     "w9": true,
+     "w10": true
+    },
+    {
+     "w1": false,
+     "w2": false,
+     "w3": false,
+     "w4": false,
+     "w5": false,
+     "w6": false,
+     "w7": false,
+     "w8": false,
+     "w9": false,
+     "w10": false
+    },
+    {
+     "w1": false,
+     "w2": false,
+     "w3": false,
+     "w4": false,
+     "w5": false,
+     "w6": false,
+     "w7": false,
+     "w8": false,
+     "w9": false,
+     "w10": false
+    },
+    {
+     "w1": false,
+     "w2": true,
+     "w3": true,
+     "w4": false,
+     "w5": true,
+     "w6": true,
+     "w7": true,
+     "w8": true,
+     "w9": true,
+     "w10": true
+    },
+    {
+     "w1": false,
+     "w2": false,
+     "w3": false,
+     "w4": false,
+     "w5": false,
+     "w6": false,
+     "w7": false,
+     "w8": false,
+     "w9": false,
+     "w10": false
+    }
+   ]
+  },
+  "research": {
+   "flip_rate": 0.0,
+   "flipped": [],
+   "runs": [
+    {
+     "r1": true,
+     "r2": true,
+     "r3": true,
+     "r4": true,
+     "r5": true,
+     "r6": true,
+     "r7": false,
+     "r8": true,
+     "r9": true,
+     "r10": false
+    },
+    {
+     "r1": true,
+     "r2": true,
+     "r3": true,
+     "r4": true,
+     "r5": true,
+     "r6": true,
+     "r7": false,
+     "r8": true,
+     "r9": true,
+     "r10": false
+    },
+    {
+     "r1": true,
+     "r2": true,
+     "r3": true,
+     "r4": true,
+     "r5": true,
+     "r6": true,
+     "r7": false,
+     "r8": true,
+     "r9": true,
+     "r10": false
+    },
+    {
+     "r1": true,
+     "r2": true,
+     "r3": true,
+     "r4": true,
+     "r5": true,
+     "r6": true,
+     "r7": false,
+     "r8": true,
+     "r9": true,
+     "r10": false
+    },
+    {
+     "r1": true,
+     "r2": true,
+     "r3": true,
+     "r4": true,
+     "r5": true,
+     "r6": true,
+     "r7": false,
+     "r8": true,
+     "r9": true,
+     "r10": false
+    }
+   ]
+  },
+  "overall_flip_rate": 0.5333333333333333
+ },
+ "C": {
+  "coding": {
+   "agree_batch10": 0.9,
+   "agree_batch3": 0.9,
+   "single": {
+    "c1": true,
+    "c2": true,
+    "c3": true,
+    "c4": true,
+    "c5": true,
+    "c6": true,
+    "c7": false,
+    "c8": false,
+    "c9": true,
+    "c10": false
+   },
+   "b10": {
+    "c1": true,
+    "c2": true,
+    "c3": true,
+    "c4": true,
+    "c5": true,
+    "c6": true,
+    "c7": true,
+    "c8": false,
+    "c9": true,
+    "c10": false
+   },
+   "b3": {
+    "c1": true,
+    "c2": true,
+    "c3": true,
+    "c4": true,
+    "c5": true,
+    "c6": true,
+    "c7": true,
+    "c8": false,
+    "c9": true,
+    "c10": false
+   }
+  },
+  "writing": {
+   "agree_batch10": 0.2,
+   "agree_batch3": 1.0,
+   "single": {
+    "w1": false,
+    "w2": true,
+    "w3": true,
+    "w4": false,
+    "w5": true,
+    "w6": true,
+    "w7": true,
+    "w8": true,
+    "w9": true,
+    "w10": true
+   },
+   "b10": {
+    "w1": false,
+    "w2": false,
+    "w3": false,
+    "w4": false,
+    "w5": false,
+    "w6": false,
+    "w7": false,
+    "w8": false,
+    "w9": false,
+    "w10": false
+   },
+   "b3": {
+    "w1": false,
+    "w2": true,
+    "w3": true,
+    "w4": false,
+    "w5": true,
+    "w6": true,
+    "w7": true,
+    "w8": true,
+    "w9": true,
+    "w10": true
+   }
+  }
+ },
+ "B": {
+  "coding/fresh/0": {
+   "iters": 4,
+   "counts": [
+    1,
+    0,
+    10,
+    11
+   ],
+   "total": 11
+  },
+  "coding/fresh/1": {
+   "iters": 1,
+   "counts": [
+    11
+   ],
+   "total": 11
+  },
+  "coding/shared/0": {
+   "iters": 1,
+   "counts": [
+    11
+   ],
+   "total": 11
+  },
+  "coding/shared/1": {
+   "iters": 1,
+   "counts": [
+    11
+   ],
+   "total": 11
+  },
+  "writing/fresh/0": {
+   "iters": null,
+   "counts": [
+    0,
+    5,
+    0,
+    0,
+    0,
+    0
+   ],
+   "total": 10
+  },
+  "writing/fresh/1": {
+   "iters": null,
+   "counts": [
+    0,
+    5,
+    0,
+    0,
+    0,
+    0
+   ],
+   "total": 10
+  },
+  "writing/shared/0": {
+   "iters": null,
+   "counts": [
+    0,
+    0,
+    0,
+    0,
+    5,
+    0
+   ],
+   "total": 10
+  },
+  "writing/shared/1": {
+   "iters": null,
+   "counts": [
+    0,
+    0,
+    5,
+    0,
+    0,
+    0
+   ],
+   "total": 10
+  }
+ },
+ "E": {
+  "false_stalls_by_N": {
+   "2": 0,
+   "3": 0,
+   "4": 0
+  },
+  "runs_replayed": 8
+ }
+}

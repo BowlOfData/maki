@@ -1,6 +1,6 @@
 # Architecture
 
-![Maki architecture diagram](assets/diagram.png)
+![Maki architecture diagram](assets/architecture.svg)
 
 Four layers on top of a shared infrastructure layer:
 
@@ -23,10 +23,6 @@ Top-level imports from `maki`:
 - `ConversationMemory`, `RateLimiter`
 - `Connector`, `Utils`
 - `config`
-
-## Desktop app
-
-The repository includes a PySide6/QML desktop shell. Install `maki-framework[gui]` and run `maki-gui`.
 
 ## Contributing
 
