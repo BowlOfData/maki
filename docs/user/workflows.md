@@ -45,6 +45,10 @@ print(results["summary"]["result"])
 
 A task with `verify=` is only `COMPLETED` once a checker accepts it. A `REVISE` verdict re-runs the task with the checker's feedback, up to `max_revisions`. If verification ultimately fails, the task fails and its dependents are skipped. See `examples/verified_workflow.py` in the repository and `maki/agents/verification.py` for `VerifySpec` and `agent_verifier`.
 
+## Loop tasks
+
+`WorkflowTask(loop=LoopTask(judge="reviewer", requirements=[...]))` lets the task's agent iterate until a separate judge agent confirms every requirement. The task is `COMPLETED` only when the loop succeeds; any other outcome fails it and skips its dependents. A resumed workflow resumes the loop if its goal and requirements are unchanged. Loop tasks run on local agents and cannot be combined with `verify=`. See [Agent loops](loops.md#in-workflows) and `examples/loop_workflow.py`.
+
 ## Human approval
 
 Tasks can be gated on human approval before they run; see `maki/agents/approvals.py` (`ApprovalSpec` and the approval stores).

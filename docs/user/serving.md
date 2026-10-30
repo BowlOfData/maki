@@ -26,6 +26,21 @@ maki serve --config agent.yaml --host 127.0.0.1 --port 8100
 
 Options: `--api-key KEY` (bearer-token auth), `--tls-cert FILE` and `--tls-key FILE` (HTTPS). The server exposes `/execute`, `/stream`, `/health` and memory endpoints, plus `/loop` endpoints when the config has a `judge:` section (see [Agent loops](loops.md)).
 
+## Loops over HTTP
+
+Add a `judge:` section and the server also runs loops for remote callers (`POST /loop`, replayable event streams, cancel, resume and approvals):
+
+```yaml
+judge:
+  backend: ollama
+  model: gemma4:26b
+loop:
+  max_iterations: 20
+  max_tokens: 200000
+```
+
+Remote loops take text requirements only and run one at a time. The server refuses to start with a `judge:` section on a non-loopback host unless `--api-key` is set. See [Agent loops](loops.md#loops-over-http) and `AgentProxy.run_loop`.
+
 ## Connect from another process
 
 ```python

@@ -54,6 +54,7 @@ agent = Agent(name="Reviewer", maki_instance=MakiAnthropic(model="claude-sonnet-
 - **Small core.** Three dependencies (`requests`, `httpx`, `python-dotenv`); everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP; `AgentProxy` consumes it remotely.
 - **Batteries included.** 16 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution, checkpoint/resume and maker/checker verification.
+- **Agents that iterate.** `agent.run_loop(goal, requirements, judge)` keeps an agent working until a separate judge, your tests or your own checks confirm every requirement, with stall detection, token and time budgets, resume and optional human approval; it runs locally, over HTTP and inside workflows.
 
 Maki is young (0.x) and deliberately small. If you need a large catalog of third-party integrations or hosted tracing, a larger agent framework will serve you better.
 
@@ -66,6 +67,7 @@ Maki is young (0.x) and deliberately small. If you need a large catalog of third
 | [Backends](https://bowlofdata.github.io/maki/docs/backends/) | Ollama, llama.cpp, vLLM, OpenAI, Anthropic, OpenRouter, HuggingFace |
 | [Agents](https://bowlofdata.github.io/maki/docs/agents/) | Memory, reasoning, streaming, tools |
 | [Workflows](https://bowlofdata.github.io/maki/docs/workflows/) | Multi-agent pipelines and verified tasks |
+| [Agent loops](https://bowlofdata.github.io/maki/docs/loops/) | Iterate an agent until its requirements are met |
 | [Plugins](https://bowlofdata.github.io/maki/docs/plugins/) | Built-in plugins and the safety model |
 | [Serving agents](https://bowlofdata.github.io/maki/docs/serving/) | `maki serve` and `AgentProxy` |
 | [Configuration](https://bowlofdata.github.io/maki/docs/configuration/) | Environment variables |

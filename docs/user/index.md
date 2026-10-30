@@ -17,6 +17,7 @@ pip install maki-framework
 - **Small core.** The base install has three dependencies (`requests`, `httpx`, `python-dotenv`). Everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP, and `AgentProxy` lets another process use it as if it were local.
 - **Batteries included.** 16 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution and checkpoint/resume.
+- **Agents that iterate.** Give an agent a goal and requirements and let it loop until a judge or your own checks are satisfied; see [Agent loops](loops.md).
 
 !!! note "Who it is not for"
     Maki is young (0.x) and deliberately small. If you need a large catalog of third-party integrations, hosted tracing, or a big ecosystem, one of the larger agent frameworks will serve you better.

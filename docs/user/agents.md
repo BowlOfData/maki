@@ -58,3 +58,7 @@ result = agent.execute_task("Read the first lines of README.md and summarize the
 ## Verified tasks
 
 A workflow task can carry a checker agent that must accept the result before the task counts as complete. See [Workflows](workflows.md#verified-tasks-makerchecker).
+
+## Loops
+
+`agent.run_loop(goal, requirements, judge=reviewer)` keeps an agent working until every requirement is confirmed, with stall detection, token and time budgets, resume and optional human approval. See [Agent loops](loops.md).
