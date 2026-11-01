@@ -154,6 +154,9 @@ class ConversationMemory:
         """
         if (recent_turns is None) != (older_chars is None):
             raise ValueError("recent_turns and older_chars must be set together")
+        for value in (recent_turns, older_chars):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+                raise ValueError("recent_turns and older_chars must be positive integers")
         self._recent_turns, self._older_chars = recent_turns, older_chars
         self._trim()
 
@@ -216,7 +219,8 @@ def clip_text(text: str, limit: Optional[int]) -> str:
     """Keep the head and tail of ``text`` within ``limit`` characters, marking what was cut.
 
     Text at or under the limit (and any text when ``limit`` is None) is returned unchanged.
-    The marker states how many characters were omitted so the model knows the text is partial.
+    ``limit`` counts the kept text; the marker (about 35 characters) comes on top. The marker states
+    how many characters were omitted so the model knows the text is partial.
     """
     if limit is None or len(text) <= limit:
         return text

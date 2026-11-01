@@ -163,11 +163,15 @@ class Agent(PluginHandler, ReasoningEngine):
         pinned = self._pinned_block()
         return f"{base}\n\n{pinned}" if pinned else base
 
+    @staticmethod
+    def _pinned_lines(pinned: Dict[str, Any]) -> str:
+        return "\n".join(f"- {key}: {value}" for key, value in pinned.items())
+
     def _pinned_block(self) -> str:
-        if not self._pinned:
+        pinned = dict(self._pinned)  # a snapshot: unpin() may run on another thread
+        if not pinned:
             return ""
-        return "Pinned facts (always true for this conversation):\n" + "\n".join(
-            f"- {key}: {value}" for key, value in self._pinned.items())
+        return "Pinned facts (always true for this conversation):\n" + self._pinned_lines(pinned)
 
     def _build_user_message(self, task: str, context: Optional[Dict], use_plugins: bool) -> str:
         """Return the user message (task + optional context/plugins/history)."""
@@ -409,22 +413,22 @@ class Agent(PluginHandler, ReasoningEngine):
         With ``pin=True`` the fact is also put in the system message of every call and is never
         evicted, so a goal or constraint survives a long conversation. Pinning is the operator's
         call (the model has no tool for it) and needs ``MemoryPolicy(pinned_chars=...)``, which
-        caps the total size of the pinned block; going over it raises ``ValueError``.
+        caps the total size of the pinned facts; going over it raises ``ValueError``. A pinned key
+        can only be changed with ``pin=True`` or after ``unpin()``: a plain ``remember`` (which the
+        HTTP ``/memory/set`` endpoint uses) must not rewrite what the operator pinned.
         """
         if pin:
             policy = self.memory_policy
             if policy is None or policy.pinned_chars is None:
                 raise ValueError("pin=True needs Agent(memory=MemoryPolicy(pinned_chars=...))")
             candidate = {**self._pinned, key: value}
-            size = len(self._block_for(candidate))
+            size = len(self._pinned_lines(candidate))
             if size > policy.pinned_chars:
                 raise ValueError(f"pinned facts would take {size} characters; pinned_chars is {policy.pinned_chars}")
             self._pinned = candidate
+        elif key in self._pinned:
+            raise ValueError(f"'{key}' is pinned; use remember(..., pin=True) to change it, or unpin() first")
         self.memory[key] = value
-
-    @staticmethod
-    def _block_for(pinned: Dict[str, Any]) -> str:
-        return "\n".join(f"- {key}: {value}" for key, value in pinned.items())
 
     def unpin(self, key: str) -> None:
         """Stop sending a pinned fact (it stays in ``memory``)."""
@@ -435,9 +439,9 @@ class Agent(PluginHandler, ReasoningEngine):
         return self.memory.get(key, None)
 
     def clear_memory(self):
-        """Clear the agent's memory, pinned facts included."""
+        """Clear the agent's memory. Pinned facts stay until ``unpin()``: they are the operator's,
+        and ``DELETE /memory`` must not be able to remove them."""
         self.memory.clear()
-        self._pinned.clear()
 
     def to_dict(self) -> dict:
         """Serialize the agent's state to a JSON-compatible dict.

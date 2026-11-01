@@ -166,6 +166,7 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
             done=True,
             backend=self._backend_type,
             reasoning="".join(reasoning) or None,
+            cached_tokens=makiOpenAI.MakiOpenAI._cached_tokens(usage),
         )
         log.info("chat_collect: %.2fs, %d tokens", elapsed, result.total_tokens)
         return result

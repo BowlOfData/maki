@@ -457,7 +457,10 @@ def loop_approval(loop_id: str, req: LoopApprovalRequest, request: Request, _: N
 
 @router.post("/memory/set")
 def memory_set(req: MemorySetRequest, request: Request, _: None = Depends(_auth)):
-    request.app.state.agent.remember(req.key, req.value)
+    try:
+        request.app.state.agent.remember(req.key, req.value)
+    except ValueError as e:  # the key is pinned by the operator
+        raise HTTPException(status_code=409, detail=str(e))
     return {"ok": True}
 
 

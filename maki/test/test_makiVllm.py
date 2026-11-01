@@ -156,6 +156,7 @@ class TestMakiVllm(unittest.TestCase):
     def test_chat_collect_joins_stream(self):
         llm = self._make_llm()
         usage = MagicMock(prompt_tokens=3, completion_tokens=4, total_tokens=7)
+        usage.prompt_tokens_details.cached_tokens = 2
         chunks = [
             _make_chunk(reasoning="think "),
             _make_chunk(reasoning="more"),
@@ -172,6 +173,7 @@ class TestMakiVllm(unittest.TestCase):
         self.assertEqual(result.content, "Hello")
         self.assertEqual(result.reasoning, "think more")
         self.assertEqual(result.total_tokens, 7)
+        self.assertEqual(result.cached_tokens, 2)
         self.assertTrue(llm._client.chat.completions.create.call_args.kwargs["stream"])
 
     def test_chat_collect_maps_connection_error(self):

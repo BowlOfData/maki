@@ -49,7 +49,7 @@ agent = Agent(
 |---|---|---|
 | `history_mode` | `"text"` | `"messages"` sends prior turns as structured chat history when the backend declares `supports_history` (Ollama, OpenAI, Anthropic and their subclasses). Other backends keep the text form and log it once, so memory is never silently lost. |
 | `token_budget` | 4096 | Estimated tokens (`len // 4`) of conversation kept. The oldest turn pairs are dropped first. |
-| `tool_result_chars` | none | A plugin result longer than this is cut to its first and last half with a `[... N characters omitted ...]` marker. Errors and short results are untouched. |
+| `tool_result_chars` | none | A plugin result longer than this is cut to `tool_result_chars` characters (first and last half kept) plus a `[... N characters omitted ...]` marker. Errors and short results are untouched. |
 | `history_entry_chars` | none | The same clipping for each field stored in `task_history` and `reasoning_history`. The conversation memory keeps full answers. |
 | `pinned_chars` | none | Size cap for pinned facts (below). Pinning needs it set. |
 | `recent_turns`, `older_turn_chars` | none | Set together: the last `recent_turns` turns stay verbatim and each older message is cut to `older_turn_chars` (head and tail kept, with the omitted-characters marker). Shortened turns count at their shortened size against `token_budget`, so more of them fit. |
@@ -66,7 +66,7 @@ agent.remember("goal", "Migrate the billing service without downtime.", pin=True
 agent.unpin("goal")          # stop sending it (it stays in agent.memory)
 ```
 
-Only your code can pin; the model has no tool for it, so scraped text cannot plant a lasting instruction. Pinning without `pinned_chars`, or over it, raises `ValueError`. Pins survive `reset_conversation()` (so a `context="fresh"` loop keeps its goal) and `to_dict()`/`from_dict()`; `clear_memory()` removes them.
+Only your code can pin; the model has no tool for it, so scraped text cannot plant a lasting instruction. Pinning without `pinned_chars`, or over it, raises `ValueError`. A pinned key can only be changed with `pin=True` or after `unpin()`; a plain `remember()` on it raises `ValueError`, and the `maki serve` `/memory/set` endpoint answers 409, so a remote client cannot rewrite what you pinned. Pins survive `reset_conversation()` (so a `context="fresh"` loop keeps its goal), `clear_memory()` (and `DELETE /memory`) and `to_dict()`/`from_dict()`; only `unpin()` removes them.
 
 When older turns are evicted, the first remaining message starts with `[N earlier turn(s) dropped]`, so the model knows the history is partial.
 
