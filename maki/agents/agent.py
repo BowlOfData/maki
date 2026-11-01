@@ -85,6 +85,7 @@ class Agent(PluginHandler, ReasoningEngine):
         if self.memory_policy is not None and not isinstance(self.memory_policy, MemoryPolicy):
             raise TypeError("memory must be a MemoryPolicy, a dict of its fields, or None")
         self._warned_history_fallback = False
+        self._pinned: Dict[str, Any] = {}   # facts that go in every system message; see remember()
 
         # Maximum number of entries to keep in history; deque enforces this automatically
         self._max_history_entries = 1000
@@ -98,6 +99,7 @@ class Agent(PluginHandler, ReasoningEngine):
             token_budget=self._history_token_budget(),
             max_entries=self._max_history_entries,
         )
+        self._apply_tiers()
 
         # One in-flight task at a time; acquired by execute_task / stream_task so
         # concurrent callers (workflow thread pools, FastAPI handlers) are serialized.
@@ -118,6 +120,11 @@ class Agent(PluginHandler, ReasoningEngine):
             return policy.token_budget
         return ConversationMemory.DEFAULT_TOKEN_BUDGET
 
+    def _apply_tiers(self) -> None:
+        policy = self.memory_policy
+        if policy is not None:
+            self._conversation_memory.configure_tiers(policy.recent_turns, policy.older_turn_chars)
+
     def _history_messages(self) -> Optional[List[Message]]:
         """Prior turns as structured chat history, or None when they go into the prompt as text.
 
@@ -134,7 +141,7 @@ class Agent(PluginHandler, ReasoningEngine):
                 logger.info(f"Agent '{self.name}': backend {type(self.maki).__name__} has no structured "
                             f"history support; sending prior turns as text")
             return None
-        return self._conversation_memory.messages() or None
+        return self._conversation_memory.view() or None
 
     def _build_history_section(self) -> str:
         """Return the prior-conversation block for stateful prompts, or empty string."""
@@ -152,7 +159,15 @@ class Agent(PluginHandler, ReasoningEngine):
 
     def _build_system_message(self) -> str:
         """Return the system message (role + instructions) for this agent."""
-        return f"You are {self.name}, a {self.role}. {self.instructions}".strip()
+        base = f"You are {self.name}, a {self.role}. {self.instructions}".strip()
+        pinned = self._pinned_block()
+        return f"{base}\n\n{pinned}" if pinned else base
+
+    def _pinned_block(self) -> str:
+        if not self._pinned:
+            return ""
+        return "Pinned facts (always true for this conversation):\n" + "\n".join(
+            f"- {key}: {value}" for key, value in self._pinned.items())
 
     def _build_user_message(self, task: str, context: Optional[Dict], use_plugins: bool) -> str:
         """Return the user message (task + optional context/plugins/history)."""
@@ -388,17 +403,41 @@ class Agent(PluginHandler, ReasoningEngine):
 
         return _tracked()
 
-    def remember(self, key: str, value: Any):
-        """Store information in the agent's memory."""
+    def remember(self, key: str, value: Any, pin: bool = False):
+        """Store information in the agent's memory.
+
+        With ``pin=True`` the fact is also put in the system message of every call and is never
+        evicted, so a goal or constraint survives a long conversation. Pinning is the operator's
+        call (the model has no tool for it) and needs ``MemoryPolicy(pinned_chars=...)``, which
+        caps the total size of the pinned block; going over it raises ``ValueError``.
+        """
+        if pin:
+            policy = self.memory_policy
+            if policy is None or policy.pinned_chars is None:
+                raise ValueError("pin=True needs Agent(memory=MemoryPolicy(pinned_chars=...))")
+            candidate = {**self._pinned, key: value}
+            size = len(self._block_for(candidate))
+            if size > policy.pinned_chars:
+                raise ValueError(f"pinned facts would take {size} characters; pinned_chars is {policy.pinned_chars}")
+            self._pinned = candidate
         self.memory[key] = value
+
+    @staticmethod
+    def _block_for(pinned: Dict[str, Any]) -> str:
+        return "\n".join(f"- {key}: {value}" for key, value in pinned.items())
+
+    def unpin(self, key: str) -> None:
+        """Stop sending a pinned fact (it stays in ``memory``)."""
+        self._pinned.pop(key, None)
 
     def recall(self, key: str) -> Any:
         """Retrieve information from the agent's memory."""
         return self.memory.get(key, None)
 
     def clear_memory(self):
-        """Clear the agent's memory."""
+        """Clear the agent's memory, pinned facts included."""
         self.memory.clear()
+        self._pinned.clear()
 
     def to_dict(self) -> dict:
         """Serialize the agent's state to a JSON-compatible dict.
@@ -418,6 +457,8 @@ class Agent(PluginHandler, ReasoningEngine):
             'conversation_token_budget': self._conversation_memory.token_budget,
             'max_history_entries': self._max_history_entries,
             'memory_policy': self.memory_policy.to_dict() if self.memory_policy else None,
+            'pinned': dict(self._pinned),
+            'conversation_dropped': self._conversation_memory.dropped_pairs,
         }
 
     @classmethod
@@ -439,6 +480,7 @@ class Agent(PluginHandler, ReasoningEngine):
         )
         agent.agent_id = data['agent_id']
         agent.memory = dict(data.get('memory', {}))
+        agent._pinned = dict(data.get('pinned', {}))
         max_entries = data.get('max_history_entries', 1000)
         agent._max_history_entries = max_entries
         agent.task_history = deque(data.get('task_history', []), maxlen=max_entries)
@@ -461,6 +503,8 @@ class Agent(PluginHandler, ReasoningEngine):
             agent._conversation_memory = ConversationMemory(
                 token_budget=token_budget, max_entries=max_entries,
             )
+        agent._conversation_memory.dropped_pairs = data.get('conversation_dropped', 0)
+        agent._apply_tiers()
         return agent
 
     def set_max_history_entries(self, max_entries: int):

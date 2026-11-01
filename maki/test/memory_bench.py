@@ -69,10 +69,15 @@ def run_stateful(turns: int = 20, answer_chars: int = 1200, **agent_kwargs) -> L
     return [backend.call_tokens(c) for c in backend.calls]
 
 
-def recall_at(turn: int = 15, answer_chars: int = 1200, **agent_kwargs) -> bool:
-    """True when a fact stated on turn 1 is still visible to the model on ``turn``."""
+def recall_at(turn: int = 15, answer_chars: int = 1200, pin: bool = False, **agent_kwargs) -> bool:
+    """True when a fact stated on turn 1 is still visible to the model on ``turn``.
+
+    With ``pin`` the fact is also pinned (the agent needs ``MemoryPolicy(pinned_chars=...)``).
+    """
     backend = RecordingBackend(answer_chars)
     agent = Agent("Bench", backend, "assistant", "Be brief.", stateful=True, **agent_kwargs)
+    if pin:
+        agent.remember("codename", FACT, pin=True)
     agent.execute_task(f"Remember this. {FACT}")
     for n in range(2, turn):
         agent.execute_task(FILLER_TASK.format(n=n))
@@ -140,13 +145,13 @@ def history_footprint(turns: int = 50, answer_chars: int = 20000, **agent_kwargs
     return sum(len(str(e["result"])) + len(str(e["context"])) for e in agent.task_history)
 
 
-def run_all(**agent_kwargs) -> Dict[str, Any]:
+def run_all(pin: bool = False, **agent_kwargs) -> Dict[str, Any]:
     stateful = run_stateful(**agent_kwargs)
     tool = run_tool_heavy(**agent_kwargs)
     return {
         "stateful_prompt_tokens_total": sum(stateful),
         "stateful_prompt_tokens_last_turn": stateful[-1],
-        "recall_turn_15": recall_at(15, **agent_kwargs),
+        "recall_turn_15": recall_at(15, pin=pin, **agent_kwargs),
         "tool_heavy_tokens_last_round": tool[-1],
         "task_history_chars": history_footprint(**agent_kwargs),
     }

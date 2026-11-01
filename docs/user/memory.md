@@ -51,6 +51,24 @@ agent = Agent(
 | `token_budget` | 4096 | Estimated tokens (`len // 4`) of conversation kept. The oldest turn pairs are dropped first. |
 | `tool_result_chars` | none | A plugin result longer than this is cut to its first and last half with a `[... N characters omitted ...]` marker. Errors and short results are untouched. |
 | `history_entry_chars` | none | The same clipping for each field stored in `task_history` and `reasoning_history`. The conversation memory keeps full answers. |
+| `pinned_chars` | none | Size cap for pinned facts (below). Pinning needs it set. |
+| `recent_turns`, `older_turn_chars` | none | Set together: the last `recent_turns` turns stay verbatim and each older message is cut to `older_turn_chars` (head and tail kept, with the omitted-characters marker). Shortened turns count at their shortened size against `token_budget`, so more of them fit. |
+
+### Pinned facts
+
+A goal or constraint that must outlive the conversation can be pinned. Pinned facts go in the system message of every call and are never evicted:
+
+```python
+agent = Agent(name="Planner", maki_instance=llm, stateful=True,
+              memory=MemoryPolicy(history_mode="messages", pinned_chars=400,
+                                  recent_turns=3, older_turn_chars=200))
+agent.remember("goal", "Migrate the billing service without downtime.", pin=True)
+agent.unpin("goal")          # stop sending it (it stays in agent.memory)
+```
+
+Only your code can pin; the model has no tool for it, so scraped text cannot plant a lasting instruction. Pinning without `pinned_chars`, or over it, raises `ValueError`. Pins survive `reset_conversation()` (so a `context="fresh"` loop keeps its goal) and `to_dict()`/`from_dict()`; `clear_memory()` removes them.
+
+When older turns are evicted, the first remaining message starts with `[N earlier turn(s) dropped]`, so the model knows the history is partial.
 
 `maki serve` takes the same fields under a `memory:` key in the agent YAML; unknown keys are an error.
 
@@ -58,7 +76,7 @@ What to expect, measured by the offline benchmark in `maki/test/memory_bench.py`
 
 - **Tool results and stored history:** clipping to 2000 characters cut a four-round, 20,000-character tool run from about 20,000 to 2,100 tokens in the last round, and 50 stored 20,000-character answers from 1.0 MB to 0.1 MB.
 - **Conversation tokens:** `history_mode="messages"` alone saves about 2% (it drops the `Task:`/`Response:` labels). The reason to use it is a stable prefix that provider prompt caches can reuse: `Usage.cached_tokens` reports what Anthropic and OpenAI served from cache. A smaller `token_budget` saves much more (about 40% at 2048 on the 20-turn run) but drops older turns sooner.
-- **Older facts are still dropped silently once they fall out of the budget.** A fact stated on turn 1 is gone by turn 15 with every setting above. Keep anything that must survive in the task or in `context`.
+- **Tiers and pins** (`recent_turns=3`, `older_turn_chars=200`, plus tool and history clipping): the 20-turn run drops from 53,887 to about 26,600 tokens (-51%), and a pinned turn-1 fact is still visible on turn 15 where the default has lost it. Without the pin the fact is still evicted, so pin what must survive.
 
 ## Obsidian memory
 

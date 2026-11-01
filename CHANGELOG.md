@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - `MemoryPolicy` and `Agent(memory=...)`: opt-in limits on what an agent keeps and sends, all off by default. `history_mode="messages"` sends a stateful agent's prior turns as structured chat history (backends declare `supports_history`; the others keep the text form), `token_budget` sets the conversation budget, `tool_result_chars` clips plugin results on both the native and `TOOL:` paths, and `history_entry_chars` bounds what `task_history` and `reasoning_history` store. `maki serve` YAML accepts the same fields under `memory:`; `to_dict`/`from_dict` round-trip the policy
+- Tiered memory: `MemoryPolicy(pinned_chars=..., recent_turns=..., older_turn_chars=...)`. `agent.remember(key, value, pin=True)` puts a fact in the system message of every call and never evicts it (operator-only, size-capped, `unpin()` removes it; survives `reset_conversation()` and `to_dict()`); the last `recent_turns` turns stay verbatim and older messages are cut to `older_turn_chars`, and cut turns count at their shortened size against the budget. When turns are evicted the first remaining message is prefixed `[N earlier turn(s) dropped]`
 - `LLMResponse.cached_tokens` and `Usage.cached_tokens`: prompt tokens served from the provider's cache, reported by the Anthropic and OpenAI backends (0 elsewhere)
 - `maki/test/memory_bench.py`: an offline benchmark of prompt tokens, recall and history size (`python -m maki.test.memory_bench`)
 

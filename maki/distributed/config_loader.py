@@ -21,6 +21,9 @@ memory:                     # optional; limits on what the agent keeps and sends
   token_budget: 4096        # stateful conversation budget, in estimated tokens
   tool_result_chars: 8000   # clip each plugin result to this many characters
   history_entry_chars: 4000 # clip what task_history / reasoning_history store
+  pinned_chars: 400         # room for facts pinned with agent.remember(..., pin=True)
+  recent_turns: 3           # with older_turn_chars: last N turns verbatim, older ones shortened
+  older_turn_chars: 200
 allow_dangerous_tools: false  # optional, default false; opt-in to let TOOL:
                               # directives call methods a plugin marks in
                               # DANGEROUS_METHODS (file writes, FTP, trades)

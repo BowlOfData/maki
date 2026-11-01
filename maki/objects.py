@@ -63,6 +63,9 @@ class ConversationMemory:
         self._token_budget = token_budget
         self._max_entries = max_entries
         self._messages: list = []   # list[Message]
+        self._recent_turns: Optional[int] = None   # tiers: see configure_tiers()
+        self._older_chars: Optional[int] = None
+        self.dropped_pairs = 0      # turn pairs evicted since the last clear()
 
     # ------------------------------------------------------------------
     # Properties
@@ -98,8 +101,19 @@ class ConversationMemory:
     def _estimate_tokens(text: str) -> int:
         return max(1, len(text) // 4)
 
+    def _is_older(self, index: int, count: int) -> bool:
+        return self._recent_turns is not None and index < count - 2 * self._recent_turns
+
     def _total_tokens(self) -> int:
-        return sum(self._estimate_tokens(m.content) for m in self._messages)
+        """Estimated tokens of what the model would see, i.e. with older turns shortened."""
+        count = len(self._messages)
+        total = 0
+        for i, m in enumerate(self._messages):
+            length = len(m.content)
+            if self._is_older(i, count):
+                length = min(length, self._older_chars + self._CLIP_MARKER_CHARS)
+            total += max(1, length // 4)
+        return total
 
     def _trim(self) -> None:
         """Evict oldest pairs until both max_entries and token_budget are satisfied.
@@ -110,9 +124,11 @@ class ConversationMemory:
         while len(self._messages) > self._max_entries and len(self._messages) >= 4:
             del self._messages[0]
             del self._messages[0]
+            self.dropped_pairs += 1
         while self._total_tokens() > self._token_budget and len(self._messages) >= 4:
             del self._messages[0]
             del self._messages[0]
+            self.dropped_pairs += 1
 
     # ------------------------------------------------------------------
     # Public API
@@ -127,20 +143,49 @@ class ConversationMemory:
         """Return a snapshot of all stored messages (list[Message])."""
         return list(self._messages)
 
+    # Rough size of the "[... N characters omitted ...]" marker, so the budget counts it.
+    _CLIP_MARKER_CHARS = 40
+
+    def configure_tiers(self, recent_turns: Optional[int], older_chars: Optional[int]) -> None:
+        """Keep the last ``recent_turns`` turns verbatim and shorten older ones to ``older_chars``.
+
+        Both must be set, or both None (no tiers). Stored messages stay whole; only ``view()``
+        and the budget see the shortened text.
+        """
+        if (recent_turns is None) != (older_chars is None):
+            raise ValueError("recent_turns and older_chars must be set together")
+        self._recent_turns, self._older_chars = recent_turns, older_chars
+        self._trim()
+
+    def view(self) -> list:
+        """The messages as the model should see them: older turns shortened, and a note on the
+        first one when turns were dropped, so eviction is never silent."""
+        count = len(self._messages)
+        out = []
+        for i, m in enumerate(self._messages):
+            content = clip_text(m.content, self._older_chars) if self._is_older(i, count) else m.content
+            out.append(Message(m.role, content, m.images))
+        if self.dropped_pairs and out:
+            out[0] = Message(out[0].role, f"[{self.dropped_pairs} earlier turn(s) dropped] {out[0].content}",
+                             out[0].images)
+        return out
+
     def format_as_text(self) -> str:
         """Format stored pairs as a text block for Agent stateful prompts."""
-        if not self._messages:
+        messages = self.view()
+        if not messages:
             return ""
         lines = []
         i = 0
-        while i + 1 < len(self._messages):
-            lines.append(f"Task: {self._messages[i].content}")
-            lines.append(f"Response: {self._messages[i + 1].content}")
+        while i + 1 < len(messages):
+            lines.append(f"Task: {messages[i].content}")
+            lines.append(f"Response: {messages[i + 1].content}")
             i += 2
         return "\n\nPrior conversation:\n" + "\n".join(lines) if lines else ""
 
     def clear(self) -> None:
         self._messages.clear()
+        self.dropped_pairs = 0
 
     def __len__(self) -> int:
         return len(self._messages)
@@ -206,21 +251,32 @@ class MemoryPolicy:
         tool_result_chars: Clip each plugin result to this many characters, head and tail kept.
         history_entry_chars: Clip the result and context stored in ``task_history`` and
             ``reasoning_history`` to this many characters.
+        pinned_chars: Budget for pinned facts (``Agent.remember(..., pin=True)``), which are put
+            in the system message and never evicted. Pinning needs this set.
+        recent_turns: Keep this many latest turns verbatim; older turns are shortened (needs
+            ``older_turn_chars``).
+        older_turn_chars: Shorten each older message to this many characters, head and tail kept.
     """
     history_mode: str = "text"
     token_budget: Optional[int] = None
     tool_result_chars: Optional[int] = None
     history_entry_chars: Optional[int] = None
+    pinned_chars: Optional[int] = None
+    recent_turns: Optional[int] = None
+    older_turn_chars: Optional[int] = None
 
     HISTORY_MODES = ("text", "messages")
 
     def __post_init__(self) -> None:
         if self.history_mode not in self.HISTORY_MODES:
             raise ValueError(f"history_mode must be one of {self.HISTORY_MODES}, got {self.history_mode!r}")
-        for name in ("token_budget", "tool_result_chars", "history_entry_chars"):
+        for name in ("token_budget", "tool_result_chars", "history_entry_chars", "pinned_chars", "recent_turns",
+                     "older_turn_chars"):
             value = getattr(self, name)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
                 raise ValueError(f"{name} must be a positive integer or None")
+        if (self.recent_turns is None) != (self.older_turn_chars is None):
+            raise ValueError("recent_turns and older_turn_chars must be set together")
 
     def to_dict(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}
