@@ -18,7 +18,7 @@ agent = Agent(
 print(agent.execute_task("Review this design: a plugin system with file access."))
 ```
 
-With `stateful=True` the agent keeps token-budgeted conversation history between tasks. To send that history as chat messages, or to cap plugin results and stored history, pass a `MemoryPolicy`; see [Keeping an agent's own memory small](memory.md#keeping-an-agents-own-memory-small).
+With `stateful=True` the agent keeps token-budgeted conversation history between tasks. To send that history as chat messages, or to cap plugin results and stored history, pass a `MemoryPolicy`; see [Agent memory](agent-memory.md).
 
 ## Memory and reasoning helpers
 

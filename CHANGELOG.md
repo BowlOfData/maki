@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `LLMResponse.cached_tokens` and `Usage.cached_tokens`: prompt tokens served from the provider's cache, reported by the Anthropic and OpenAI backends and by streaming `chat_collect()` on OpenAI-compatible servers such as vLLM and llama.cpp (0 elsewhere)
 - `maki/test/memory_bench.py`: an offline benchmark of prompt tokens, recall and history size (`python -m maki.test.memory_bench`)
 
+### Documentation
+- New guide `docs/user/agent-memory.md`: what goes wrong in long conversations, the `MemoryPolicy` settings, pinned facts and how to choose values, with measured results. In a live test on Ollama `gemma4:26b` (4096-token window, one run per setting), a 13-message chat that stated a codename in message 1 was answered wrongly by the default setup (`Response: Response: Response:`) and correctly by both policy settings, which sent about 45% less text (108,670 to 59,462 characters). Offline: 51% fewer prompt tokens over 20 turns, and 90% less in a large-tool-result run and in stored history. The token estimate (`len // 4`) ran low on log text, so keep `token_budget` near half of the model's window
+- `memory.md` now covers only Obsidian and RAG and links to the new guide; the README, docs index, nav and `agents.md` link to it
+
 ## [0.4.1] - 2026-11-01
 
 ### Added

@@ -57,6 +57,7 @@ agent = Agent(name="Reviewer", maki_instance=MakiAnthropic(model="claude-sonnet-
 - **Agents as services.** `maki serve` exposes any agent over HTTP; `AgentProxy` consumes it remotely.
 - **Batteries included.** 18 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution, checkpoint/resume and maker/checker verification.
 - **Agents that iterate.** `agent.run_loop(goal, requirements, judge)` keeps an agent working until a separate judge, your tests or your own checks confirm every requirement, with stall detection, token and time budgets, resume and optional human approval; it runs locally, over HTTP and inside workflows.
+- **Memory that stays useful.** An opt-in `MemoryPolicy` shortens old turns, pins the facts that must never be lost and clips oversized tool output. In a live test on a local `gemma4:26b`, the default setup forgot a fact stated at the start of a 13-message chat while the policy setting answered correctly, with about 45% less text sent.
 
 
 ## Documentation
@@ -68,6 +69,7 @@ agent = Agent(name="Reviewer", maki_instance=MakiAnthropic(model="claude-sonnet-
 | [Backends](https://bowlofdata.github.io/maki/docs/backends/) | Ollama, llama.cpp, vLLM, OpenAI, Anthropic, OpenRouter, HuggingFace |
 | [Agents](https://bowlofdata.github.io/maki/docs/agents/) | Memory, reasoning, streaming, tools |
 | [Workflows](https://bowlofdata.github.io/maki/docs/workflows/) | Multi-agent pipelines and verified tasks |
+| [Agent memory](https://bowlofdata.github.io/maki/docs/agent-memory/) | Keep long conversations correct and prompts small |
 | [Agent loops](https://bowlofdata.github.io/maki/docs/loops/) | Iterate an agent until its requirements are met |
 | [Plugins](https://bowlofdata.github.io/maki/docs/plugins/) | Built-in plugins and the safety model |
 | [Serving agents](https://bowlofdata.github.io/maki/docs/serving/) | `maki serve` and `AgentProxy` |

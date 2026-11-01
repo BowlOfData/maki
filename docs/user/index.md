@@ -18,6 +18,7 @@ pip install maki-framework
 - **Agents as services.** `maki serve` exposes any agent over HTTP, and `AgentProxy` lets another process use it as if it were local.
 - **Batteries included.** 18 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution and checkpoint/resume.
 - **Agents that iterate.** Give an agent a goal and requirements and let it loop until a judge or your own checks are satisfied; see [Agent loops](loops.md).
+- **Memory that stays useful.** An opt-in `MemoryPolicy` shortens old turns, pins the facts that must never be lost and clips oversized tool output, so long conversations keep giving correct answers; see [Agent memory](agent-memory.md).
 
 !!! note "Who it is not for"
     Maki is young (0.x) and deliberately small. If you need a large catalog of third-party integrations, hosted tracing, or a big ecosystem, one of the larger agent frameworks will serve you better.
@@ -32,5 +33,6 @@ pip install maki-framework
 | Chain several agents together | [Workflows](workflows.md) |
 | Let an agent iterate until requirements are met | [Agent loops](loops.md) |
 | Let an agent read files or search the web | [Plugins](plugins.md) |
+| Keep a long-running agent's answers correct and its prompts small | [Agent memory](agent-memory.md) |
 | Give an agent a notes vault or a searchable knowledge base | [Memory: Obsidian and RAG](memory.md) |
 | Expose an agent over HTTP | [Serving agents](serving.md) |
