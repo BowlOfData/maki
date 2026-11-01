@@ -263,5 +263,17 @@ class TestMakiAnthropic(unittest.TestCase):
         self.assertIn("claude-opus-4-8", repr(llm))
 
 
+class TestAnthropicCachedTokens(TestMakiAnthropic):
+    def test_cache_read_tokens_are_reported(self):
+        llm = self._make_llm()
+        resp = _make_anthropic_response()
+        resp.usage.cache_read_input_tokens = 12
+        self.assertEqual(llm._parse_response(resp, 0.1).cached_tokens, 12)
+
+    def test_absent_cache_field_counts_as_zero(self):
+        llm = self._make_llm()
+        self.assertEqual(llm._parse_response(_make_anthropic_response(), 0.1).cached_tokens, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

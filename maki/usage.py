@@ -17,16 +17,19 @@ _nesting = threading.local()  # depth of counted calls on this thread: only the 
 class Usage:
     """Running token totals. ``snapshot()`` + subtraction gives the usage of one stretch of work."""
 
-    def __init__(self, prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0, calls: int = 0):
+    def __init__(self, prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0, calls: int = 0,
+                 cached_tokens: int = 0):
         self.prompt_tokens, self.completion_tokens = prompt_tokens, completion_tokens
         self.total_tokens, self.calls = total_tokens, calls
+        self.cached_tokens = cached_tokens  # prompt tokens the provider served from its cache
         self._lock = threading.Lock()
         self._by_thread: dict = {}  # thread id -> tokens, so concurrent users of one backend can be told apart
 
-    def add(self, prompt: int, completion: int, total: int) -> None:
+    def add(self, prompt: int, completion: int, total: int, cached: int = 0) -> None:
         with self._lock:
             self.prompt_tokens += prompt
             self.completion_tokens += completion
+            self.cached_tokens += cached
             spent = total or (prompt + completion)
             self.total_tokens += spent
             self.calls += 1
@@ -41,11 +44,12 @@ class Usage:
 
     def snapshot(self) -> "Usage":
         with self._lock:
-            return Usage(self.prompt_tokens, self.completion_tokens, self.total_tokens, self.calls)
+            return Usage(self.prompt_tokens, self.completion_tokens, self.total_tokens, self.calls, self.cached_tokens)
 
     def __sub__(self, other: "Usage") -> "Usage":
         return Usage(self.prompt_tokens - other.prompt_tokens, self.completion_tokens - other.completion_tokens,
-                     self.total_tokens - other.total_tokens, self.calls - other.calls)
+                     self.total_tokens - other.total_tokens, self.calls - other.calls,
+                     self.cached_tokens - other.cached_tokens)
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Usage) and self.to_dict() == other.to_dict()
@@ -62,8 +66,11 @@ class Usage:
         self.__init__(**state)
 
     def to_dict(self) -> dict:
-        return {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens,
+        data = {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens,
                 "total_tokens": self.total_tokens, "calls": self.calls}
+        if self.cached_tokens:  # only when a backend reports it, so the common shape is unchanged
+            data["cached_tokens"] = self.cached_tokens
+        return data
 
 
 def _response_in(result: Any) -> Any:
@@ -95,8 +102,10 @@ class _CountedMethod:
         response = _response_in(result) if depth == 0 else None  # chat_collect() may call chat()
         if response is not None:
             total = getattr(response, "total_tokens", 0)
+            cached = getattr(response, "cached_tokens", 0)
             self.backend.usage.add(response.prompt_tokens, response.completion_tokens,
-                                   total if isinstance(total, int) else 0)
+                                   total if isinstance(total, int) else 0,
+                                   cached if isinstance(cached, int) else 0)
         return result
 
 

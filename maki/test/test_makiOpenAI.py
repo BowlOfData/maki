@@ -251,5 +251,18 @@ class TestMakiOpenAI(unittest.TestCase):
         self.assertIn("gpt-4o", repr(llm))
 
 
+class TestOpenAICachedTokens(unittest.TestCase):
+    def test_cached_tokens_read_from_prompt_tokens_details(self):
+        from maki.makiOpenAI import MakiOpenAI
+        usage = MagicMock()
+        usage.prompt_tokens_details.cached_tokens = 7
+        self.assertEqual(MakiOpenAI._cached_tokens(usage), 7)
+
+    def test_missing_or_non_integer_details_count_as_zero(self):
+        from maki.makiOpenAI import MakiOpenAI
+        self.assertEqual(MakiOpenAI._cached_tokens(None), 0)
+        self.assertEqual(MakiOpenAI._cached_tokens(MagicMock()), 0)  # a bare mock is not a count
+
+
 if __name__ == "__main__":
     unittest.main()

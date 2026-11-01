@@ -58,6 +58,19 @@ class UsageTests(unittest.TestCase):
         b.chat_with_tools([], [])
         self.assertEqual(usage.to_dict(), {"prompt_tokens": 14, "completion_tokens": 8, "total_tokens": 22, "calls": 3})
 
+    def test_cached_tokens_are_summed_and_shown_only_when_reported(self):
+        b = FakeBackend()
+        usage = attach_usage(b)
+        b.replies = [resp(10, 5)]
+        b.chat("x")
+        self.assertNotIn("cached_tokens", usage.to_dict())
+        cached = resp(10, 5)
+        cached.cached_tokens = 8
+        b.replies = [cached]
+        b.chat("x")
+        self.assertEqual(usage.to_dict()["cached_tokens"], 8)
+        self.assertEqual((usage.snapshot() - Usage()).cached_tokens, 8)
+
     def test_a_call_that_delegates_to_another_wrapped_method_is_counted_once(self):
         b = DelegatingBackend()
         usage = attach_usage(b)

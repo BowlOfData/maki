@@ -290,6 +290,7 @@ class LLMResponse:
     done: bool = True
     backend: BackendType = BackendType.OLLAMA
     reasoning: Optional[str] = None  # thinking text, when the backend returns it separately
+    cached_tokens: int = 0  # prompt tokens served from the provider's prompt cache, when reported
 
     def __str__(self) -> str:
         return self.content
@@ -309,6 +310,7 @@ class LLMResponse:
             "done": self.done,
             "backend": self.backend.value,
             "reasoning": self.reasoning,
+            "cached_tokens": self.cached_tokens,
         }
 
     @classmethod
@@ -323,6 +325,7 @@ class LLMResponse:
             done=data.get("done", True),
             backend=BackendType(data["backend"]),
             reasoning=data.get("reasoning"),
+            cached_tokens=data.get("cached_tokens", 0),
         )
 
 

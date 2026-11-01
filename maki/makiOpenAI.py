@@ -141,7 +141,14 @@ class MakiOpenAI(LLMBackend):
             elapsed_seconds=elapsed,
             done=True,
             backend=self._backend_type,
+            cached_tokens=self._cached_tokens(usage),
         )
+
+    @staticmethod
+    def _cached_tokens(usage: object) -> int:
+        details = getattr(usage, "prompt_tokens_details", None)
+        cached = getattr(details, "cached_tokens", 0)
+        return cached if isinstance(cached, int) else 0
 
     # ------------------------------------------------------------------
     # Core generation

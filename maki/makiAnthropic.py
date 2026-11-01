@@ -136,6 +136,7 @@ class MakiAnthropic(LLMBackend):
     def _parse_response(self, response: object, elapsed: float) -> LLMResponse:
         usage = response.usage  # type: ignore[attr-defined]
         content = response.content[0].text if response.content else ""  # type: ignore[attr-defined]
+        cached = getattr(usage, "cache_read_input_tokens", 0)
         return LLMResponse(
             content=content,
             model=response.model,  # type: ignore[attr-defined]
@@ -145,6 +146,7 @@ class MakiAnthropic(LLMBackend):
             elapsed_seconds=elapsed,
             done=True,
             backend=BackendType.ANTHROPIC,
+            cached_tokens=cached if isinstance(cached, int) else 0,
         )
 
     # ------------------------------------------------------------------
