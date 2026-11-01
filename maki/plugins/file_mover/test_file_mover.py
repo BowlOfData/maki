@@ -128,6 +128,8 @@ class MoveTests(Base):
         for bad in ("aux.txt", "dir/NUL", "name.", "a:b.txt", "q?.txt"):
             result = strict.move("a.txt", bad)
             self.assertFalse(result["success"], bad)
+            if os.name == "nt" and ":" in bad:
+                continue  # "a:b.txt" is a drive-relative path there: refused by scope before the name check
             self.assertIn("Invalid destination name", result["error"])
         self.assertTrue(os.path.exists(self.w("a.txt")))
 

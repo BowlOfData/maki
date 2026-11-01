@@ -149,7 +149,8 @@ class LocalExecuteTests(Base):
             self.skipTest("symlinks not available")
         execute_move(plan_move(self.p("ln"), self.p("ln2")))
         self.assertTrue(os.path.islink(self.p("ln2")))
-        self.assertEqual(os.readlink(self.p("ln2")), self.p("missing-target"))
+        # Windows may report the target with a \\?\ prefix
+        self.assertEqual(os.readlink(self.p("ln2")).removeprefix("\\\\?\\"), self.p("missing-target"))
         self.assertFalse(os.path.lexists(self.p("ln")))
 
     def test_a_failure_leaves_everything_as_it_was(self):
