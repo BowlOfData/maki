@@ -67,7 +67,8 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install -e ".[dev]"
+        # the registry and option tests import every plugin, so they need the plugin extras
+        python -m pip install -e ".[dev,distributed,ftp,web,trends,alpaca]"
     - name: Test the file_mover plugin
       run: |
         python -m pytest maki/plugins/file_mover maki/test/test_plugin_options.py maki/test/test_plugin_structure.py -q
