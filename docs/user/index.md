@@ -16,7 +16,7 @@ pip install maki-framework
 - **Guardrails on by default.** Outbound requests go through a hardened connector that blocks private and reserved address ranges for content-derived URLs. Plugins are fail-closed: a model can only call methods a plugin explicitly lists, and destructive ones stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
 - **Small core.** The base install has three dependencies (`requests`, `httpx`, `python-dotenv`). Everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP, and `AgentProxy` lets another process use it as if it were local.
-- **Batteries included.** 16 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution and checkpoint/resume.
+- **Batteries included.** 18 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution and checkpoint/resume.
 - **Agents that iterate.** Give an agent a goal and requirements and let it loop until a judge or your own checks are satisfied; see [Agent loops](loops.md).
 
 !!! note "Who it is not for"

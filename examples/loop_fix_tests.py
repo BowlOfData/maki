@@ -71,11 +71,14 @@ def main() -> None:
             Requirement("style", "slugify has a docstring and no print() calls"),
         ]
 
+        shown = []
+
         def show(event):
             if event is None:
                 print("starting loop")
                 return Decision.CONTINUE
             print(event.summary())
+            shown.append(event)
             if approve and input("continue? [Y/n] ").strip().lower() == "n":
                 return Decision.STOP
             return Decision.CONTINUE
@@ -85,6 +88,8 @@ def main() -> None:
             requirements, judge, on_iteration=show, use_plugins=True, max_iterations=6,
             cwd=project, artifact_fn=lambda: open(os.path.join(project, "slug.py")).read())
 
+        for event in result.events[len(shown):]:  # the hook is not called for the iteration that ends the loop
+            print(event.summary())
         print(f"\nresult: {result.stop_reason.value} after {result.iterations} iteration(s)")
         print(f"scratchpad: {result.scratchpad_path}")
         with open(os.path.join(project, "slug.py")) as f:

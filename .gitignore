@@ -230,3 +230,4 @@ plans/*
 # Internal plans and research notes (kept locally, not published)
 plans/
 .claude/
+docs/ideas/launch-post.md

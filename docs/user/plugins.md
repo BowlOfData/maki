@@ -40,6 +40,7 @@ When `use_plugins=True` (or the backend supports native tool calling), the plugi
 | `alpaca_stream` | Live crypto data stream | `alpaca` |
 | `obsidian_memory` | Persistent note-based memory (Obsidian vault) | none |
 | `rag_memory` | Retrieval-augmented memory with pluggable vector backends | none |
+| `postgres_store` | PostgreSQL client with pooled connections, verified TLS and a migration runner; the model only gets a `ping` health check | `postgres` |
 
 See [Memory: Obsidian and RAG](memory.md) for worked examples of the two memory plugins.
 

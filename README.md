@@ -25,6 +25,8 @@ ollama pull llama3.2
 pip install maki-framework
 ```
 
+The current release is [0.4.1](https://pypi.org/project/maki-framework/0.4.1/); to pin it, use `pip install maki-framework==0.4.1`.
+
 ```python
 from maki import MakiLLama
 from maki.agents import Agent
@@ -53,10 +55,9 @@ agent = Agent(name="Reviewer", maki_instance=MakiAnthropic(model="claude-sonnet-
 - **Guardrails on by default.** Content-derived URLs are checked against private and reserved address ranges at connect time. Plugins are fail-closed, and destructive methods (file writes, FTP transfers, trades) stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
 - **Small core.** Three dependencies (`requests`, `httpx`, `python-dotenv`); everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP; `AgentProxy` consumes it remotely.
-- **Batteries included.** 16 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution, checkpoint/resume and maker/checker verification.
+- **Batteries included.** 18 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution, checkpoint/resume and maker/checker verification.
 - **Agents that iterate.** `agent.run_loop(goal, requirements, judge)` keeps an agent working until a separate judge, your tests or your own checks confirm every requirement, with stall detection, token and time budgets, resume and optional human approval; it runs locally, over HTTP and inside workflows.
 
-Maki is young (0.x) and deliberately small. If you need a large catalog of third-party integrations or hosted tracing, a larger agent framework will serve you better.
 
 ## Documentation
 

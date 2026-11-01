@@ -50,7 +50,7 @@ Caps are checked between iterations, so a model call in flight finishes first. T
 
 ## Watching and steering
 
-`on_iteration` is called with each `LoopEvent` and can stop the loop or give the agent a note to address next:
+`on_iteration` is called with each `LoopEvent` before the next iteration starts, so it is not called for the iteration that ends the loop (read that one from `result.events[-1]`). It can stop the loop or give the agent a note to address next:
 
 ```python
 from maki.agents import Decision
