@@ -181,5 +181,39 @@ class TestAgentIntegration(unittest.TestCase):
         self.assertEqual((restored._pinned, restored._conversation_memory.dropped_pairs), ({}, 0))
 
 
+class TestLoopWithTieredAgent(unittest.TestCase):
+    """The real Agent as a loop maker: pins ride along in both context modes."""
+
+    def _run(self, context):
+        import os
+        import tempfile
+        from maki.agents.loop import LoopSpec, Requirement, StopReason, run_loop
+        from maki.test.loop_helpers import Clock, FakeAgent, verdict
+
+        backend = mb.RecordingBackend(answer_chars=600)
+        maker = Agent("maker", backend, stateful=True,
+                      memory=MemoryPolicy(history_mode="messages", pinned_chars=200, recent_turns=1,
+                                          older_turn_chars=100))
+        maker.remember("constraint", "never touch prod", pin=True)
+        judge = FakeAgent([verdict({"a": False}), verdict({"a": False}), verdict({"a": True})], stateful=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = LoopSpec("do the thing", [Requirement("a", "first")], context=context,
+                            loop_dir=os.path.join(tmp, "loop"), loop_id="t1")
+            result = run_loop(maker, judge, spec, clock=Clock())
+        self.assertEqual((result.stop_reason, result.iterations), (StopReason.SUCCEEDED, 3))
+        return backend
+
+    def test_shared_context_keeps_the_pin_and_carries_earlier_iterations(self):
+        backend = self._run("shared")
+        self.assertTrue(all("constraint: never touch prod" in c["system"] for c in backend.calls))
+        self.assertEqual([len(c["history"]) for c in backend.calls], [0, 2, 4])
+        self.assertIn("omitted", backend.calls[2]["history"][0].content)  # the oldest turn is shortened
+
+    def test_fresh_context_resets_turns_but_keeps_the_pin(self):
+        backend = self._run("fresh")
+        self.assertTrue(all("constraint: never touch prod" in c["system"] for c in backend.calls))
+        self.assertEqual([len(c["history"]) for c in backend.calls], [0, 0, 0])
+
+
 if __name__ == "__main__":
     unittest.main()
