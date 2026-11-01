@@ -7,7 +7,7 @@ ReasoningEngine mixins.
 """
 
 from collections import deque
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Union
 import json
 import logging
 import threading
@@ -16,7 +16,7 @@ import uuid
 
 from ..backend import LLMBackend
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
-from ..objects import ConversationMemory, Message
+from ..objects import ConversationMemory, MemoryPolicy, Message
 from ..usage import Usage, attach_usage
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
@@ -32,7 +32,8 @@ class Agent(PluginHandler, ReasoningEngine):
 
     def __init__(self, name: str, maki_instance: LLMBackend, role: str = "", instructions: str = "",
                  stateful: bool = False, use_streaming: bool = False,
-                 allow_dangerous_tools: bool = False):
+                 allow_dangerous_tools: bool = False,
+                 memory: Optional[Union[MemoryPolicy, dict]] = None):
         """
         Initialize an agent.
 
@@ -50,6 +51,8 @@ class Agent(PluginHandler, ReasoningEngine):
                 invoked via TOOL: directives. Off by default — a prompt-injected
                 instruction in scraped content should not be able to write
                 files or delete remote directories.
+            memory: Optional ``MemoryPolicy`` (or a dict of its fields) limiting what the
+                agent keeps and sends. ``None`` keeps the default behaviour.
 
         Raises:
             ValueError: If name is not a valid string
@@ -77,6 +80,11 @@ class Agent(PluginHandler, ReasoningEngine):
         self.use_streaming = use_streaming
         self.allow_dangerous_tools = allow_dangerous_tools
         self.memory = {}
+        self.memory_policy: Optional[MemoryPolicy] = (
+            MemoryPolicy.from_dict(memory) if isinstance(memory, dict) else memory)
+        if self.memory_policy is not None and not isinstance(self.memory_policy, MemoryPolicy):
+            raise TypeError("memory must be a MemoryPolicy, a dict of its fields, or None")
+        self._warned_history_fallback = False
 
         # Maximum number of entries to keep in history; deque enforces this automatically
         self._max_history_entries = 1000
@@ -87,6 +95,7 @@ class Agent(PluginHandler, ReasoningEngine):
         # Token-budgeted and eviction-based; replaces the old fixed-window + 300-char
         # truncation approach.
         self._conversation_memory = ConversationMemory(
+            token_budget=self._history_token_budget(),
             max_entries=self._max_history_entries,
         )
 
@@ -103,11 +112,43 @@ class Agent(PluginHandler, ReasoningEngine):
     def __repr__(self):
         return f"Agent(name='{self.name}', role='{self.role}')"
 
+    def _history_token_budget(self) -> int:
+        policy = self.memory_policy
+        if policy is not None and policy.token_budget is not None:
+            return policy.token_budget
+        return ConversationMemory.DEFAULT_TOKEN_BUDGET
+
+    def _history_messages(self) -> Optional[List[Message]]:
+        """Prior turns as structured chat history, or None when they go into the prompt as text.
+
+        Only a stateful agent whose policy asks for ``history_mode="messages"`` and whose backend
+        declares ``supports_history`` sends structured history. A backend without it would drop the
+        history silently, so that case keeps the text form and says so once.
+        """
+        policy = self.memory_policy
+        if not self.stateful or policy is None or policy.history_mode != "messages":
+            return None
+        if getattr(self.maki, "supports_history", False) is not True:
+            if not self._warned_history_fallback:
+                self._warned_history_fallback = True
+                logger.info(f"Agent '{self.name}': backend {type(self.maki).__name__} has no structured "
+                            f"history support; sending prior turns as text")
+            return None
+        return self._conversation_memory.messages() or None
+
     def _build_history_section(self) -> str:
         """Return the prior-conversation block for stateful prompts, or empty string."""
-        if not self.stateful:
+        if not self.stateful or self._history_messages() is not None:
             return ""
         return self._conversation_memory.format_as_text()
+
+    def _record_task(self, task: str, context: Optional[Dict], result: str) -> None:
+        self.task_history.append(self._bounded_entry({
+            'task': task,
+            'context': context,
+            'result': result,
+            'timestamp': time.time()
+        }))
 
     def _build_system_message(self) -> str:
         """Return the system message (role + instructions) for this agent."""
@@ -160,10 +201,14 @@ class Agent(PluginHandler, ReasoningEngine):
                     result = self.execute_with_native_tools(task, context, system_msg)
                 else:
                     user_msg = self._build_user_message(task, context, use_plugins)
+                    chat_kwargs = {"system": system_msg}
+                    history = self._history_messages()
+                    if history is not None:
+                        chat_kwargs["history"] = history
                     if self.use_streaming:
-                        result = self.maki.chat_collect(user_msg, system=system_msg).content
+                        result = self.maki.chat_collect(user_msg, **chat_kwargs).content
                     else:
-                        result = self.maki.chat(user_msg, system=system_msg).content
+                        result = self.maki.chat(user_msg, **chat_kwargs).content
                     if result is None:
                         raise MakiAPIError(f"Backend returned None content for task '{task}'")
 
@@ -181,12 +226,7 @@ class Agent(PluginHandler, ReasoningEngine):
                 raise MakiError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}") from e
 
             # Record the task execution in history
-            self.task_history.append({
-                'task': task,
-                'context': context,
-                'result': result,
-                'timestamp': time.time()
-            })
+            self._record_task(task, context, result)
 
             # Maintain stateful conversation history
             if self.stateful:
@@ -319,6 +359,9 @@ class Agent(PluginHandler, ReasoningEngine):
         system_msg = self._build_system_message()
         user_msg = self._build_user_message(task, context, use_plugins)
         stream_kwargs = {"system": system_msg}
+        history = self._history_messages()
+        if history is not None:
+            stream_kwargs["history"] = history
 
         def _tracked():
             chunks = []
@@ -338,12 +381,7 @@ class Agent(PluginHandler, ReasoningEngine):
                     # Always record whatever was produced, even on early abandonment.
                     if chunks:
                         full_result = "".join(chunks)
-                        self.task_history.append({
-                            'task': task,
-                            'context': context,
-                            'result': full_result,
-                            'timestamp': time.time(),
-                        })
+                        self._record_task(task, context, full_result)
                         if self.stateful:
                             self._conversation_memory.append(Message("user", task))
                             self._conversation_memory.append(Message("assistant", full_result))
@@ -379,6 +417,7 @@ class Agent(PluginHandler, ReasoningEngine):
             'conversation_memory': self._conversation_memory.to_list(),
             'conversation_token_budget': self._conversation_memory.token_budget,
             'max_history_entries': self._max_history_entries,
+            'memory_policy': self.memory_policy.to_dict() if self.memory_policy else None,
         }
 
     @classmethod
@@ -396,6 +435,7 @@ class Agent(PluginHandler, ReasoningEngine):
             instructions=data.get('instructions', ''),
             stateful=data.get('stateful', False),
             use_streaming=data.get('use_streaming', False),
+            memory=data.get('memory_policy'),
         )
         agent.agent_id = data['agent_id']
         agent.memory = dict(data.get('memory', {}))

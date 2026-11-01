@@ -16,7 +16,7 @@ import os
 from typing import Dict, List, Optional, Tuple
 
 from ..exceptions import MakiValidationError
-from ..objects import ToolCall
+from ..objects import ToolCall, clip_text
 
 
 logger = logging.getLogger(__name__)
@@ -410,6 +410,11 @@ class PluginHandler:
                 })
         return specs
 
+    def _clip_tool_result(self, text: str) -> str:
+        """Apply the host agent's ``tool_result_chars`` limit, if it has a memory policy."""
+        policy = getattr(self, "memory_policy", None)
+        return clip_text(text, policy.tool_result_chars if policy else None)
+
     def _execute_tool_call(self, tc: ToolCall) -> str:
         """Execute one native tool call and return a string result."""
         try:
@@ -430,7 +435,7 @@ class PluginHandler:
 
         try:
             result = getattr(plugin, method_name)(**tc.args)
-            return str(result)
+            return self._clip_tool_result(str(result))
         except Exception as exc:
             logger.warning(
                 "Native tool call %s.%s raised: %s", plugin_name, method_name, exc
@@ -459,7 +464,9 @@ class PluginHandler:
         if history_section:
             parts.append(history_section)
         user_content = "\n\n".join(parts)
-        messages = [{"role": "user", "content": user_content}]
+        # Structured prior turns, when the host agent's policy sends history as messages.
+        prior = getattr(self, "_history_messages", lambda: None)() or []
+        messages = [m.to_dict() for m in prior] + [{"role": "user", "content": user_content}]
 
         for _ in range(_MAX_TOOL_ROUNDS):
             response, tool_calls, messages = self.maki.chat_with_tools(
@@ -511,7 +518,7 @@ class PluginHandler:
         except Exception as exc:
             logger.warning(f"Plugin call {plugin_name}.{method_name} failed: {exc}", exc_info=True)
             return {"plugin": plugin_name, "method": method_name, "error": str(exc)}
-        return {"plugin": plugin_name, "method": method_name, "result": str(output)}
+        return {"plugin": plugin_name, "method": method_name, "result": self._clip_tool_result(str(output))}
 
     def handle_plugin_calls(self, llm_response: str, task: str,
                             context: Optional[Dict]) -> str:

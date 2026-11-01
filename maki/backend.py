@@ -42,6 +42,9 @@ class LLMBackend(ABC):
     model: str
     temperature: float
     supports_native_tools: bool = False
+    # True when chat()/stream() honour the ``history`` argument; an agent only sends structured
+    # history to a backend that says so (the base chat() ignores it).
+    supports_history: bool = False
 
     @abstractmethod
     def request(self, prompt: str) -> LLMResponse:

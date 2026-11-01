@@ -50,6 +50,7 @@ class MakiOpenAI(LLMBackend):
         session.say("Explain list comprehensions.")
     """
     supports_native_tools: bool = True
+    supports_history: bool = True
     _backend_type: BackendType = BackendType.OPENAI
 
     def __init__(

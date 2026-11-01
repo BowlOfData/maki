@@ -17,7 +17,7 @@ __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLa
            "MakiVllm",
            "LoopSpec", "Requirement",
            "LLMResponse",
-           "GenerationConfig", "Message", "ConversationMemory", "RateLimiter", "BackendType",
+           "GenerationConfig", "Message", "ConversationMemory", "MemoryPolicy", "RateLimiter", "BackendType",
            "ToolCall", "config", "__version__"]
 
 _LAZY_EXPORTS = {
@@ -39,6 +39,7 @@ _LAZY_EXPORTS = {
     "GenerationConfig": (".objects",     "GenerationConfig"),
     "Message":        (".objects",       "Message"),
     "ConversationMemory": (".objects",   "ConversationMemory"),
+    "MemoryPolicy":   (".objects",       "MemoryPolicy"),
     "RateLimiter":    (".objects",       "RateLimiter"),
     "BackendType":    (".objects",       "BackendType"),
     "ToolCall":       (".objects",       "ToolCall"),

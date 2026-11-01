@@ -16,6 +16,11 @@ think: false                # optional, ollama only: false turns model thinking 
                             # model can leak its reasoning into the reply, which pollutes loop artifacts)
 stateful: false             # optional, default false
 use_streaming: false        # optional, default false
+memory:                     # optional; limits on what the agent keeps and sends
+  history_mode: messages    # text (default) | messages: prior turns as structured chat history
+  token_budget: 4096        # stateful conversation budget, in estimated tokens
+  tool_result_chars: 8000   # clip each plugin result to this many characters
+  history_entry_chars: 4000 # clip what task_history / reasoning_history store
 allow_dangerous_tools: false  # optional, default false; opt-in to let TOOL:
                               # directives call methods a plugin marks in
                               # DANGEROUS_METHODS (file writes, FTP, trades)
@@ -52,7 +57,7 @@ from typing import Optional
 
 from ..agents.agent import Agent
 from ..backend import LLMBackend
-from ..objects import GenerationConfig
+from ..objects import GenerationConfig, MemoryPolicy
 from ..plugins import PLUGIN_REGISTRY
 from .loop_jobs import LoopCaps
 
@@ -108,6 +113,15 @@ def _read_config(path: str) -> dict:
     return cfg
 
 
+def _memory_from_cfg(section) -> Optional[MemoryPolicy]:
+    if section is None:
+        return None
+    try:
+        return MemoryPolicy.from_dict(section)
+    except ValueError as exc:
+        raise ValueError(f"Invalid 'memory' section: {exc}") from exc
+
+
 def _agent_from_cfg(cfg: dict) -> Agent:
     # Validate plugin names up front (before the backend constructor, which
     # may touch the network): load_plugin() feeds the name into
@@ -129,6 +143,7 @@ def _agent_from_cfg(cfg: dict) -> Agent:
         stateful=bool(cfg.get("stateful", False)),
         use_streaming=bool(cfg.get("use_streaming", False)),
         allow_dangerous_tools=bool(cfg.get("allow_dangerous_tools", False)),
+        memory=_memory_from_cfg(cfg.get("memory")),
     )
 
     for plugin_name in plugin_names:

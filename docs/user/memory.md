@@ -24,6 +24,42 @@ llm = MakiVllm(model="Qwen/Qwen2.5-1.5B-Instruct")
 embedder = MakiVllm(model="BAAI/bge-m3", base_url="http://127.0.0.1:8001/v1")
 ```
 
+## Keeping an agent's own memory small
+
+By default a stateful agent pastes its whole recent conversation into every prompt, plugin results go to the model in full, and `task_history` keeps every answer in full. A `MemoryPolicy` limits each of those. Nothing changes unless you pass one:
+
+```python
+from maki.agents import Agent
+from maki.objects import MemoryPolicy
+
+agent = Agent(
+    name="Researcher",
+    maki_instance=llm,
+    stateful=True,
+    memory=MemoryPolicy(
+        history_mode="messages",     # prior turns as chat messages, not pasted text
+        token_budget=2048,           # estimated tokens of conversation to keep
+        tool_result_chars=2000,      # clip each plugin result (head and tail kept)
+        history_entry_chars=2000,    # clip what task_history / reasoning_history store
+    ),
+)
+```
+
+| Field | Default | Effect |
+|---|---|---|
+| `history_mode` | `"text"` | `"messages"` sends prior turns as structured chat history when the backend declares `supports_history` (Ollama, OpenAI, Anthropic and their subclasses). Other backends keep the text form and log it once, so memory is never silently lost. |
+| `token_budget` | 4096 | Estimated tokens (`len // 4`) of conversation kept. The oldest turn pairs are dropped first. |
+| `tool_result_chars` | none | A plugin result longer than this is cut to its first and last half with a `[... N characters omitted ...]` marker. Errors and short results are untouched. |
+| `history_entry_chars` | none | The same clipping for each field stored in `task_history` and `reasoning_history`. The conversation memory keeps full answers. |
+
+`maki serve` takes the same fields under a `memory:` key in the agent YAML; unknown keys are an error.
+
+What to expect, measured by the offline benchmark in `maki/test/memory_bench.py` (`python -m maki.test.memory_bench`; token counts are the `len // 4` estimate):
+
+- **Tool results and stored history:** clipping to 2000 characters cut a four-round, 20,000-character tool run from about 20,000 to 2,100 tokens in the last round, and 50 stored 20,000-character answers from 1.0 MB to 0.1 MB.
+- **Conversation tokens:** `history_mode="messages"` alone saves about 2% (it drops the `Task:`/`Response:` labels). The reason to use it is a stable prefix that provider prompt caches can reuse: `Usage.cached_tokens` reports what Anthropic and OpenAI served from cache. A smaller `token_budget` saves much more (about 40% at 2048 on the 20-turn run) but drops older turns sooner.
+- **Older facts are still dropped silently once they fall out of the budget.** A fact stated on turn 1 is gone by turn 15 with every setting above. Keep anything that must survive in the task or in `context`.
+
 ## Obsidian memory
 
 `ObsidianMemory` reads and writes notes in a vault folder. The vault is any directory; open it in Obsidian to browse, edit and link the notes. It is resolved from the `vault_path` argument, then the `MAKI_VAULT_PATH` environment variable, then `~/ObsidianVaults/maki`.

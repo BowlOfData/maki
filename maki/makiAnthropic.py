@@ -53,6 +53,7 @@ class MakiAnthropic(LLMBackend):
     not as a message in the messages list.
     """
     supports_native_tools: bool = True
+    supports_history: bool = True
 
     def __init__(
         self,

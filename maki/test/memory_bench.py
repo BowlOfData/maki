@@ -11,7 +11,7 @@ keyword arguments, so the same scenario can be run with and without a memory pol
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from maki.agents import Agent
 from maki.objects import LLMResponse, ToolCall

@@ -13,6 +13,7 @@ import time
 from typing import Dict, List
 
 from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
+from ..objects import clip_entry
 
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,11 @@ class ReasoningEngine:
         """Send a plain prompt to the backend and return the response text."""
         return self.maki.chat(prompt).content
 
+    def _bounded_entry(self, entry: dict) -> dict:
+        """Clip a history entry per the host's memory policy (unchanged when it has none)."""
+        policy = getattr(self, "memory_policy", None)
+        return clip_entry(entry, policy.history_entry_chars if policy else None)
+
     def _init_reasoning(self) -> None:
         """
         Validate the ReasoningEngine mixin contract.
@@ -161,12 +167,12 @@ class ReasoningEngine:
                 raise
             raise MakiNetworkError(f"Failed to get reasoning from LLM: {str(e)}") from e
 
-        self.reasoning_history.append({
+        self.reasoning_history.append(self._bounded_entry({
             'problem': problem,
             'steps': steps,
             'result': result,
             'timestamp': time.time()
-        })
+        }))
 
         return result
 
@@ -206,13 +212,13 @@ class ReasoningEngine:
                     raise
                 raise MakiNetworkError(f"Failed to get correction from LLM: {str(e)}") from e
 
-            self.reasoning_history.append({
+            self.reasoning_history.append(self._bounded_entry({
                 'iteration': i + 1,
                 'original_response': initial_response,
                 'feedback': feedback,
                 'corrected_response': current,
                 'timestamp': time.time()
-            })
+            }))
 
         return current
 
@@ -264,10 +270,10 @@ class ReasoningEngine:
                 raise
             raise MakiNetworkError(f"Failed to get task decomposition from LLM: {str(e)}") from e
 
-        self.reasoning_history.append({
+        self.reasoning_history.append(self._bounded_entry({
             'original_task': task,
             'decomposition': result,
             'timestamp': time.time()
-        })
+        }))
 
         return _parse_subtasks(result, max_subtasks)

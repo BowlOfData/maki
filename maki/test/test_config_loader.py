@@ -94,5 +94,29 @@ class TestDangerousToolsFlag(unittest.TestCase):
         self.assertTrue(agent.allow_dangerous_tools)
 
 
+class TestMemorySection(unittest.TestCase):
+    def _load(self, body: str):
+        path = _write_config(body)
+        try:
+            with patch("maki.distributed.config_loader._build_backend", return_value=MagicMock()):
+                return load_agent_from_config(path)
+        finally:
+            os.unlink(path)
+
+    def test_no_section_means_no_policy(self):
+        self.assertIsNone(self._load("name: a\n").memory_policy)
+
+    def test_section_builds_a_policy(self):
+        agent = self._load("name: a\nstateful: true\nmemory:\n  history_mode: messages\n  token_budget: 900\n")
+        self.assertEqual(agent.memory_policy.history_mode, "messages")
+        self.assertEqual(agent._conversation_memory.token_budget, 900)
+
+    def test_unknown_key_and_bad_value_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Invalid 'memory' section"):
+            self._load("name: a\nmemory:\n  history_mod: messages\n")
+        with self.assertRaisesRegex(ValueError, "Invalid 'memory' section"):
+            self._load("name: a\nmemory:\n  token_budget: 0\n")
+
+
 if __name__ == "__main__":
     unittest.main()

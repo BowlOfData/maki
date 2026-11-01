@@ -66,6 +66,7 @@ class MakiLLama(LLMBackend):
 
     OLLAMA_BASE_URL = DEFAULT_OLLAMA_BASE_URL
     supports_native_tools: bool = True
+    supports_history: bool = True
 
     def __init__(
         self,

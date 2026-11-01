@@ -1,5 +1,6 @@
 import asyncio
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Optional
 import threading
@@ -164,6 +165,76 @@ class ConversationMemory:
         for d in entries:
             mem._messages.append(Message.from_dict(d))
         return mem
+
+
+def clip_text(text: str, limit: Optional[int]) -> str:
+    """Keep the head and tail of ``text`` within ``limit`` characters, marking what was cut.
+
+    Text at or under the limit (and any text when ``limit`` is None) is returned unchanged.
+    The marker states how many characters were omitted so the model knows the text is partial.
+    """
+    if limit is None or len(text) <= limit:
+        return text
+    omitted = len(text) - limit
+    head = limit // 2
+    tail = limit - head
+    return f"{text[:head]}\n[... {omitted} characters omitted ...]\n{text[len(text) - tail:]}"
+
+
+def clip_entry(entry: dict, limit: Optional[int]) -> dict:
+    """Return ``entry`` with every long text or structured value clipped to ``limit`` characters."""
+    if limit is None:
+        return entry
+    out = {}
+    for key, value in entry.items():
+        if value is None or isinstance(value, (bool, int, float)):
+            out[key] = value
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        out[key] = value if len(text) <= limit else clip_text(text, limit)
+    return out
+
+
+@dataclass(frozen=True)
+class MemoryPolicy:
+    """Opt-in limits on what an agent keeps and sends. Every default reproduces today's behaviour.
+
+    Attributes:
+        history_mode: ``"text"`` pastes prior turns into the prompt; ``"messages"`` sends them as
+            structured chat history when the backend supports it (falls back to text otherwise).
+        token_budget: Estimated-token cap on the stateful conversation (None keeps the default).
+        tool_result_chars: Clip each plugin result to this many characters, head and tail kept.
+        history_entry_chars: Clip the result and context stored in ``task_history`` and
+            ``reasoning_history`` to this many characters.
+    """
+    history_mode: str = "text"
+    token_budget: Optional[int] = None
+    tool_result_chars: Optional[int] = None
+    history_entry_chars: Optional[int] = None
+
+    HISTORY_MODES = ("text", "messages")
+
+    def __post_init__(self) -> None:
+        if self.history_mode not in self.HISTORY_MODES:
+            raise ValueError(f"history_mode must be one of {self.HISTORY_MODES}, got {self.history_mode!r}")
+        for name in ("token_budget", "tool_result_chars", "history_entry_chars"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+                raise ValueError(f"{name} must be a positive integer or None")
+
+    def to_dict(self) -> dict:
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'MemoryPolicy':
+        """Build from a dict (e.g. a YAML section); unknown keys are an error, not ignored."""
+        if not isinstance(data, dict):
+            raise ValueError("memory policy must be a mapping")
+        known = {f.name for f in fields(cls)}
+        unknown = set(data) - known
+        if unknown:
+            raise ValueError(f"unknown memory policy keys: {sorted(unknown)}")
+        return cls(**data)
 
 
 @dataclass
