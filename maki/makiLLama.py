@@ -332,6 +332,7 @@ class MakiLLama(LLMBackend):
         config: Optional[GenerationConfig] = None,
         system: Optional[str] = None,
         images: Optional[list[str]] = None,
+        response_format: Optional[Union[str, dict]] = None,
     ) -> LLMResponse:
         """
         Like chat() but uses HTTP streaming internally.
@@ -340,11 +341,16 @@ class MakiLLama(LLMBackend):
         so long-running generations (e.g. large ranking tasks) complete without
         hitting the global read timeout.  Raises MakiTimeoutError only if the
         model stops producing output for longer than self.timeout seconds.
+
+        ``response_format`` is ``"json"`` or a JSON-schema dict (Ollama structured
+        outputs), as in ``chat()``; a structured reply never falls back to the
+        thinking trace. Other backends' ``chat_collect`` do not accept it.
         """
         log.debug("chat_collect (stream): %s", prompt[:100])
         if self._rate_limiter:
             self._rate_limiter.acquire()
-        payload = self._build_payload(prompt, history, config, stream=True, system=system, images=images)
+        payload = self._build_payload(prompt, history, config, stream=True, system=system, images=images,
+                                     response_format=response_format)
         t0 = time.perf_counter()
         chunks: list[str] = []
         last_data: dict = {}
@@ -372,7 +378,7 @@ class MakiLLama(LLMBackend):
 
         elapsed = time.perf_counter() - t0
         content = "".join(chunks)
-        if not content.strip():
+        if response_format is None and not content.strip():
             thinking = last_data.get("message", {}).get("thinking", "")
             if thinking:
                 log.debug("chat_collect: content empty, falling back to thinking field")

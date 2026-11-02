@@ -125,5 +125,26 @@ class TestMakiLLamaPayload(unittest.TestCase):
         self.assertEqual(Verdict.model_validate_json(r.content).reason, "r")
 
 
+    def test_chat_collect_sends_schema_and_skips_thinking_fallback(self):
+        import json as _json
+        llm = MakiLLama(model="m")
+        llm._http = MagicMock()
+        lines = [_json.dumps({"message": {"content": "", "thinking": "reasoning..."}, "done": True}).encode()]
+        from maki import makiLLama as mod
+        original = mod.Connector.iter_lines
+        mod.Connector.iter_lines = staticmethod(lambda r: iter(lines))
+        try:
+            schema = Verdict.model_json_schema()
+            r = llm.chat_collect("q", response_format=schema)
+            plain = llm.chat_collect("q")
+        finally:
+            mod.Connector.iter_lines = original
+        first, second = (c.kwargs["json"] for c in llm._http.post.call_args_list)
+        self.assertEqual(first["format"], schema)
+        self.assertNotIn("format", second)
+        self.assertEqual(r.content, "")
+        self.assertEqual(plain.content, "reasoning...")
+
+
 if __name__ == "__main__":
     unittest.main()
