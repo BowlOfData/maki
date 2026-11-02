@@ -18,8 +18,9 @@ from unittest.mock import MagicMock, patch
 from maki.backend import LLMBackend
 from maki.agents import Agent, AgentManager
 
-_torch_available = importlib.util.find_spec("torch") is not None
-_skip_hf = unittest.skipUnless(_torch_available, "torch not installed")
+# makiHG imports both at module level, so both must be present for the HFBackend tests.
+_hf_available = all(importlib.util.find_spec(m) is not None for m in ("torch", "transformers"))
+_skip_hf = unittest.skipUnless(_hf_available, "torch and transformers are not both installed")
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +308,7 @@ class TestHFBackendStreamConfig(unittest.TestCase):
         pure dispatch logic, not in generation.
         """
         import sys
-        if _torch_available:
+        if _hf_available:
             from maki.makiHG import HFBackend
         else:
             with patch.dict(sys.modules, {"torch": MagicMock(), "transformers": MagicMock()}):

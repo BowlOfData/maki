@@ -67,8 +67,6 @@ class Adapter:
     streams = True
     #: whether async_chat() is expected to work on this backend
     has_async = True
-    #: whether async_chat() classifies failures itself (the Ollama path leaves that to AsyncConnector)
-    async_errors = True
 
     def make(self, **kwargs) -> LLMBackend:
         raise NotImplementedError
@@ -236,8 +234,8 @@ class BackendConformance:
                     self.assertEqual(caught.exception.status_code, 400)
 
     def test_async_failures_map_onto_the_maki_exception_tree(self):
-        if not (self.adapter.has_async and self.adapter.async_errors):
-            self.skipTest("async errors are classified elsewhere")
+        if not self.adapter.has_async:
+            self.skipTest("backend has no async_chat")
         for kind, expected in ERROR_KINDS:
             with self.subTest(kind=kind):
                 backend = self.adapter.make()

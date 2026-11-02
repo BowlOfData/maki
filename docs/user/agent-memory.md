@@ -91,6 +91,21 @@ agent = Agent("assistant", backend, stateful=True,
 - **State.** The summary is saved by `to_dict()`/`from_dict()` and removed by `reset_conversation()`. It only applies to stateful agents.
 - **Trade-off.** A summary can lose or distort a detail, and it is written from the model's own earlier answers. Facts that must never change belong in [pinned facts](#pinned-facts), which are sent verbatim.
 
+### Measured on a real model
+
+`python -m maki.test.summary_bench` states four facts (codename, deadline, budget, owner) in the first turns, adds filler turns until the conversation no longer fits, then asks for the facts. On Ollama `gemma4:26b` (temperature 0, `token_budget=300`, `summary_chars=400`), two identical runs per setup:
+
+| Filler turns | Setup | Facts recalled | Prompt tokens of the last call | Model calls | Time |
+|---|---|---|---|---|---|
+| 16 | everything kept (budget 20000) | 4/4 | 949 | 21 | 62-78 s |
+| 16 | turns dropped | 0/4 | 312 | 21 | 41-54 s |
+| 16 | `summarize_older=True` | 4/4 | 547 | 34 | 83-85 s |
+| 10 | everything kept | 4/4 | 664 | 15 | 25 s |
+| 10 | turns dropped | 0/4 | 306 | 15 | 22 s |
+| 10 | `summarize_older=True` | 4/4 | 557 | 22 | 33 s |
+
+The summary recovered every fact the dropping setup lost and sent about 42% fewer prompt tokens than keeping everything (16 filler turns). The price is one extra model call per task once turns are being evicted, roughly doubling the time here. The summary also kept some filler (a language-learning tip) next to the facts, because it summarises whatever was evicted; pin the facts that matter.
+
 ## Pinned facts
 
 A goal or constraint that must outlive the conversation can be pinned. Pinned facts go in the system message of every call and are never dropped.
@@ -117,7 +132,7 @@ agent.unpin("goal")          # stop sending it (it stays in agent.memory)
 - A fact outside a pin that falls out of the budget is still dropped. The `[N earlier turn(s) dropped]` note tells the model, but it cannot get the fact back.
 - Shortening keeps the start and end of a message. A key detail in the middle of a long message can be cut.
 - Without `summarize_older` the memory layer never calls the model, so everything is a fixed rule and behaviour is reproducible. With it, what the summary keeps depends on the model.
-- The summary tier has been tested with scripted backends only; its effect on answer quality with a real model has not been measured.
+- The summary tier was measured on one model, one task and one budget (below). Other models, longer or more detailed facts, and other budgets may behave differently, so run `python -m maki.test.summary_bench` with your own model before relying on it.
 - Cache hits against a real provider and the token estimate on other tokenizers have not been measured.
 
 ## With `maki serve`

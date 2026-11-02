@@ -50,27 +50,38 @@ class _OllamaSession:
         return self.queue.pop(0)
 
 
-class _AsyncOllamaHttp:
-    def __init__(self):
-        self.calls, self.queue = [], []
-
-    async def post(self, url, json=None, **kwargs):
-        self.calls.append(json)
-        return self.queue.pop(0)
-
-
 class OllamaAdapter(Adapter):
-    async_errors = False
+    """Sync calls run the real Connector over a faked requests session; async calls run the real
+    AsyncConnector over an httpx MockTransport, so both error paths are the production ones."""
 
     def __init__(self, tc):
+        import httpx
         self.tc = tc
+        self.async_calls, self._async_reply = [], None
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(self._handle_async)
+
+        def client(*args, **kwargs):
+            kwargs["transport"] = transport
+            return real_client(*args, **kwargs)
+
+        patcher = patch.object(httpx, "AsyncClient", client)
+        patcher.start()
+        tc.addCleanup(patcher.stop)
+
+    def _handle_async(self, request):
+        import httpx
+        self.async_calls.append(json.loads(request.content))
+        reply = self._async_reply
+        if isinstance(reply, Exception):
+            raise reply
+        return httpx.Response(reply[0], json=reply[1])
 
     def make(self, **kwargs):
         from maki.makiLLama import MakiLLama
         backend = MakiLLama(model="m", **kwargs)
         backend._session = _OllamaSession()
         backend._http._session.post = backend._session.post
-        backend._async_http = _AsyncOllamaHttp()
         return backend
 
     @staticmethod
@@ -102,14 +113,17 @@ class OllamaAdapter(Adapter):
             backend._session.queue.append(_OllamaResponse(status=status))
 
     def script_async_error(self, backend, kind):
-        raise NotImplementedError
+        import httpx
+        replies = {"timeout": httpx.ReadTimeout("t"), "connection": httpx.ConnectError("c"),
+                   "client_error": (400, {"error": "bad"}), "server_error": (500, {"error": "boom"}),
+                   "gateway_timeout": (504, {"error": "slow"})}
+        self._async_reply = replies[kind]
 
     def script_async_text(self, backend, text):
-        backend._async_http.queue.append(_OllamaResponse(self._data(
-            {"role": "assistant", "content": text}, 1, 1)))
+        self._async_reply = (200, self._data({"role": "assistant", "content": text}, 1, 1))
 
     def sent(self, backend):
-        payload = backend._session.calls[-1] if backend._session.calls else backend._async_http.calls[-1]
+        payload = backend._session.calls[-1] if backend._session.calls else self.async_calls[-1]
         messages = [(m["role"], m["content"]) for m in payload["messages"] if m["role"] != "system"]
         system = next((m["content"] for m in payload["messages"] if m["role"] == "system"), None)
         return Sent(system, messages, payload.get("tools"), payload, payload["options"]["temperature"])
