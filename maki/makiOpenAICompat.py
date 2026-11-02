@@ -24,7 +24,7 @@ from typing import List, Optional
 from . import makiOpenAI
 from .config import DEFAULT_REQUEST_TIMEOUT
 from .connector import Connector
-from .exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
+from .exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError, error_for_status
 from .objects import GenerationConfig, LLMResponse, Message, RateLimiter
 
 log = logging.getLogger(__name__)
@@ -154,7 +154,7 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
         except makiOpenAI._openai_sdk.APIConnectionError as e:
             raise MakiNetworkError(f"chat_collect() connection failed: {e}") from e
         except makiOpenAI._openai_sdk.APIStatusError as e:
-            raise MakiAPIError(f"chat_collect() HTTP error {e.status_code}: {e}") from e
+            raise error_for_status(e.status_code, f"chat_collect() HTTP error {e.status_code}: {e}") from e
         elapsed = time.perf_counter() - t0
         result = LLMResponse(
             content="".join(content),

@@ -215,3 +215,24 @@ print(llm.chat("Explain attention mechanisms.").content)
 ```
 
 Supports quantization (`load_in_4bit`, `load_in_8bit`) and device selection (`cpu`, `cuda`, `mps`; auto-detected when omitted). Remote model code is not executed unless you pass `trust_remote_code=True`.
+
+## Writing or testing a backend
+
+Every backend must behave the same where agents rely on it. The shared conformance suite in
+`maki/test/backend_conformance.py` checks that once for all of them: a normalised
+`LLMResponse` (content and token counts), `system` and `history` reaching the wire, per-call
+`GenerationConfig`, the rate limiter on every path (async included, without blocking the event
+loop), timeouts, connection failures and HTTP errors mapped onto `MakiTimeoutError`,
+`MakiNetworkError` and `MakiAPIError` (5xx is transient and retryable, 4xx is not; see `error_for_status`), token usage counting, streaming, and, when
+`supports_native_tools` is set, the whole tool-calling loop.
+
+A backend joins by supplying an `Adapter` that fakes its transport and reports what was sent:
+
+```python
+class TestMyBackend(BackendConformance, unittest.TestCase):
+    adapter_class = MyAdapter      # see maki/test/test_backend_conformance.py for six examples
+```
+
+Ollama, OpenAI, Anthropic, OpenRouter, llama.cpp and vLLM all run it (`pytest maki/test/test_backend_conformance.py`).
+The suite uses fakes, so it proves the wrappers keep the contract, not that a provider's real API
+still matches them.

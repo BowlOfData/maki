@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Shared backend conformance suite (`maki/test/backend_conformance.py`, run by `test_backend_conformance.py`): one set of contract tests applied to Ollama, OpenAI, Anthropic, OpenRouter, llama.cpp and vLLM through per-backend transport fakes. New backends join by writing an `Adapter`
 - Summary memory tier: `MemoryPolicy(summarize_older=True, summary_chars=...)`. Turns evicted from a stateful agent's conversation are folded by the model into a running summary kept at the top of the history (sent as text or as structured history), instead of being dropped. It runs before the next task, counts against `token_budget`, falls back to the `[N earlier turn(s) dropped]` note if the summary call fails, can be replaced with `agent.summarizer`, and is saved by `to_dict`/`from_dict`. Also settable under `memory:` in `maki serve` YAML
 - Typed tool schemas: native tool specs are now built from a plugin method's type hints (`int`, `float`, `bool`, `list[T]`, `Optional`, `Literal`, `Enum`) and the `Args:` section of its docstring, instead of treating every parameter as a string. Unannotated parameters stay strings
 - Tool-call argument validation: the model's arguments are checked against the method signature on both the native and `TOOL:` paths (`"3"` becomes `3`, enum values become enum members, also inside lists; unknown, missing or mistyped arguments, and a null for a required parameter, return a message the model can correct and the method is not called; a null for a parameter with a default uses the default)
@@ -14,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Tool descriptions use the docstring's summary paragraph instead of only its first line, and `async def` plugin methods (e.g. `image_classifier.classify_image_async`) are now awaited instead of returning a coroutine's repr. Values for unannotated parameters are passed through unchanged. Tokens a plugin spends on helper threads (parallel tools, async tools) count toward the calling thread, so loop token caps see them; `nan`/`inf` are rejected as numeric arguments; one unresolvable annotation no longer disables validation of the others
 - `init_backend("provider:model")`: build any backend from one string (`"ollama:gemma4:26b"`, `"openai:gpt-4o"`, or a bare provider for its default model), with a `temperature=` shorthand. Agent YAML accepts the same form in `model:` when no `backend:` is given
 - `AgentCallback`, `LoggingCallback` and `Agent(callbacks=[...])`: task, model and tool events (`on_tool_start/end/error/retry`, `on_model_start/end`, `on_task_start/end/error`). A callback that raises is logged and skipped
+
+### Changed
+- OpenAI, Anthropic, OpenRouter, llama.cpp and vLLM now classify HTTP errors exactly as the Connector (and so Ollama) always did, through the new `maki.exceptions.error_for_status`: 5xx become `MakiNetworkError` and 408/504 `MakiTimeoutError` (both retried by `execute_task_with_retry`, and a `maki serve` backend failure answers 502/504), while 4xx stay `MakiAPIError` with `status_code`. Before, every status from those SDKs was a `MakiAPIError`: a provider outage was neither retried nor reported as an unavailable backend. 429 (rate limit) is still a `MakiAPIError` everywhere
 
 ## [0.4.3] - 2026-11-02
 

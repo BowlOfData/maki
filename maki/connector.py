@@ -63,6 +63,7 @@ from .exceptions import (
     MakiNetworkError,
     MakiTimeoutError,
     MakiValidationError,
+    error_for_status,
 )
 from .utils import Utils
 
@@ -329,10 +330,12 @@ class Connector:
         except Exception:
             detail = "<unreadable body>"
         if status in (408, 504):
-            raise MakiTimeoutError(f"HTTP {status} (timeout): {detail}")
-        if status >= 500:
-            raise MakiNetworkError(f"HTTP server error {status}: {detail}")
-        raise MakiAPIError(f"HTTP client error {status}: {detail}", status_code=status)
+            label = f"HTTP {status} (timeout)"
+        elif status >= 500:
+            label = f"HTTP server error {status}"
+        else:
+            label = f"HTTP client error {status}"
+        raise error_for_status(status, f"{label}: {detail}")
 
     @staticmethod
     def iter_lines(response, **kwargs):

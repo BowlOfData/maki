@@ -19,7 +19,7 @@ from .config import (
     DEFAULT_ANTHROPIC_MODEL,
     DEFAULT_REQUEST_TIMEOUT,
 )
-from .exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
+from .exceptions import MakiNetworkError, MakiTimeoutError, error_for_status
 from .objects import BackendType, GenerationConfig, LLMResponse, Message, RateLimiter, ToolCall
 from .session import ChatSession
 
@@ -184,7 +184,7 @@ class MakiAnthropic(LLMBackend):
         except _anthropic_sdk.APIConnectionError as e:
             raise MakiNetworkError(f"chat() connection failed: {e}") from e
         except _anthropic_sdk.APIStatusError as e:
-            raise MakiAPIError(f"chat() HTTP error {e.status_code}: {e}") from e
+            raise error_for_status(e.status_code, f"chat() HTTP error {e.status_code}: {e}") from e
         elapsed = time.perf_counter() - t0
         result = self._parse_response(response, elapsed)
         log.info("chat: %.2fs, %d tokens", elapsed, result.total_tokens)
@@ -221,7 +221,7 @@ class MakiAnthropic(LLMBackend):
         except _anthropic_sdk.APIConnectionError as e:
             raise MakiNetworkError(f"stream() connection failed: {e}") from e
         except _anthropic_sdk.APIStatusError as e:
-            raise MakiAPIError(f"stream() HTTP error {e.status_code}: {e}") from e
+            raise error_for_status(e.status_code, f"stream() HTTP error {e.status_code}: {e}") from e
 
     async def async_chat(
         self,
@@ -253,7 +253,7 @@ class MakiAnthropic(LLMBackend):
         except _anthropic_sdk.APIConnectionError as e:
             raise MakiNetworkError(f"async_chat() connection failed: {e}") from e
         except _anthropic_sdk.APIStatusError as e:
-            raise MakiAPIError(f"async_chat() HTTP error {e.status_code}: {e}") from e
+            raise error_for_status(e.status_code, f"async_chat() HTTP error {e.status_code}: {e}") from e
         elapsed = time.perf_counter() - t0
         result = self._parse_response(response, elapsed)
         log.info("async_chat: %.2fs, %d tokens", elapsed, result.total_tokens)
@@ -323,7 +323,7 @@ class MakiAnthropic(LLMBackend):
         except _anthropic_sdk.APIConnectionError as e:
             raise MakiNetworkError(f"chat_with_tools() connection failed: {e}") from e
         except _anthropic_sdk.APIStatusError as e:
-            raise MakiAPIError(f"chat_with_tools() HTTP error {e.status_code}: {e}") from e
+            raise error_for_status(e.status_code, f"chat_with_tools() HTTP error {e.status_code}: {e}") from e
         elapsed = _t.perf_counter() - t0
 
         content_blocks, tool_use_blocks = self._split_content(response)
