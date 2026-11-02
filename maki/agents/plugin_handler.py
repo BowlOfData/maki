@@ -6,6 +6,7 @@ manage, and invoke plugins via LLM-emitted TOOL: directives (legacy fallback)
 or via the native tool-calling APIs of capable backends.
 """
 
+import asyncio
 import functools
 import importlib
 import importlib.util
@@ -13,10 +14,16 @@ import inspect
 import json
 import logging
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
+from ..callbacks import fire
 from ..exceptions import MakiValidationError
 from ..objects import ToolCall, clip_text
+from ..usage import TokenRelay
+from .tool_policy import ToolPolicy
+from .tool_schema import coerce_args, method_description, parameters_schema
 
 
 logger = logging.getLogger(__name__)
@@ -89,6 +96,24 @@ def _strip_tool_calls(text: str, extractions: List[Tuple[bool, str, object]]) ->
         if idx != -1:
             result = result[:idx] + result[idx + len(raw):]
     return "\n".join(line for line in result.split("\n") if line.strip()).strip()
+
+
+def _resolve(result, usage=None):
+    """Await a coroutine returned by an ``async def`` plugin method (on a private event loop,
+    in a helper thread, so it works whether or not the caller already runs one). Tokens the
+    coroutine spends on *usage* are credited to the calling thread."""
+    if not inspect.isawaitable(result):
+        return result
+
+    async def _await():
+        return await result
+
+    relay = TokenRelay(usage)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(relay.wrap(asyncio.run), _await()).result()
+    finally:
+        relay.settle()
 
 
 def _check_method_allowed(plugin, plugin_name: str, method_name: str) -> Optional[str]:
@@ -371,9 +396,9 @@ class PluginHandler:
         """Build backend-agnostic tool specs from loaded plugins.
 
         Each spec has keys ``name`` (``"plugin__method"``), ``description``
-        (first docstring line or a fallback), and ``parameters`` (JSON Schema
-        built via ``inspect.signature`` — parameter types are assumed string
-        since Python annotations are not enforced at this layer).
+        (the docstring's summary paragraph or a fallback), and ``parameters`` (JSON Schema
+        built from type hints and the docstring ``Args:`` section; unannotated
+        parameters are strings).
         """
         specs: List[dict] = []
         for plugin_name, plugin in self.plugins.items():
@@ -381,32 +406,13 @@ class PluginHandler:
                 method = getattr(plugin, method_name, None)
                 if method is None:
                     continue
-                raw_doc = inspect.getdoc(method) or ""
-                description = (
-                    raw_doc.splitlines()[0]
-                    if raw_doc
-                    else f"{method_name} from plugin {plugin_name}"
-                )
-                properties: dict = {}
-                required: List[str] = []
-                try:
-                    sig = inspect.signature(method)
-                    for param_name, param in sig.parameters.items():
-                        if param_name == "self":
-                            continue
-                        properties[param_name] = {"type": "string"}
-                        if param.default is inspect.Parameter.empty:
-                            required.append(param_name)
-                except (ValueError, TypeError):
-                    pass
+                description = method_description(
+                    method, f"{method_name} from plugin {plugin_name}")
+                parameters = parameters_schema(method)
                 specs.append({
                     "name": f"{plugin_name}__{method_name}",
                     "description": description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties,
-                        "required": required,
-                    },
+                    "parameters": parameters,
                 })
         return specs
 
@@ -431,21 +437,82 @@ class PluginHandler:
             logger.warning(
                 "Blocked native tool call %s.%s: %s", plugin_name, method_name, error
             )
+            fire(self._callbacks(), "on_tool_start", self, tc)
+            fire(self._callbacks(), "on_tool_error", self, tc, ValueError(error), 0.0)
             return f"Error: {error}"
 
+        start = time.time()
+        fire(self._callbacks(), "on_tool_start", self, tc)
         try:
-            result = getattr(plugin, method_name)(**tc.args)
-            return self._clip_tool_result(str(result))
+            result = self._invoke_plugin_method(plugin, method_name, tc.args, tc)
         except Exception as exc:
             logger.warning(
                 "Native tool call %s.%s raised: %s", plugin_name, method_name, exc
             )
+            fire(self._callbacks(), "on_tool_error", self, tc, exc, time.time() - start)
             return f"Error: {exc}"
+        fire(self._callbacks(), "on_tool_end", self, tc, result, time.time() - start)
+        return result
+
+    def _callbacks(self) -> list:
+        return getattr(self, "callbacks", None) or []
+
+    def _tool_policy(self) -> ToolPolicy:
+        return getattr(self, "tool_policy", None) or ToolPolicy()
+
+    def _invoke_plugin_method(self, plugin, method_name: str, args: dict, tc: ToolCall) -> str:
+        """Validate and coerce *args* against the method signature, call it, and retry
+        transient failures per the agent's :class:`ToolPolicy`. Raises on final failure."""
+        method = getattr(plugin, method_name)
+        clean, problem = coerce_args(method, args)
+        if problem:
+            raise ValueError(problem)
+        policy = self._tool_policy()
+        retries = policy.retries
+        if self._is_dangerous(plugin, method_name) and not policy.retry_dangerous:
+            retries = 0
+        attempt = 0
+        while True:
+            try:
+                return self._clip_tool_result(str(_resolve(method(**clean), getattr(self.maki, 'usage', None))))
+            except policy.retry_on as exc:
+                if attempt >= retries:
+                    raise
+                delay = policy.delay(attempt)
+                attempt += 1
+                fire(self._callbacks(), "on_tool_retry", self, tc, exc, attempt, delay)
+                time.sleep(delay)
+
+    @staticmethod
+    def _is_dangerous(plugin, method_name: str) -> bool:
+        dangerous = getattr(plugin, "DANGEROUS_METHODS", None)
+        return isinstance(dangerous, (list, set, tuple, frozenset)) and method_name in dangerous
+
+    def _turn_has_dangerous_call(self, tool_calls: List[ToolCall]) -> bool:
+        for tc in tool_calls:
+            plugin_name, _, method_name = tc.name.partition("__")
+            plugin = self.plugins.get(plugin_name)
+            if plugin is not None and self._is_dangerous(plugin, method_name):
+                return True
+        return False
+
+    def _execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Tuple[ToolCall, str]]:
+        """Run one model turn's tool calls; results keep the order the model asked in."""
+        policy = self._tool_policy()
+        if not policy.parallel or len(tool_calls) < 2 or self._turn_has_dangerous_call(tool_calls):
+            return [(tc, self._execute_tool_call(tc)) for tc in tool_calls]
+        relay = TokenRelay(getattr(self.maki, "usage", None))
+        try:
+            with ThreadPoolExecutor(max_workers=min(policy.max_workers, len(tool_calls))) as pool:
+                results = list(pool.map(relay.wrap(self._execute_tool_call), tool_calls))
+        finally:
+            relay.settle()
+        return list(zip(tool_calls, results))
 
     def execute_with_native_tools(
         self, task: str, context: Optional[Dict], system: str
     ) -> str:
-        """Drive the native tool-calling loop (up to ``_MAX_TOOL_ROUNDS`` rounds).
+        """Drive the native tool-calling loop (up to ``ToolPolicy.max_rounds`` rounds, default ``_MAX_TOOL_ROUNDS``).
 
         Builds the initial user message without a TOOL: prompt section,
         then alternates between ``chat_with_tools`` calls and plugin
@@ -468,17 +535,21 @@ class PluginHandler:
         prior = getattr(self, "_history_messages", lambda: None)() or []
         messages = [m.to_dict() for m in prior] + [{"role": "user", "content": user_content}]
 
-        for _ in range(_MAX_TOOL_ROUNDS):
+        for _ in range(self._tool_policy().max_rounds or _MAX_TOOL_ROUNDS):
+            fire(self._callbacks(), "on_model_start", self, messages)
             response, tool_calls, messages = self.maki.chat_with_tools(
                 messages, tools, system=system
             )
+            fire(self._callbacks(), "on_model_end", self, response, tool_calls)
             if tool_calls is None:
                 return response.content
-            results = [(tc, self._execute_tool_call(tc)) for tc in tool_calls]
+            results = self._execute_tool_calls(tool_calls)
             messages = self.maki.append_tool_results(messages, results)
 
         # Max rounds reached — force a text answer by omitting tools.
+        fire(self._callbacks(), "on_model_start", self, messages)
         response, _, _ = self.maki.chat_with_tools(messages, [], system=system)
+        fire(self._callbacks(), "on_model_end", self, response, None)
         return response.content if response else ""
 
     # ------------------------------------------------------------------
@@ -509,16 +580,24 @@ class PluginHandler:
         validation_error = self._validate_plugin_call(plugin, plugin_name, method_name, args)
         if validation_error:
             logger.warning(f"Blocked plugin call {plugin_name}.{method_name}: {validation_error}")
+            blocked = ToolCall(id="", name=f"{plugin_name}__{method_name}", args=args)
+            fire(self._callbacks(), "on_tool_start", self, blocked)
+            fire(self._callbacks(), "on_tool_error", self, blocked, ValueError(validation_error), 0.0)
             return {"plugin": plugin_name, "method": method_name, "error": validation_error}
         if not hasattr(plugin, method_name):
             return {"plugin": plugin_name, "method": method_name,
                     "error": f"Method '{method_name}' not found on plugin '{plugin_name}'"}
+        tc = ToolCall(id="", name=f"{plugin_name}__{method_name}", args=args)
+        start = time.time()
+        fire(self._callbacks(), "on_tool_start", self, tc)
         try:
-            output = getattr(plugin, method_name)(**args)
+            output = self._invoke_plugin_method(plugin, method_name, args, tc)
         except Exception as exc:
             logger.warning(f"Plugin call {plugin_name}.{method_name} failed: {exc}", exc_info=True)
+            fire(self._callbacks(), "on_tool_error", self, tc, exc, time.time() - start)
             return {"plugin": plugin_name, "method": method_name, "error": str(exc)}
-        return {"plugin": plugin_name, "method": method_name, "result": self._clip_tool_result(str(output))}
+        fire(self._callbacks(), "on_tool_end", self, tc, output, time.time() - start)
+        return {"plugin": plugin_name, "method": method_name, "result": output}
 
     def handle_plugin_calls(self, llm_response: str, task: str,
                             context: Optional[Dict]) -> str:
@@ -535,7 +614,7 @@ class PluginHandler:
 
             TOOL: {"plugin": "<name>", "method": "<method>", "args": {...}}
         """
-        for _ in range(_MAX_TOOL_ROUNDS):
+        for _ in range(self._tool_policy().max_rounds or _MAX_TOOL_ROUNDS):
             extractions = _extract_tool_calls(llm_response)
             if not extractions:
                 return llm_response

@@ -59,6 +59,43 @@ agent = Agent(name="Writer", maki_instance=llm, role="writer", allow_dangerous_t
 agent.load_plugin("file_writer")
 ```
 
+## Tool schemas, retries and callbacks
+
+The model sees each exposed method as a typed tool. Annotate the method and describe its
+arguments in an `Args:` docstring section and both reach the model:
+
+```python
+def search(self, query: str, limit: int = 5, mode: Literal["fast", "deep"] = "fast"):
+    """Search the index.
+
+    Args:
+        query: words to look for
+        limit: maximum number of hits
+    """
+```
+
+Arguments are checked before the method runs. `"5"` becomes `5`; an unknown, missing or
+mistyped argument is returned to the model as an error it can correct, and the method is not
+called. Unannotated parameters remain strings.
+
+`Agent(tool_policy=ToolPolicy(...))` controls the loop:
+
+```python
+from maki import Agent, ToolPolicy, LoggingCallback
+
+agent = Agent("a", backend,
+              tool_policy=ToolPolicy(max_rounds=8, retries=2, parallel=True),
+              callbacks=[LoggingCallback()])
+```
+
+- `retries` re-runs a tool that raises a transient error (network, timeout, connection) after
+  an exponentially growing delay; other exceptions are returned to the model at once.
+- Methods in a plugin's `DANGEROUS_METHODS` are never retried (a timed-out write or trade may
+  already have happened) unless you set `retry_dangerous=True`.
+- `parallel=True` runs the tool calls of one model turn on a thread pool. Leave it off for
+  plugins that are not thread-safe; a turn that includes a dangerous call runs sequentially.
+- Subclass `AgentCallback` to observe task, model and tool events (timings, retries, errors).
+
 ## Plugin options
 
 `load_plugin` accepts keyword options that are passed to the plugin's `register_plugin`. They are set by you,

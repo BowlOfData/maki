@@ -42,6 +42,13 @@ class Usage:
         with self._lock:
             return self._by_thread.get(threading.get_ident(), 0)
 
+    def credit_thread(self, tokens: int) -> None:
+        """Attribute *tokens* spent on helper threads to the current thread's ledger (totals unchanged)."""
+        if tokens:
+            with self._lock:
+                me = threading.get_ident()
+                self._by_thread[me] = self._by_thread.get(me, 0) + tokens
+
     def snapshot(self) -> "Usage":
         with self._lock:
             return Usage(self.prompt_tokens, self.completion_tokens, self.total_tokens, self.calls, self.cached_tokens)
@@ -71,6 +78,41 @@ class Usage:
         if self.cached_tokens:  # only when a backend reports it, so the common shape is unchanged
             data["cached_tokens"] = self.cached_tokens
         return data
+
+
+class TokenRelay:
+    """Carries the tokens helper threads spend back to the thread that started them.
+
+    ``Usage.thread_tokens()`` counts per thread so loops can tell their own spend from other users
+    of a shared backend; work handed to a pool (parallel tools, awaited async tools) would
+    otherwise escape a loop's token cap. ``wrap`` each helper callable, then ``settle`` on the
+    original thread.
+    """
+
+    def __init__(self, usage: Any):
+        self.usage = usage if isinstance(usage, Usage) else None
+        self._tokens = 0
+        self._lock = threading.Lock()
+
+    def wrap(self, fn: Any) -> Any:
+        if self.usage is None:
+            return fn
+
+        def run(*args: Any, **kwargs: Any) -> Any:
+            before = self.usage.thread_tokens()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                spent = self.usage.thread_tokens() - before
+                with self._lock:
+                    self._tokens += spent
+
+        return run
+
+    def settle(self) -> None:
+        if self.usage is not None:
+            self.usage.credit_thread(self._tokens)
+            self._tokens = 0
 
 
 def _response_in(result: Any) -> Any:

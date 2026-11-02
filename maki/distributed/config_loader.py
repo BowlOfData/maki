@@ -9,7 +9,8 @@ instructions: |             # optional
   You are a research agent...
 backend: ollama             # ollama | openai | anthropic | openrouter | llamacpp | vllm
                             # (default: ollama)
-model: llama3.2             # optional; falls back to each backend's default
+model: llama3.2             # optional; falls back to each backend's default. Without a `backend:`
+                            # key, "openai:gpt-4o" selects both the provider and the model
 base_url: http://127.0.0.1:8080/v1  # optional; llamacpp / vllm only
 temperature: 0.7            # optional, default 0.7
 think: false                # optional, ollama only: false turns model thinking off (a thinking
@@ -24,6 +25,10 @@ memory:                     # optional; limits on what the agent keeps and sends
   pinned_chars: 400         # room for facts pinned with agent.remember(..., pin=True)
   recent_turns: 3           # with older_turn_chars: last N turns verbatim, older ones shortened
   older_turn_chars: 200
+tool_policy:                # optional; how tool calls run
+  max_rounds: 8             # model/tool round trips before a final answer is forced
+  retries: 2                # extra attempts for transient tool errors (network, timeout)
+  parallel: false           # run one turn's tool calls concurrently (plugins must be thread-safe)
 allow_dangerous_tools: false  # optional, default false; opt-in to let TOOL:
                               # directives call methods a plugin marks in
                               # DANGEROUS_METHODS (file writes, FTP, trades)
@@ -59,21 +64,15 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..agents.agent import Agent
+from ..agents.tool_policy import ToolPolicy
 from ..backend import LLMBackend
+from ..backend_factory import BACKENDS
 from ..objects import GenerationConfig, MemoryPolicy
 from ..plugins import PLUGIN_REGISTRY
 from .loop_jobs import LoopCaps
 
 
-# backend name -> (module in maki, class)
-_BACKENDS = {
-    "ollama": ("makiLLama", "MakiLLama"),
-    "openai": ("makiOpenAI", "MakiOpenAI"),
-    "anthropic": ("makiAnthropic", "MakiAnthropic"),
-    "openrouter": ("makiOpenRouter", "MakiOpenRouter"),
-    "llamacpp": ("makiLlamaCpp", "MakiLlamaCpp"),
-    "vllm": ("makiVllm", "MakiVllm"),
-}
+_BACKENDS = BACKENDS
 _BASE_URL_BACKENDS = ("llamacpp", "vllm")
 
 
@@ -88,6 +87,10 @@ def _ollama_kwargs(cfg: dict, judge: bool) -> dict:
 
 def _build_backend(cfg: dict, judge: bool = False) -> LLMBackend:
     backend_name = cfg.get("backend", "ollama").lower()
+    model = cfg.get("model")
+    provider, _, rest = str(model or "").partition(":")
+    if "backend" not in cfg and provider.lower() in _BACKENDS and rest:
+        backend_name, model = provider.lower(), rest  # model: "openai:gpt-4o" names both
     if backend_name not in _BACKENDS:
         raise ValueError(
             f"Unknown backend: '{backend_name}'. "
@@ -97,8 +100,8 @@ def _build_backend(cfg: dict, judge: bool = False) -> LLMBackend:
     backend_class = getattr(importlib.import_module(f"..{module_name}", __package__), class_name)
 
     kwargs: dict = {"config": GenerationConfig(temperature=float(cfg.get("temperature", 0.7)))}
-    if cfg.get("model"):
-        kwargs["model"] = cfg["model"]
+    if model:
+        kwargs["model"] = model
     if backend_name in _BASE_URL_BACKENDS and cfg.get("base_url"):
         kwargs["base_url"] = cfg["base_url"]
     if backend_name == "ollama":
@@ -125,6 +128,15 @@ def _memory_from_cfg(section) -> Optional[MemoryPolicy]:
         raise ValueError(f"Invalid 'memory' section: {exc}") from exc
 
 
+def _tool_policy_from_cfg(section) -> Optional[ToolPolicy]:
+    if section is None:
+        return None
+    try:
+        return ToolPolicy.from_dict(section)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Invalid 'tool_policy' section: {exc}") from exc
+
+
 def _agent_from_cfg(cfg: dict) -> Agent:
     # Validate plugin names up front (before the backend constructor, which
     # may touch the network): load_plugin() feeds the name into
@@ -147,6 +159,7 @@ def _agent_from_cfg(cfg: dict) -> Agent:
         use_streaming=bool(cfg.get("use_streaming", False)),
         allow_dangerous_tools=bool(cfg.get("allow_dangerous_tools", False)),
         memory=_memory_from_cfg(cfg.get("memory")),
+        tool_policy=_tool_policy_from_cfg(cfg.get("tool_policy")),
     )
 
     for plugin_name in plugin_names:

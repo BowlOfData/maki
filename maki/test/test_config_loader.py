@@ -111,6 +111,18 @@ class TestMemorySection(unittest.TestCase):
         self.assertEqual(agent.memory_policy.history_mode, "messages")
         self.assertEqual(agent._conversation_memory.token_budget, 900)
 
+    def test_tool_policy_section(self):
+        agent = self._load("name: a\ntool_policy:\n  retries: 2\n  parallel: true\n")
+        self.assertEqual(agent.tool_policy.retries, 2)
+        self.assertTrue(agent.tool_policy.parallel)
+        self.assertIsNone(self._load("name: a\n").tool_policy)
+
+    def test_invalid_tool_policy_section(self):
+        with self.assertRaisesRegex(ValueError, "Invalid 'tool_policy' section"):
+            self._load("name: a\ntool_policy:\n  retrys: 2\n")
+        with self.assertRaisesRegex(ValueError, "Invalid 'tool_policy' section"):
+            self._load("name: a\ntool_policy:\n  max_rounds: 0\n")
+
     def test_unknown_key_and_bad_value_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "Invalid 'memory' section"):
             self._load("name: a\nmemory:\n  history_mod: messages\n")

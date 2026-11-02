@@ -15,11 +15,13 @@ import time
 import uuid
 
 from ..backend import LLMBackend
+from ..callbacks import AgentCallback, fire
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
 from ..objects import ConversationMemory, MemoryPolicy, Message
 from ..usage import Usage, attach_usage
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
+from .tool_policy import ToolPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +35,9 @@ class Agent(PluginHandler, ReasoningEngine):
     def __init__(self, name: str, maki_instance: LLMBackend, role: str = "", instructions: str = "",
                  stateful: bool = False, use_streaming: bool = False,
                  allow_dangerous_tools: bool = False,
-                 memory: Optional[Union[MemoryPolicy, dict]] = None):
+                 memory: Optional[Union[MemoryPolicy, dict]] = None,
+                 tool_policy: Optional[Union[ToolPolicy, dict]] = None,
+                 callbacks: Optional[List[AgentCallback]] = None):
         """
         Initialize an agent.
 
@@ -53,6 +57,9 @@ class Agent(PluginHandler, ReasoningEngine):
                 files or delete remote directories.
             memory: Optional ``MemoryPolicy`` (or a dict of its fields) limiting what the
                 agent keeps and sends. ``None`` keeps the default behaviour.
+            tool_policy: Optional ``ToolPolicy`` (or a dict of its fields): tool round limit,
+                per-tool retries with backoff, parallel tool calls. ``None`` keeps the defaults.
+            callbacks: Optional ``AgentCallback`` observers for task, model and tool events.
 
         Raises:
             ValueError: If name is not a valid string
@@ -84,6 +91,11 @@ class Agent(PluginHandler, ReasoningEngine):
             MemoryPolicy.from_dict(memory) if isinstance(memory, dict) else memory)
         if self.memory_policy is not None and not isinstance(self.memory_policy, MemoryPolicy):
             raise TypeError("memory must be a MemoryPolicy, a dict of its fields, or None")
+        self.tool_policy: Optional[ToolPolicy] = (
+            ToolPolicy.from_dict(tool_policy) if isinstance(tool_policy, dict) else tool_policy)
+        if self.tool_policy is not None and not isinstance(self.tool_policy, ToolPolicy):
+            raise TypeError("tool_policy must be a ToolPolicy, a dict of its fields, or None")
+        self.callbacks: List[AgentCallback] = list(callbacks or [])
         self._warned_history_fallback = False
         self._pinned: Dict[str, Any] = {}   # facts that go in every system message; see remember()
 
@@ -210,9 +222,10 @@ class Agent(PluginHandler, ReasoningEngine):
             raise ValueError("Task must be a non-empty string")
 
         with self._execution_lock:
+            start_time = time.time()
+            fire(self.callbacks, "on_task_start", self, task)
             try:
                 logger.debug(f"Executing task '{task}' for agent '{self.name}'")
-                start_time = time.time()
                 system_msg = self._build_system_message()
 
                 if use_plugins and self.plugins and getattr(self.maki, "supports_native_tools", False) is True:
@@ -239,10 +252,14 @@ class Agent(PluginHandler, ReasoningEngine):
                 logger.debug(f"Task '{task}' completed in {execution_time:.2f}s for agent '{self.name}'")
             except (MakiError, ValueError, TypeError) as e:
                 logger.error(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
+                fire(self.callbacks, "on_task_error", self, task, e, time.time() - start_time)
                 raise
             except Exception as e:
                 logger.error(f"Unexpected error executing task '{task}' for agent '{self.name}': {str(e)}", exc_info=True)
+                fire(self.callbacks, "on_task_error", self, task, e, time.time() - start_time)
                 raise MakiError(f"Failed to execute task '{task}' for agent '{self.name}': {str(e)}") from e
+
+            fire(self.callbacks, "on_task_end", self, task, result, time.time() - start_time)
 
             # Record the task execution in history
             self._record_task(task, context, result)
@@ -384,7 +401,10 @@ class Agent(PluginHandler, ReasoningEngine):
 
         def _tracked():
             chunks = []
+            start_time = time.time()
+            failure: Optional[BaseException] = None
             with self._execution_lock:
+                fire(self.callbacks, "on_task_start", self, task)
                 try:
                     raw_stream = self.maki.stream(user_msg, **stream_kwargs)
                 except NotImplementedError as e:
@@ -396,10 +416,18 @@ class Agent(PluginHandler, ReasoningEngine):
                     for chunk in raw_stream:
                         chunks.append(chunk)
                         yield chunk
+                except Exception as exc:
+                    failure = exc
+                    raise
                 finally:
                     # Always record whatever was produced, even on early abandonment.
+                    elapsed = time.time() - start_time
+                    if failure is not None:
+                        fire(self.callbacks, "on_task_error", self, task, failure, elapsed)
                     if chunks:
                         full_result = "".join(chunks)
+                        if failure is None:
+                            fire(self.callbacks, "on_task_end", self, task, full_result, elapsed)
                         self._record_task(task, context, full_result)
                         if self.stateful:
                             self._conversation_memory.append(Message("user", task))
@@ -461,6 +489,7 @@ class Agent(PluginHandler, ReasoningEngine):
             'conversation_token_budget': self._conversation_memory.token_budget,
             'max_history_entries': self._max_history_entries,
             'memory_policy': self.memory_policy.to_dict() if self.memory_policy else None,
+            'tool_policy': self.tool_policy.to_dict() if self.tool_policy else None,
             'pinned': dict(self._pinned),
             'conversation_dropped': self._conversation_memory.dropped_pairs,
         }
@@ -481,6 +510,7 @@ class Agent(PluginHandler, ReasoningEngine):
             stateful=data.get('stateful', False),
             use_streaming=data.get('use_streaming', False),
             memory=data.get('memory_policy'),
+            tool_policy=data.get('tool_policy'),
         )
         agent.agent_id = data['agent_id']
         agent.memory = dict(data.get('memory', {}))

@@ -12,6 +12,24 @@ All backends implement the same `LLMBackend` contract, so agents, workflows and 
 | Anthropic | Hosted | `MakiAnthropic` | `maki-framework[anthropic]` |
 | OpenRouter | Hosted, any vendor-namespaced model | `MakiOpenRouter` | `maki-framework[openrouter]` |
 
+## Choosing a backend by name
+
+`init_backend("provider:model")` builds any backend from one string, so the model can come
+from a config file or an environment variable:
+
+```python
+from maki import init_backend
+
+llm = init_backend("openai:gpt-4o")
+local = init_backend("ollama:gemma4:26b", temperature=0.2)  # only the first colon splits
+default = init_backend("anthropic")                         # provider alone: its default model
+```
+
+Providers: `ollama`, `openai`, `anthropic`, `openrouter`, `llamacpp`, `vllm`. Extra keyword
+arguments (`base_url`, `api_key`, `config`, ...) go to the backend's constructor. In an agent
+YAML file, `model: "openai:gpt-4o"` without a `backend:` key does the same; an explicit
+`backend:` keeps `model` verbatim, so `backend: ollama` with `model: gemma4:26b` still works.
+
 ## Ollama
 
 ```python
@@ -46,6 +64,18 @@ asyncio.run(main())
 session = llm.session(system="You are a concise engineering assistant.")
 session.say("We are building a release checklist.")
 print(session.say("What should we verify before publishing a Python package?").content)
+```
+
+### Structured replies
+
+`chat()` and `chat_collect()` accept `response_format`, either `"json"` or a JSON-schema dict, and Ollama constrains decoding to it:
+
+```python
+reply = llm.chat_collect("Summarise this article.", response_format={
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
+})
 ```
 
 ## llama.cpp

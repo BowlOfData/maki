@@ -64,3 +64,7 @@ Workflow checkpoints can be stored as local JSON files (`LocalStateStore`) or in
 
 !!! warning
     Bind to `127.0.0.1` unless you also set `--api-key` and TLS. An agent with plugins can read files and reach the network on behalf of whoever can call it.
+
+## Tool policy
+
+An optional `tool_policy:` section in the agent YAML sets how tool calls run: `max_rounds`, `retries` (transient errors, with backoff), `parallel` and `max_workers`. Unknown fields are rejected at startup. See [Plugins](plugins.md#tool-schemas-retries-and-callbacks).
