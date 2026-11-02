@@ -66,6 +66,12 @@ class ConversationMemory:
         self._recent_turns: Optional[int] = None   # tiers: see configure_tiers()
         self._older_chars: Optional[int] = None
         self.dropped_pairs = 0      # turn pairs evicted since the last clear()
+        # Summary tier (see Agent._fold_summary): evicted pairs can be collected and folded into a
+        # running summary instead of vanishing. Off unless the owner sets collect_evicted.
+        self.collect_evicted = False
+        self.summary = ""
+        self.summarized_pairs = 0   # of dropped_pairs, how many the summary already covers
+        self._pending: list = []    # evicted (user, assistant) pairs not yet folded into the summary
 
     # ------------------------------------------------------------------
     # Properties
@@ -104,10 +110,22 @@ class ConversationMemory:
     def _is_older(self, index: int, count: int) -> bool:
         return self._recent_turns is not None and index < count - 2 * self._recent_turns
 
+    # Evicted pairs waiting for a summary are capped; beyond it the oldest are only counted as dropped.
+    _MAX_PENDING_PAIRS = 50
+
+    def _evict_pair(self) -> None:
+        pair = (self._messages[0], self._messages[1])
+        del self._messages[0]
+        del self._messages[0]
+        self.dropped_pairs += 1
+        if self.collect_evicted:
+            self._pending.append(pair)
+            del self._pending[:-self._MAX_PENDING_PAIRS]
+
     def _total_tokens(self) -> int:
         """Estimated tokens of what the model would see, i.e. with older turns shortened."""
         count = len(self._messages)
-        total = 0
+        total = max(1, len(self.summary) // 4) if self.summary else 0
         for i, m in enumerate(self._messages):
             length = len(m.content)
             if self._is_older(i, count):
@@ -122,13 +140,9 @@ class ConversationMemory:
         eviction starts), so a single large exchange is never silently dropped.
         """
         while len(self._messages) > self._max_entries and len(self._messages) >= 4:
-            del self._messages[0]
-            del self._messages[0]
-            self.dropped_pairs += 1
+            self._evict_pair()
         while self._total_tokens() > self._token_budget and len(self._messages) >= 4:
-            del self._messages[0]
-            del self._messages[0]
-            self.dropped_pairs += 1
+            self._evict_pair()
 
     # ------------------------------------------------------------------
     # Public API
@@ -142,6 +156,24 @@ class ConversationMemory:
     def messages(self) -> list:
         """Return a snapshot of all stored messages (list[Message])."""
         return list(self._messages)
+
+    def take_pending(self) -> list:
+        """Hand over (and forget) the evicted ``(user, assistant)`` pairs awaiting a summary."""
+        pending, self._pending = self._pending, []
+        return pending
+
+    def pending_to_list(self) -> list:
+        """Serialise the evicted pairs not yet folded into the summary (so a snapshot loses none)."""
+        return [[user.to_dict(), assistant.to_dict()] for user, assistant in self._pending]
+
+    def restore_pending(self, entries: list) -> None:
+        self._pending = [(Message.from_dict(u), Message.from_dict(a)) for u, a in entries]
+
+    def set_summary(self, text: str, folded_pairs: int) -> None:
+        """Store the running summary that now covers ``folded_pairs`` more evicted pairs."""
+        self.summary = text
+        self.summarized_pairs = min(self.dropped_pairs, self.summarized_pairs + folded_pairs)
+        self._trim()  # the summary takes budget the live turns may now have to give up
 
     # Rough size of the "[... N characters omitted ...]" marker, so the budget counts it.
     _CLIP_MARKER_CHARS = 40
@@ -160,25 +192,33 @@ class ConversationMemory:
         self._recent_turns, self._older_chars = recent_turns, older_chars
         self._trim()
 
-    def view(self) -> list:
+    def view(self, include_summary: bool = True) -> list:
         """The messages as the model should see them: older turns shortened, and a note on the
-        first one when turns were dropped, so eviction is never silent."""
+        first one when turns were dropped, so eviction is never silent. ``include_summary=False``
+        leaves the running summary out (``format_as_text`` prints it on its own line)."""
         count = len(self._messages)
         out = []
         for i, m in enumerate(self._messages):
             content = clip_text(m.content, self._older_chars) if self._is_older(i, count) else m.content
             out.append(Message(m.role, content, m.images))
-        if self.dropped_pairs and out:
-            out[0] = Message(out[0].role, f"[{self.dropped_pairs} earlier turn(s) dropped] {out[0].content}",
-                             out[0].images)
+        unsummarized = self.dropped_pairs - self.summarized_pairs
+        notes = []
+        if self.summary and include_summary:
+            notes.append(f"[Summary of earlier conversation: {self.summary}]")
+        if unsummarized and out:
+            notes.append(f"[{unsummarized} earlier turn(s) dropped]")
+        if notes and out:
+            out[0] = Message(out[0].role, f"{' '.join(notes)} {out[0].content}", out[0].images)
         return out
 
     def format_as_text(self) -> str:
         """Format stored pairs as a text block for Agent stateful prompts."""
-        messages = self.view()
+        messages = self.view(include_summary=False)
         if not messages:
             return ""
         lines = []
+        if self.summary:
+            lines.append(f"Summary of earlier conversation: {self.summary}")
         i = 0
         while i + 1 < len(messages):
             lines.append(f"Task: {messages[i].content}")
@@ -189,6 +229,9 @@ class ConversationMemory:
     def clear(self) -> None:
         self._messages.clear()
         self.dropped_pairs = 0
+        self.summary = ""
+        self.summarized_pairs = 0
+        self._pending = []
 
     def __len__(self) -> int:
         return len(self._messages)
@@ -260,6 +303,11 @@ class MemoryPolicy:
         recent_turns: Keep this many latest turns verbatim; older turns are shortened (needs
             ``older_turn_chars``).
         older_turn_chars: Shorten each older message to this many characters, head and tail kept.
+        summarize_older: Instead of dropping turns that no longer fit the budget, have the model
+            fold them into a running summary that stays at the top of the history. Costs one extra
+            model call (counted in ``agent.usage``) before a task that follows an eviction; if that
+            call fails the turns are dropped as before. Stateful agents only.
+        summary_chars: Maximum length of that summary (default 1200). It counts against the budget.
     """
     history_mode: str = "text"
     token_budget: Optional[int] = None
@@ -268,6 +316,8 @@ class MemoryPolicy:
     pinned_chars: Optional[int] = None
     recent_turns: Optional[int] = None
     older_turn_chars: Optional[int] = None
+    summarize_older: bool = False
+    summary_chars: Optional[int] = None
 
     HISTORY_MODES = ("text", "messages")
 
@@ -275,12 +325,16 @@ class MemoryPolicy:
         if self.history_mode not in self.HISTORY_MODES:
             raise ValueError(f"history_mode must be one of {self.HISTORY_MODES}, got {self.history_mode!r}")
         for name in ("token_budget", "tool_result_chars", "history_entry_chars", "pinned_chars", "recent_turns",
-                     "older_turn_chars"):
+                     "older_turn_chars", "summary_chars"):
             value = getattr(self, name)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
                 raise ValueError(f"{name} must be a positive integer or None")
         if (self.recent_turns is None) != (self.older_turn_chars is None):
             raise ValueError("recent_turns and older_turn_chars must be set together")
+        if not isinstance(self.summarize_older, bool):
+            raise ValueError("summarize_older must be true or false")
+        if self.summary_chars is not None and not self.summarize_older:
+            raise ValueError("summary_chars needs summarize_older=True")
 
     def to_dict(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}

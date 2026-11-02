@@ -25,6 +25,8 @@ memory:                     # optional; limits on what the agent keeps and sends
   pinned_chars: 400         # room for facts pinned with agent.remember(..., pin=True)
   recent_turns: 3           # with older_turn_chars: last N turns verbatim, older ones shortened
   older_turn_chars: 200
+  summarize_older: true     # fold evicted turns into a running summary (one extra model call)
+  summary_chars: 800        # cap on that summary
 tool_policy:                # optional; how tool calls run
   max_rounds: 8             # model/tool round trips before a final answer is forced
   retries: 2                # extra attempts for transient tool errors (network, timeout)

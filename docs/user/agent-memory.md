@@ -68,11 +68,28 @@ agent.remember("goal", "Migrate the billing service without downtime.", pin=True
 | `history_mode` | `"text"` | `"messages"` sends earlier turns as structured chat history when the backend declares `supports_history` (Ollama, OpenAI, Anthropic and everything built on them). Other backends keep the text form and log it once, so memory is never lost silently. |
 | `token_budget` | 4096 | How much conversation to keep, in estimated tokens (`len // 4`). The oldest turns are dropped first. |
 | `recent_turns`, `older_turn_chars` | none | Set together. The last `recent_turns` turns stay whole and each older message is cut to `older_turn_chars`, keeping its start and end, with an `[... N characters omitted ...]` marker. Shortened turns count at their shortened size against `token_budget`, so more turns fit. |
+| `summarize_older`, `summary_chars` | off, 1200 | Instead of dropping turns that no longer fit, the model folds them into a running summary kept at the top of the history. See [Summaries](#summaries). |
 | `pinned_chars` | none | Size cap for pinned facts. Pinning needs it set. |
 | `tool_result_chars` | none | A plugin result longer than this is cut to that many characters (start and end kept) plus the marker. Errors and short results are untouched. |
 | `history_entry_chars` | none | The same clipping for what `task_history` and `reasoning_history` store. The conversation itself keeps full answers. |
 
 When older turns are dropped, the first remaining message starts with `[N earlier turn(s) dropped]`, so the model knows the history is partial.
+
+## Summaries
+
+Dropping the oldest turns loses what they said. With `summarize_older=True` the agent asks the model to fold each batch of evicted turns into one running summary, which stays at the top of the history as `[Summary of earlier conversation: ...]` and is passed on with every later call.
+
+```python
+agent = Agent("assistant", backend, stateful=True,
+              memory=MemoryPolicy(token_budget=2048, summarize_older=True, summary_chars=800))
+```
+
+- **When it runs.** Just before a task that follows an eviction, so the call that evicts turns is not slowed down. It is one extra model call per such task, counted in `agent.usage`.
+- **It takes budget.** The summary counts against `token_budget`, so keep `summary_chars` small relative to it (the agent logs a warning when the summary could take over half). Output longer than `summary_chars` is cut (start and end kept).
+- **It degrades safely.** If the summary call fails or returns nothing, the turns are dropped as without the tier and the history shows `[N earlier turn(s) dropped]`; the task itself still runs.
+- **Bring your own.** Set `agent.summarizer = fn(previous_summary, messages) -> str` to summarise with another model or a rule. It replaces the backend call.
+- **State.** The summary is saved by `to_dict()`/`from_dict()` and removed by `reset_conversation()`. It only applies to stateful agents.
+- **Trade-off.** A summary can lose or distort a detail, and it is written from the model's own earlier answers. Facts that must never change belong in [pinned facts](#pinned-facts), which are sent verbatim.
 
 ## Pinned facts
 
@@ -99,12 +116,13 @@ agent.unpin("goal")          # stop sending it (it stays in agent.memory)
 
 - A fact outside a pin that falls out of the budget is still dropped. The `[N earlier turn(s) dropped]` note tells the model, but it cannot get the fact back.
 - Shortening keeps the start and end of a message. A key detail in the middle of a long message can be cut.
-- The memory layer never calls the model itself, so there are no summaries; everything is a fixed rule, which keeps behaviour reproducible.
+- Without `summarize_older` the memory layer never calls the model, so everything is a fixed rule and behaviour is reproducible. With it, what the summary keeps depends on the model.
+- The summary tier has been tested with scripted backends only; its effect on answer quality with a real model has not been measured.
 - Cache hits against a real provider and the token estimate on other tokenizers have not been measured.
 
 ## With `maki serve`
 
-The same fields go under `memory:` in the agent YAML. Unknown keys are an error.
+The same fields go under `memory:` in the agent YAML (`summarize_older` and `summary_chars` included). Unknown keys are an error, and so is `summary_chars` without `summarize_older`.
 
 ```yaml
 name: researcher

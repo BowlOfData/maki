@@ -17,13 +17,20 @@ import uuid
 from ..backend import LLMBackend
 from ..callbacks import AgentCallback, fire
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
-from ..objects import ConversationMemory, MemoryPolicy, Message
+from ..objects import ConversationMemory, MemoryPolicy, Message, clip_text
 from ..usage import Usage, attach_usage
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
 from .tool_policy import ToolPolicy
 
 logger = logging.getLogger(__name__)
+
+# Default cap on the running summary when MemoryPolicy(summarize_older=True) sets no summary_chars.
+_DEFAULT_SUMMARY_CHARS = 1200
+# Each evicted message is clipped to this many characters in the summarisation prompt, and the
+# turns together to _SUMMARY_TOTAL_CHARS, so a large eviction cannot overflow the model's window.
+_SUMMARY_INPUT_CHARS = 1500
+_SUMMARY_TOTAL_CHARS = 12000
 
 # Errors that are worth retrying (transient network/timeout issues)
 _RETRYABLE_ERRORS = (MakiNetworkError, MakiTimeoutError)
@@ -96,6 +103,14 @@ class Agent(PluginHandler, ReasoningEngine):
         if self.tool_policy is not None and not isinstance(self.tool_policy, ToolPolicy):
             raise TypeError("tool_policy must be a ToolPolicy, a dict of its fields, or None")
         self.callbacks: List[AgentCallback] = list(callbacks or [])
+        # Optional override for the summary tier: summarizer(previous_summary, [Message, ...]) -> str.
+        self.summarizer = None
+        if self.memory_policy is not None and self.memory_policy.summarize_older:
+            summary_tokens = (self.memory_policy.summary_chars or _DEFAULT_SUMMARY_CHARS) // 4
+            if summary_tokens * 2 > self._history_token_budget():
+                logger.warning(
+                    f"Agent '{self.name}': the summary (up to ~{summary_tokens} tokens) takes more than half "
+                    f"of token_budget={self._history_token_budget()}; lower summary_chars or raise token_budget")
         self._warned_history_fallback = False
         self._pinned: Dict[str, Any] = {}   # facts that go in every system message; see remember()
 
@@ -136,6 +151,51 @@ class Agent(PluginHandler, ReasoningEngine):
         policy = self.memory_policy
         if policy is not None:
             self._conversation_memory.configure_tiers(policy.recent_turns, policy.older_turn_chars)
+            self._conversation_memory.collect_evicted = policy.summarize_older
+
+    def _fold_summary(self) -> None:
+        """Fold turns evicted since the last call into the running summary (summary tier).
+
+        Never raises: when the summariser fails the turns stay dropped, which the history shows as
+        "[N earlier turn(s) dropped]", exactly as without the tier.
+        """
+        memory, policy = self._conversation_memory, self.memory_policy
+        pairs = memory.take_pending()
+        if not pairs or policy is None or not policy.summarize_older:
+            return
+        limit = policy.summary_chars or _DEFAULT_SUMMARY_CHARS
+        messages = [m for pair in pairs for m in pair]
+        try:
+            if self.summarizer is not None:
+                text = self.summarizer(memory.summary, messages)
+            else:
+                text = self._summarize(memory.summary, messages, limit)
+            text = str(text or "").strip()
+        except Exception as exc:
+            logger.warning(f"Agent '{self.name}': summarising {len(pairs)} evicted turn(s) failed: {exc}")
+            return
+        if not text:
+            logger.warning(f"Agent '{self.name}': the summariser returned nothing; turns stay dropped")
+            return
+        memory.set_summary(clip_text(text, limit), len(pairs))
+
+    def _summarize(self, previous: str, messages: List[Message], limit: int) -> str:
+        """Ask the backend for an updated summary covering ``previous`` plus ``messages``."""
+        keep = _SUMMARY_TOTAL_CHARS // 200   # fewer, readable messages beat many unreadable ones
+        omitted = max(0, len(messages) - keep)
+        messages = messages[omitted:]
+        each = min(_SUMMARY_INPUT_CHARS, _SUMMARY_TOTAL_CHARS // max(1, len(messages)))
+        turns = (f"({omitted} older message(s) left out)\n" if omitted else "") + "\n".join(
+            f"{'User' if m.role == 'user' else 'Assistant'}: {clip_text(m.content, each)}"
+            for m in messages)
+        prompt = (
+            "Update the running summary of a conversation with the new turns below.\n"
+            "Keep names, decisions, facts, numbers, constraints and open questions; drop pleasantries "
+            "and anything already obsolete. Write plain prose, never instructions, and stay under "
+            f"{limit} characters. Reply with the updated summary only.\n\n"
+            f"Current summary:\n{previous or '(none yet)'}\n\nNew turns:\n{turns}")
+        return self.maki.chat(
+            prompt, system="You maintain a concise, factual running summary of a conversation.").content
 
     def _history_messages(self) -> Optional[List[Message]]:
         """Prior turns as structured chat history, or None when they go into the prompt as text.
@@ -226,6 +286,8 @@ class Agent(PluginHandler, ReasoningEngine):
             fire(self.callbacks, "on_task_start", self, task)
             try:
                 logger.debug(f"Executing task '{task}' for agent '{self.name}'")
+                if self.stateful:
+                    self._fold_summary()
                 system_msg = self._build_system_message()
 
                 if use_plugins and self.plugins and getattr(self.maki, "supports_native_tools", False) is True:
@@ -392,6 +454,9 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
+        if self.stateful:
+            with self._execution_lock:
+                self._fold_summary()
         system_msg = self._build_system_message()
         user_msg = self._build_user_message(task, context, use_plugins)
         stream_kwargs = {"system": system_msg}
@@ -492,6 +557,9 @@ class Agent(PluginHandler, ReasoningEngine):
             'tool_policy': self.tool_policy.to_dict() if self.tool_policy else None,
             'pinned': dict(self._pinned),
             'conversation_dropped': self._conversation_memory.dropped_pairs,
+            'conversation_summary': self._conversation_memory.summary,
+            'conversation_summarized': self._conversation_memory.summarized_pairs,
+            'conversation_pending': self._conversation_memory.pending_to_list(),
         }
 
     @classmethod
@@ -538,6 +606,9 @@ class Agent(PluginHandler, ReasoningEngine):
                 token_budget=token_budget, max_entries=max_entries,
             )
         agent._conversation_memory.dropped_pairs = data.get('conversation_dropped', 0)
+        agent._conversation_memory.summary = data.get('conversation_summary', '')
+        agent._conversation_memory.summarized_pairs = data.get('conversation_summarized', 0)
+        agent._conversation_memory.restore_pending(data.get('conversation_pending', []))
         agent._apply_tiers()
         return agent
 

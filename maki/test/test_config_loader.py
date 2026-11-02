@@ -123,6 +123,14 @@ class TestMemorySection(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid 'tool_policy' section"):
             self._load("name: a\ntool_policy:\n  max_rounds: 0\n")
 
+    def test_summary_tier_keys(self):
+        agent = self._load("name: a\nstateful: true\nmemory:\n  summarize_older: true\n  summary_chars: 300\n")
+        self.assertTrue(agent.memory_policy.summarize_older)
+        self.assertEqual(agent.memory_policy.summary_chars, 300)
+        self.assertTrue(agent._conversation_memory.collect_evicted)
+        with self.assertRaisesRegex(ValueError, "Invalid 'memory' section"):
+            self._load("name: a\nmemory:\n  summary_chars: 300\n")
+
     def test_unknown_key_and_bad_value_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "Invalid 'memory' section"):
             self._load("name: a\nmemory:\n  history_mod: messages\n")
