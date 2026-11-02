@@ -18,6 +18,7 @@ import typing
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 _SCALARS = {str: "string", int: "integer", float: "number", bool: "boolean"}
+_UNION_TYPES = (Union, getattr(types, "UnionType", Union))
 _ARGS_HEADER = re.compile(r"^\s*(Args|Arguments|Parameters)\s*:\s*$")
 _ARG_LINE = re.compile(r"^\s+(\*{0,2}\w+)\s*(?:\([^)]*\))?\s*:\s*(.*)$")
 
@@ -66,6 +67,36 @@ def _doc_args(method: Callable) -> Dict[str, str]:
     return out
 
 
+def _enum_schema(tp: Any) -> dict:
+    values = [m.value for m in tp]
+    kind = _SCALARS.get(type(values[0])) if values else None
+    return {"type": kind, "enum": values} if kind else {"enum": values}
+
+
+def _array_schema(args: tuple) -> dict:
+    schema: dict = {"type": "array"}
+    if args and args[-1] is not Ellipsis:
+        item = type_to_schema(args[0])
+        if item:
+            schema["items"] = item
+    return schema
+
+
+def _literal_schema(args: tuple) -> dict:
+    kinds = {_SCALARS.get(type(a)) for a in args}
+    schema: dict = {"enum": list(args)}
+    if len(kinds) == 1 and None not in kinds:
+        schema["type"] = kinds.pop()
+    return schema
+
+
+def _union_schema(args: tuple) -> dict:
+    schemas = [type_to_schema(a) for a in args if a is not type(None)]
+    if any(not s for s in schemas):
+        return {}
+    return schemas[0] if len(schemas) == 1 else {"anyOf": schemas}
+
+
 def type_to_schema(tp: Any) -> dict:
     """JSON Schema for a type hint; ``{}`` (anything goes) for types it cannot express."""
     if tp is inspect.Parameter.empty or tp is Any:
@@ -73,33 +104,16 @@ def type_to_schema(tp: Any) -> dict:
     if tp in _SCALARS:
         return {"type": _SCALARS[tp]}
     if isinstance(tp, type) and issubclass(tp, enum.Enum):
-        values = [m.value for m in tp]
-        kind = _SCALARS.get(type(values[0])) if values else None
-        return {"type": kind, "enum": values} if kind else {"enum": values}
+        return _enum_schema(tp)
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if tp in (list, tuple, set, frozenset) or origin in (list, tuple, set, frozenset):
-        schema: dict = {"type": "array"}
-        if args and args[-1] is not Ellipsis:
-            item = type_to_schema(args[0])
-            if item:
-                schema["items"] = item
-        return schema
+        return _array_schema(args)
     if tp is dict or origin is dict:
         return {"type": "object"}
     if origin is typing.Literal:
-        kinds = {_SCALARS.get(type(a)) for a in args}
-        schema = {"enum": list(args)}
-        if len(kinds) == 1 and None not in kinds:
-            schema["type"] = kinds.pop()
-        return schema
-    if origin is Union or origin is getattr(types, "UnionType", Union):
-        branches = [a for a in args if a is not type(None)]
-        schemas = [type_to_schema(a) for a in branches]
-        if any(not s for s in schemas):
-            return {}
-        if len(schemas) == 1:
-            return schemas[0]
-        return {"anyOf": schemas}
+        return _literal_schema(args)
+    if origin in _UNION_TYPES:
+        return _union_schema(args)
     return {}
 
 
@@ -182,7 +196,6 @@ def _to_number(value: Any) -> float:
 
 
 _SCALAR_CONVERTERS = {str: _to_string, bool: _to_boolean, int: _to_integer, float: _to_number}
-_UNION_TYPES = (Union, getattr(types, "UnionType", Union))
 
 
 def _by_value(options: Any, value: Any) -> Any:
@@ -264,6 +277,23 @@ def _convert_arg(value: Any, hint: Any, param: inspect.Parameter) -> Tuple[bool,
     return True, _convert(value, hint)
 
 
+def _check_arg(name: str, value: Any, named: dict, hints: dict, takes_kwargs: bool, clean: dict) -> Optional[str]:
+    """Validate one argument into *clean*; return the problem for the model, or None."""
+    param = named.get(name)
+    if param is None:
+        if takes_kwargs:
+            clean[name] = value
+            return None
+        return f"unknown argument '{name}' (expected: {', '.join(named) or 'none'})"
+    try:
+        keep, converted = _convert_arg(value, hints.get(name, inspect.Parameter.empty), param)
+    except ValueError as exc:
+        return f"argument '{name}' {exc}" if value is None else f"argument '{name}' {exc}, got {value!r}"
+    if keep:
+        clean[name] = converted
+    return None
+
+
 def coerce_args(method: Callable, args: dict) -> Tuple[dict, Optional[str]]:
     """Validate *args* against *method*'s signature.
 
@@ -284,20 +314,9 @@ def coerce_args(method: Callable, args: dict) -> Tuple[dict, Optional[str]]:
     problems: List[str] = []
     clean: dict = {}
     for name, value in args.items():
-        param = named.get(name)
-        if param is None:
-            if takes_kwargs:
-                clean[name] = value
-            else:
-                problems.append(f"unknown argument '{name}' (expected: {', '.join(named) or 'none'})")
-            continue
-        try:
-            keep, converted = _convert_arg(value, hints.get(name, inspect.Parameter.empty), param)
-        except ValueError as exc:
-            problems.append(f"argument '{name}' {exc}" if value is None else f"argument '{name}' {exc}, got {value!r}")
-            continue
-        if keep:
-            clean[name] = converted
+        problem = _check_arg(name, value, named, hints, takes_kwargs, clean)
+        if problem:
+            problems.append(problem)
     missing = [n for n, p in named.items() if p.default is inspect.Parameter.empty and n not in args]
     if missing:
         problems.append(f"missing required argument(s): {', '.join(missing)}")

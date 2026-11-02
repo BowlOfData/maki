@@ -223,9 +223,16 @@ class TestPublicExport(unittest.TestCase):
         import maki
         self.assertIs(maki.LLMBackend, LLMBackend)
 
+    def test_every_name_in_all_resolves_without_optional_extras(self):
+        import maki
+        for name in maki.__all__:
+            self.assertIsNotNone(getattr(maki, name), name)
+
     def test_llm_backend_in_all(self):
         import maki
         self.assertIn("LLMBackend", maki.__all__)
+        self.assertNotIn("HFBackend", maki.__all__)  # optional extra: star-import must work without it
+        self.assertIn("HFBackend", maki._LAZY_EXPORTS)  # ... while `from maki import HFBackend` still resolves
 
 
 # ---------------------------------------------------------------------------

@@ -12,8 +12,10 @@ try:
 except PackageNotFoundError:  # pragma: no cover - running from source, not installed
     __version__ = "0.0.0.dev0"
 
+# HFBackend stays importable (`from maki import HFBackend`) but is not listed here: resolving it
+# imports torch and transformers, which would make `from maki import *` fail without those extras.
 __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLama",
-           "HFBackend", "MakiOpenAI", "MakiAnthropic", "MakiOpenRouter", "MakiLlamaCpp",
+           "MakiOpenAI", "MakiAnthropic", "MakiOpenRouter", "MakiLlamaCpp",
            "MakiVllm",
            "LoopSpec", "Requirement",
            "LLMResponse",

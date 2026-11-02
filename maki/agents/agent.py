@@ -258,6 +258,32 @@ class Agent(PluginHandler, ReasoningEngine):
             parts.append(history_section)
         return "\n\n".join(p for p in parts if p)
 
+    def _generate(self, task: str, context: Optional[Dict], use_plugins: bool) -> str:
+        """The model round(s) for one task: native tool loop, or chat plus ``TOOL:`` directives."""
+        if self.stateful:
+            self._fold_summary()
+        system_msg = self._build_system_message()
+
+        if use_plugins and self.plugins and getattr(self.maki, "supports_native_tools", False) is True:
+            # Native tool-calling path: backend drives structured tool calls.
+            return self.execute_with_native_tools(task, context, system_msg)
+        user_msg = self._build_user_message(task, context, use_plugins)
+        chat_kwargs = {"system": system_msg}
+        history = self._history_messages()
+        if history is not None:
+            chat_kwargs["history"] = history
+        if self.use_streaming:
+            result = self.maki.chat_collect(user_msg, **chat_kwargs).content
+        else:
+            result = self.maki.chat(user_msg, **chat_kwargs).content
+        if result is None:
+            raise MakiAPIError(f"Backend returned None content for task '{task}'")
+
+        # Legacy TOOL: directive path for non-native backends.
+        if use_plugins and self.plugins:
+            result = self.handle_plugin_calls(result, task, context)
+        return result
+
     def execute_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False) -> str:
         """
         Execute a task using this agent.
@@ -286,29 +312,7 @@ class Agent(PluginHandler, ReasoningEngine):
             fire(self.callbacks, "on_task_start", self, task)
             try:
                 logger.debug(f"Executing task '{task}' for agent '{self.name}'")
-                if self.stateful:
-                    self._fold_summary()
-                system_msg = self._build_system_message()
-
-                if use_plugins and self.plugins and getattr(self.maki, "supports_native_tools", False) is True:
-                    # Native tool-calling path: backend drives structured tool calls.
-                    result = self.execute_with_native_tools(task, context, system_msg)
-                else:
-                    user_msg = self._build_user_message(task, context, use_plugins)
-                    chat_kwargs = {"system": system_msg}
-                    history = self._history_messages()
-                    if history is not None:
-                        chat_kwargs["history"] = history
-                    if self.use_streaming:
-                        result = self.maki.chat_collect(user_msg, **chat_kwargs).content
-                    else:
-                        result = self.maki.chat(user_msg, **chat_kwargs).content
-                    if result is None:
-                        raise MakiAPIError(f"Backend returned None content for task '{task}'")
-
-                    # Legacy TOOL: directive path for non-native backends.
-                    if use_plugins and self.plugins:
-                        result = self.handle_plugin_calls(result, task, context)
+                result = self._generate(task, context, use_plugins)
 
                 execution_time = time.time() - start_time
                 logger.debug(f"Task '{task}' completed in {execution_time:.2f}s for agent '{self.name}'")

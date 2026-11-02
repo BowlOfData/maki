@@ -22,6 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - OpenAI, Anthropic, OpenRouter, llama.cpp and vLLM now classify HTTP errors exactly as the Connector (and so Ollama) always did, through the new `maki.exceptions.error_for_status`: 5xx become `MakiNetworkError` and 408/504 `MakiTimeoutError` (both retried by `execute_task_with_retry`, and a `maki serve` backend failure answers 502/504), while 4xx stay `MakiAPIError` with `status_code`. Before, every status from those SDKs was a `MakiAPIError`: a provider outage was neither retried nor reported as an unavailable backend. 429 (rate limit) is still a `MakiAPIError` everywhere
 
 ### Fixed
+- `from maki import *` no longer fails when `transformers` is not installed: `HFBackend` is still importable by name but no longer listed in `__all__`
+- The live Ollama tests no longer contact the server while pytest merely collects them
 - The `HFBackend` tests now skip when `transformers` is missing (they only checked for `torch`), and the Ollama async error path is tested through the real `AsyncConnector`
 
 ## [0.4.3] - 2026-11-02

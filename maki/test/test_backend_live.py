@@ -7,7 +7,7 @@ real wire format still matches. Deselected by default (``-m "not network"`` in p
     pytest -m network maki/test/test_backend_live.py
 
 Configure with MAKI_LIVE_OLLAMA_MODEL (default gemma4:26b) and MAKI_LIVE_OLLAMA_URL (default
-http://127.0.0.1:11434). The whole module skips when the server or the model is not available.
+http://127.0.0.1:11434). The tests skip when the server or the model is not available.
 """
 import asyncio
 import json
@@ -39,11 +39,13 @@ def _available() -> bool:
     return MODEL in names
 
 
-@unittest.skipUnless(_available(), f"Ollama with {MODEL} not reachable at {URL}")
 class TestLiveOllama(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Checked here, not in a decorator, so merely collecting this module never touches the network.
+        if not _available():
+            raise unittest.SkipTest(f"Ollama with {MODEL} not reachable at {URL}")
         cls.llm = MakiLLama(model=MODEL, base_url=URL, think=False, timeout=300)
         cls.usage = attach_usage(cls.llm)
 
