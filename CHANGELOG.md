@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- `FallbackBackend([...])`: tries backends in order and moves to the next on a transient failure (network error, timeout, 408/429; configurable with `on=`). Spec strings such as `"openai:gpt-4o"` are accepted, streaming falls back before the first chunk, and a native tool loop can switch backend mid-turn without running a tool twice. Agent YAML accepts a `fallback:` list of specs. A backend that just failed is tried last for `cooldown` seconds (default 30) so a dead primary does not cost its full timeout on every call; `async_chat()` and `session()` are supported
+- `FallbackBackend([...])`: tries backends in order and moves to the next on a transient failure (network error, timeout, 408/429; configurable with `on=`). Spec strings such as `"openai:gpt-4o"` are accepted, streaming falls back before the first chunk, and a native tool loop can switch backend mid-turn without running a tool twice. Agent YAML accepts a `fallback:` list of `provider:model` strings or backend mappings (`base_url`, `temperature`, ...). A backend that just failed is tried last for `cooldown` seconds (default 30) so a dead primary does not cost its full timeout on every call; `async_chat()` and `session()` are supported
 
 ## [0.4.4] - 2026-11-03
 

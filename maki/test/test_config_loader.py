@@ -145,27 +145,34 @@ if __name__ == "__main__":
 class TestFallbackSection(unittest.TestCase):
     def _load(self, body: str):
         from maki.backend import LLMBackend
+        built = []
+
+        def fake(cfg, judge=False):
+            built.append(cfg)
+            return MagicMock(spec=LLMBackend, model=cfg.get("model", "main"))
         path = _write_config(body)
         try:
-            with patch("maki.distributed.config_loader._build_backend",
-                       return_value=MagicMock(spec=LLMBackend, model="main")), \
-                    patch("maki.backend_factory.init_backend",
-                          side_effect=lambda spec: MagicMock(spec=LLMBackend, model=spec)):
-                return load_agent_from_config(path)
+            with patch("maki.distributed.config_loader._build_backend", side_effect=fake):
+                agent = load_agent_from_config(path)
         finally:
             os.unlink(path)
+        return agent, built
 
     def test_no_section_keeps_the_plain_backend(self):
         from maki.fallback import FallbackBackend
-        self.assertNotIsInstance(self._load("name: a\n").maki, FallbackBackend)
+        self.assertNotIsInstance(self._load("name: a\n")[0].maki, FallbackBackend)
 
-    def test_specs_wrap_the_main_backend(self):
+    def test_strings_and_mappings_wrap_the_main_backend(self):
         from maki.fallback import FallbackBackend
-        agent = self._load("name: a\nfallback:\n  - openai:gpt-4o\n  - ollama:gemma4:26b\n")
+        agent, built = self._load("name: a\ntemperature: 0.2\nfallback:\n  - openai:gpt-4o\n"
+                                  "  - {backend: ollama, model: gemma4:26b, base_url: 'http://box:1', temperature: 0.9}\n")
         self.assertIsInstance(agent.maki, FallbackBackend)
-        self.assertEqual([b.model for b in agent.maki.backends], ["main", "openai:gpt-4o", "ollama:gemma4:26b"])
+        self.assertEqual([b.model for b in agent.maki.backends], ["main", "openai:gpt-4o", "gemma4:26b"])
+        self.assertEqual(built[1], {"temperature": 0.2, "model": "openai:gpt-4o"})  # inherits the agent's
+        self.assertEqual(built[2]["temperature"], 0.9)  # unless it sets its own
+        self.assertEqual(built[2]["base_url"], "http://box:1")
 
     def test_bad_section_is_rejected(self):
-        for body in ("fallback: openai:gpt-4o\n", "fallback: []\n", "fallback: [1]\n"):
+        for body in ("fallback: openai:gpt-4o\n", "fallback: []\n", "fallback: [1]\n", "fallback: [{}]\n"):
             with self.subTest(body=body), self.assertRaises(ValueError):
                 self._load("name: a\n" + body)

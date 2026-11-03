@@ -55,8 +55,9 @@ in order. `async_chat()` and `session()` work through the chain too.
 Streaming falls back only before the first chunk. A native tool loop can switch backend mid-turn:
 the backend that produced the conversation continues it natively, any other gets the earlier tool
 calls and results as text in the last user message, and tools never run twice. Structured history
-is sent only when every backend supports it. In agent YAML, a `fallback:` list of specs wraps the
-main backend.
+is sent only when every backend supports it. In agent YAML, a `fallback:` list wraps the main backend; each entry is a `provider:model` string or a
+mapping with `backend`, `model`, `base_url`, `temperature` and `think`, and inherits the agent's
+`temperature` unless it sets one.
 
 ## Ollama
 

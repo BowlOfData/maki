@@ -32,8 +32,10 @@ tool_policy:                # optional; how tool calls run
   retries: 2                # extra attempts for transient tool errors (network, timeout)
   parallel: false           # run one turn's tool calls concurrently (plugins must be thread-safe)
 fallback:                   # optional; backends tried in order when the main one fails
-  - openai:gpt-4o          # (network error, timeout, 408/429), as "provider:model" specs
-  - ollama:gemma4:26b
+  - openai:gpt-4o          # (network error, timeout, 408/429): "provider:model" strings
+  - backend: ollama        # or mappings with backend/model/base_url/temperature/think
+    model: gemma4:26b
+    base_url: http://gpu-box:11434
 allow_dangerous_tools: false  # optional, default false; opt-in to let TOOL:
                               # directives call methods a plugin marks in
                               # DANGEROUS_METHODS (file writes, FTP, trades)
@@ -90,14 +92,24 @@ def _ollama_kwargs(cfg: dict, judge: bool) -> dict:
     return kwargs
 
 
-def _build_fallback(primary: LLMBackend, specs) -> LLMBackend:
-    """Wrap *primary* so the ``fallback:`` specs are tried when it fails; no section means no wrapper."""
-    if specs is None:
+def _build_fallback(primary: LLMBackend, cfg: dict) -> LLMBackend:
+    """Wrap *primary* so the ``fallback:`` entries are tried when it fails; no section means no wrapper.
+
+    An entry is a ``"provider:model"`` string or a mapping with the same keys as the agent's own
+    backend (``backend``, ``model``, ``base_url``, ``temperature``, ``think``); it inherits the
+    agent's ``temperature`` unless it sets one.
+    """
+    entries = cfg.get("fallback")
+    if entries is None:
         return primary
-    if not isinstance(specs, list) or not specs or not all(isinstance(s, str) and s.strip() for s in specs):
-        raise ValueError("'fallback' must be a non-empty list of 'provider:model' strings")
+    valid = isinstance(entries, list) and entries and all(
+        (isinstance(e, str) and e.strip()) or (isinstance(e, dict) and e) for e in entries)
+    if not valid:
+        raise ValueError("'fallback' must be a non-empty list of 'provider:model' strings or backend mappings")
     from ..fallback import FallbackBackend
-    return FallbackBackend([primary, *specs])
+    inherited = {"temperature": cfg["temperature"]} if "temperature" in cfg else {}
+    built = [_build_backend({**inherited, **({"model": e} if isinstance(e, str) else e)}) for e in entries]
+    return FallbackBackend([primary, *built])
 
 
 def _build_backend(cfg: dict, judge: bool = False) -> LLMBackend:
@@ -164,7 +176,7 @@ def _agent_from_cfg(cfg: dict) -> Agent:
             f"Valid plugins: {', '.join(sorted(PLUGIN_REGISTRY))}"
         )
 
-    backend = _build_fallback(_build_backend(cfg), cfg.get("fallback"))
+    backend = _build_fallback(_build_backend(cfg), cfg)
     agent = Agent(
         name=cfg["name"],
         maki_instance=backend,
