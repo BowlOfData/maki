@@ -49,6 +49,9 @@ backend.last_used             # the backend that served the latest call
 ```
 
 `on=` changes what triggers a fallback (a tuple of exception classes or a `callable(exc) -> bool`).
+A backend that just failed is tried last for `cooldown` seconds (default 30, `0` turns it off), so a
+dead primary does not cost its full timeout on every call; if every backend is cooling, all are tried
+in order. `async_chat()` and `session()` work through the chain too.
 Streaming falls back only before the first chunk. A native tool loop can switch backend mid-turn:
 the backend that produced the conversation continues it natively, any other gets the earlier tool
 calls and results as text in the last user message, and tools never run twice. Structured history

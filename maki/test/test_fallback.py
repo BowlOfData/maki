@@ -86,7 +86,7 @@ class TestChoosing(unittest.TestCase):
 
     def test_recovers_for_the_next_call(self):
         a = Fake("a", error=NET, fail_times=1)
-        fb = FallbackBackend([a, Fake("b")])
+        fb = FallbackBackend([a, Fake("b")], cooldown=0)
         self.assertEqual(fb.request("1").content, "b")
         self.assertEqual(fb.request("2").content, "a")
 
@@ -126,6 +126,122 @@ class TestChoosing(unittest.TestCase):
         no_history.supports_history = False
         self.assertFalse(FallbackBackend([plain, no_history]).supports_history)
         self.assertIn("Fake(a)", repr(fb))
+
+
+class TestCooldown(unittest.TestCase):
+    def test_a_failed_backend_is_tried_last_for_a_while(self):
+        a, b = Fake("a", error=NET), Fake("b")
+        fb = FallbackBackend([a, b], cooldown=30)
+        fb.request("1")
+        fb.request("2")
+        fb.request("3")
+        self.assertEqual((a.calls, b.calls), (1, 3))  # a was not retried while cooling
+
+    def test_it_is_tried_first_again_after_the_cooldown(self):
+        from unittest.mock import patch
+        a, b = Fake("a", error=NET, fail_times=1), Fake("b")
+        fb = FallbackBackend([a, b], cooldown=30)
+        with patch("maki.fallback.time.monotonic", return_value=100.0):
+            self.assertEqual(fb.request("1").content, "b")
+        with patch("maki.fallback.time.monotonic", return_value=131.0):
+            self.assertEqual(fb.request("2").content, "a")
+
+    def test_when_everything_is_cooling_the_given_order_is_used(self):
+        a, b = Fake("a", error=NET, fail_times=1), Fake("b", error=NET, fail_times=1)
+        fb = FallbackBackend([a, b], cooldown=30)
+        with self.assertRaises(MakiNetworkError):
+            fb.request("1")
+        self.assertEqual(fb.request("2").content, "a")  # both cooling: a first again
+
+    def test_cooling_backend_still_serves_when_the_others_fail(self):
+        a, b = Fake("a", error=NET, fail_times=1), Fake("b", error=NET)
+        fb = FallbackBackend([a, b], cooldown=30)
+        with self.assertRaises(MakiNetworkError):
+            fb.request("1")
+        self.assertEqual(fb.request("2").content, "a")
+
+    def test_streaming_uses_the_cooldown_too(self):
+        a, b = Fake("a", error=NET), Fake("b")
+        fb = FallbackBackend([a, b], cooldown=30)
+        list(fb.stream("1"))
+        list(fb.stream("2"))
+        self.assertEqual(a.calls, 1)
+
+    def test_validation(self):
+        for bad in (-1, "5", True, None):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                FallbackBackend([Fake("a")], cooldown=bad)
+
+
+class TestAsyncAndSession(unittest.TestCase):
+    def test_async_chat_falls_back_and_skips_backends_without_it(self):
+        import asyncio
+
+        class WithAsync(Fake):
+            async def async_chat(self, prompt, **kw):
+                self._maybe_fail()
+                return reply(self.label)
+        down, up = WithAsync("a", error=NET), WithAsync("b")
+        fb = FallbackBackend([Fake("plain"), down, up])
+        self.assertEqual(asyncio.run(fb.async_chat("hi", images=["x"])).content, "b")
+        self.assertIs(fb.last_used, up)
+        with self.assertRaises(NotImplementedError):
+            asyncio.run(FallbackBackend([Fake("plain")]).async_chat("hi"))
+
+    def test_async_chat_raises_other_errors_at_once(self):
+        import asyncio
+
+        class Bad(Fake):
+            async def async_chat(self, prompt, **kw):
+                raise MakiAPIError("bad", status_code=400)
+        second = Fake("b")
+        with self.assertRaises(MakiAPIError):
+            asyncio.run(FallbackBackend([Bad("a"), second]).async_chat("hi"))
+
+    def test_session_chats_through_the_chain(self):
+        class Chatty(Fake):
+            def chat(self, prompt, history=None, config=None, system=None, images=None):
+                self._maybe_fail()
+                return reply(f"{self.label}:{prompt}")
+        fb = FallbackBackend([Chatty("a", error=NET), Chatty("b")])
+        self.assertEqual(fb.session(system="s").say("hi").content, "b:hi")
+
+
+class TestSharing(unittest.TestCase):
+    def test_pickles_and_copies(self):
+        import copy
+        import pickle
+        fb = FallbackBackend([PickleFake("a"), PickleFake("b")], on=(MakiNetworkError,))
+        for clone in (pickle.loads(pickle.dumps(fb)), copy.deepcopy(fb)):
+            self.assertEqual(clone.request("x").content, "a")
+
+    def test_a_loop_continues_on_the_backend_that_served_it_even_if_last_used_moves(self):
+        """last_used is shared; another thread finishing a call must not change which backend a
+        running tool loop continues on."""
+        call = ToolCall(id="1", name="p__m", args={})
+        other = Fake("b", native=True)
+        a = Fake("a", native=True, calls=[[call]])
+
+        class Racy(FallbackBackend):
+            def _served(self, backend):
+                super()._served(backend)
+                self.last_used = other  # another thread's call lands right after ours
+        fb = Racy([a, other])
+        specs = fb.to_tool_schemas(TestToolLoop.SPECS)
+        _, calls, msgs = fb.chat_with_tools([{"role": "user", "content": "go"}], specs)
+        self.assertIs(msgs.origin, a)
+        msgs = fb.append_tool_results(msgs, [(calls[0], "r")])
+        self.assertEqual(msgs[-1]["from"], "a")  # a's own format, not b's
+
+
+class PickleFake(LLMBackend):
+    supports_history = True
+
+    def __init__(self, label):
+        self.model, self.temperature, self.label = label, 0.0, label
+
+    def request(self, prompt):
+        return reply(self.label)
 
 
 class TestStreaming(unittest.TestCase):

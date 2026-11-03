@@ -23,11 +23,14 @@ the last user message as text. Tools run exactly once either way.
 
 import json
 import logging
+import threading
+import time
 from typing import Any, Callable, Generator, List, Optional, Sequence, Tuple, Union
 
 from .backend import LLMBackend
 from .exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
 from .objects import GenerationConfig, LLMResponse, Message, ToolCall
+from .session import ChatSession
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,16 @@ def default_fallback_on(exc: BaseException) -> bool:
     if isinstance(exc, (MakiNetworkError, MakiTimeoutError)):
         return True
     return isinstance(exc, MakiAPIError) and exc.status_code in _RETRYABLE_STATUS
+
+
+class _OnClasses:
+    """``on=(SomeError, ...)`` as a rule; a class rather than a lambda so the backend still pickles."""
+
+    def __init__(self, classes: Tuple[type, ...]):
+        self.classes = classes
+
+    def __call__(self, exc: BaseException) -> bool:
+        return isinstance(exc, self.classes)
 
 
 class _Transcript(list):
@@ -77,11 +90,15 @@ class FallbackBackend(LLMBackend):
         backends: Backend instances or ``"provider:model"`` specs, most preferred first.
         on: Which failures move on to the next backend: a tuple of exception classes or a
             ``callable(exc) -> bool``. Default: network errors, timeouts and 408/429 statuses.
+        cooldown: Seconds a backend that just failed is tried last, so a dead primary does not cost
+            its full timeout on every call (0 turns it off). When every backend is cooling down,
+            all are tried in the given order.
 
     ``last_used`` is the backend that served the most recent call (None before the first).
     """
 
-    def __init__(self, backends: Sequence[Union[LLMBackend, str]], *, on: Optional[FallbackRule] = None):
+    def __init__(self, backends: Sequence[Union[LLMBackend, str]], *, on: Optional[FallbackRule] = None,
+                 cooldown: float = 30.0):
         if isinstance(backends, (str, LLMBackend)) or not backends:
             raise ValueError("backends must be a non-empty list of backends or 'provider:model' specs")
         built: List[LLMBackend] = []
@@ -93,8 +110,23 @@ class FallbackBackend(LLMBackend):
                 raise TypeError(f"Fallback entries must be LLMBackend instances or specs, got {type(item).__name__}")
             built.append(item)
         self.backends: List[LLMBackend] = built
+        if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)) or cooldown < 0:
+            raise ValueError("cooldown must be a number of seconds, 0 or more")
         self._on = self._rule(on)
+        self.cooldown = float(cooldown)
+        self._down_until: dict = {}  # id(backend) -> monotonic time until which it is tried last
+        self._lock = threading.Lock()
         self.last_used: Optional[LLMBackend] = None
+
+    def __getstate__(self) -> dict:  # a lock can be neither copied nor pickled; cooldowns key on id()
+        state = self.__dict__.copy()
+        state.pop("_lock", None)
+        state["_down_until"] = {}
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
 
     @staticmethod
     def _rule(on: Optional[FallbackRule]) -> Callable[[BaseException], bool]:
@@ -105,7 +137,7 @@ class FallbackBackend(LLMBackend):
         if isinstance(on, tuple):
             if not all(isinstance(t, type) and issubclass(t, BaseException) for t in on):
                 raise TypeError("on= must hold exception classes")
-            return lambda exc: isinstance(exc, on)
+            return _OnClasses(on)
         if callable(on):
             return on
         raise TypeError("on= must be exception classes or a callable")
@@ -134,23 +166,47 @@ class FallbackBackend(LLMBackend):
 
     # -- trying backends -----------------------------------------------------------------------
 
-    def _try(self, candidates: Sequence[LLMBackend], call: Callable[[LLMBackend], Any]) -> Any:
+    def _order(self, candidates: Sequence[LLMBackend]) -> List[LLMBackend]:
+        """*candidates* with backends that failed within ``cooldown`` seconds moved to the end."""
+        now = time.monotonic()
+        with self._lock:
+            cooling = {id(b) for b in candidates if self._down_until.get(id(b), 0.0) > now}
+        if not cooling or len(cooling) == len(candidates):
+            return list(candidates)
+        return [b for b in candidates if id(b) not in cooling] + [b for b in candidates if id(b) in cooling]
+
+    def _failed(self, backend: LLMBackend, exc: BaseException, more: bool) -> None:
+        with self._lock:
+            if self.cooldown:
+                self._down_until[id(backend)] = time.monotonic() + self.cooldown
+        logger.warning("%s(%s) failed (%s: %s)%s", type(backend).__name__, backend.model,
+                       type(exc).__name__, exc, "; trying the next backend" if more else "")
+
+    def _served(self, backend: LLMBackend) -> None:
+        self.last_used = backend
+        with self._lock:
+            self._down_until.pop(id(backend), None)
+
+    def _try_with(self, candidates: Sequence[LLMBackend], call: Callable[[LLMBackend], Any]) -> Tuple[LLMBackend, Any]:
+        """Run *call* on each candidate in turn; returns ``(backend that answered, result)``."""
+        ordered = self._order(candidates)
         last: Optional[BaseException] = None
-        for index, backend in enumerate(candidates):
+        for index, backend in enumerate(ordered):
             try:
                 result = call(backend)
             except Exception as exc:
                 if not self._on(exc):
                     raise
                 last = exc
-                more = index + 1 < len(candidates)
-                logger.warning("%s(%s) failed (%s: %s)%s", type(backend).__name__, backend.model,
-                               type(exc).__name__, exc, "; trying the next backend" if more else "")
+                self._failed(backend, exc, index + 1 < len(ordered))
                 continue
-            self.last_used = backend
-            return result
+            self._served(backend)
+            return backend, result
         assert last is not None
         raise last
+
+    def _try(self, candidates: Sequence[LLMBackend], call: Callable[[LLMBackend], Any]) -> Any:
+        return self._try_with(candidates, call)[1]
 
     def request(self, prompt: str) -> LLMResponse:
         return self._try(self.backends, lambda b: b.request(prompt))
@@ -171,7 +227,8 @@ class FallbackBackend(LLMBackend):
         """Stream from the first backend that starts; a failure after the first chunk is raised, not retried
         (the caller already holds part of the answer)."""
         last: Optional[BaseException] = None
-        for backend in self.backends:
+        ordered = self._order(self.backends)
+        for index, backend in enumerate(ordered):
             started = False
             try:
                 for chunk in backend.stream(prompt, history=history, config=config, system=system):
@@ -186,13 +243,40 @@ class FallbackBackend(LLMBackend):
                 if started or not self._on(exc):
                     raise
                 last = exc
-                logger.warning("%s(%s) failed before streaming (%s: %s); trying the next backend",
-                               type(backend).__name__, backend.model, type(exc).__name__, exc)
+                self._failed(backend, exc, index + 1 < len(ordered))
                 continue
-            self.last_used = backend
+            self._served(backend)
             return
         assert last is not None
         raise last
+
+    async def async_chat(self, prompt: str, history: Optional[List[Message]] = None,
+                         config: Optional[GenerationConfig] = None, system: Optional[str] = None,
+                         images: Optional[List[str]] = None) -> LLMResponse:
+        """Async ``chat()`` on the first backend that has one and answers."""
+        capable = [b for b in self.backends if callable(getattr(b, "async_chat", None))]
+        if not capable:
+            raise NotImplementedError("None of the fallback backends supports async_chat().")
+        ordered = self._order(capable)
+        last: Optional[BaseException] = None
+        for index, backend in enumerate(ordered):
+            try:
+                result = await backend.async_chat(prompt, history=history, config=config, system=system,
+                                                  images=images)
+            except Exception as exc:
+                if not self._on(exc):
+                    raise
+                last = exc
+                self._failed(backend, exc, index + 1 < len(ordered))
+                continue
+            self._served(backend)
+            return result
+        assert last is not None
+        raise last
+
+    def session(self, system: Optional[str] = None) -> ChatSession:
+        """A multi-turn chat session over the fallback chain."""
+        return ChatSession(llm=self, system=system)
 
     # -- native tool calling ---------------------------------------------------------------------
 
@@ -218,11 +302,11 @@ class FallbackBackend(LLMBackend):
         native = [b for b in self.backends if b.supports_native_tools]
         if not native:
             raise NotImplementedError("None of the fallback backends supports native tool calling.")
-        response, calls, updated = self._try(native, attempt)
+        served, (response, calls, updated) = self._try_with(native, attempt)
         steps = list(steps)
         if calls:
             steps.append({"calls": list(calls)})
-        return response, calls, _Transcript(updated, self.last_used, base, steps)
+        return response, calls, _Transcript(updated, served, base, steps)
 
     def append_tool_results(self, messages: List[dict], results: List[Tuple[ToolCall, str]]) -> List[dict]:
         if not isinstance(messages, _Transcript):
