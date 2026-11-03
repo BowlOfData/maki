@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-11-03
+
 ### Added
 - `maki/test/test_backend_live.py`: ten contract checks against a real Ollama server (chat, system/history, streaming, async, usage, the native tool loop, a typed plugin through an `Agent`, 404 and unreachable-server errors), deselected by default; run with `pytest -m network`
 - `python -m maki.test.summary_bench`: a live benchmark of the summary tier. On `gemma4:26b` it recalled 4/4 early facts where dropping turns recalled 0/4, with 42% fewer prompt tokens than keeping everything (see `docs/user/agent-memory.md`)
