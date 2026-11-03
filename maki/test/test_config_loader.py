@@ -140,3 +140,32 @@ class TestMemorySection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFallbackSection(unittest.TestCase):
+    def _load(self, body: str):
+        from maki.backend import LLMBackend
+        path = _write_config(body)
+        try:
+            with patch("maki.distributed.config_loader._build_backend",
+                       return_value=MagicMock(spec=LLMBackend, model="main")), \
+                    patch("maki.backend_factory.init_backend",
+                          side_effect=lambda spec: MagicMock(spec=LLMBackend, model=spec)):
+                return load_agent_from_config(path)
+        finally:
+            os.unlink(path)
+
+    def test_no_section_keeps_the_plain_backend(self):
+        from maki.fallback import FallbackBackend
+        self.assertNotIsInstance(self._load("name: a\n").maki, FallbackBackend)
+
+    def test_specs_wrap_the_main_backend(self):
+        from maki.fallback import FallbackBackend
+        agent = self._load("name: a\nfallback:\n  - openai:gpt-4o\n  - ollama:gemma4:26b\n")
+        self.assertIsInstance(agent.maki, FallbackBackend)
+        self.assertEqual([b.model for b in agent.maki.backends], ["main", "openai:gpt-4o", "ollama:gemma4:26b"])
+
+    def test_bad_section_is_rejected(self):
+        for body in ("fallback: openai:gpt-4o\n", "fallback: []\n", "fallback: [1]\n"):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                self._load("name: a\n" + body)

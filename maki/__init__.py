@@ -20,7 +20,7 @@ __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLa
            "LoopSpec", "Requirement",
            "LLMResponse",
            "GenerationConfig", "Message", "ConversationMemory", "MemoryPolicy", "RateLimiter", "BackendType",
-           "ToolCall", "AgentCallback", "LoggingCallback", "ToolPolicy", "init_backend", "config", "__version__"]
+           "ToolCall", "AgentCallback", "LoggingCallback", "ToolPolicy", "init_backend", "FallbackBackend", "config", "__version__"]
 
 _LAZY_EXPORTS = {
     "LLMBackend":     (".backend",       "LLMBackend"),
@@ -49,6 +49,7 @@ _LAZY_EXPORTS = {
     "AgentCallback":  (".callbacks",     "AgentCallback"),
     "LoggingCallback": (".callbacks",    "LoggingCallback"),
     "ToolPolicy":     (".agents.tool_policy", "ToolPolicy"),
+    "FallbackBackend": (".fallback",     "FallbackBackend"),
 }
 
 

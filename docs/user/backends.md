@@ -30,6 +30,31 @@ arguments (`base_url`, `api_key`, `config`, ...) go to the backend's constructor
 YAML file, `model: "openai:gpt-4o"` without a `backend:` key does the same; an explicit
 `backend:` keeps `model` verbatim, so `backend: ollama` with `model: gemma4:26b` still works.
 
+## Falling back to another backend
+
+`FallbackBackend` tries backends in order and moves on when one fails with a transient error
+(network, timeout, a 408 or 429 status). Errors another model would not fix (400, 401, bad input)
+are raised at once, and when every backend failed the last error is raised with its original type.
+
+```python
+from maki import Agent, FallbackBackend, init_backend
+
+backend = FallbackBackend([
+    init_backend("anthropic:claude-sonnet-5-5"),
+    "openai:gpt-4o",          # a spec string is built with init_backend
+    "ollama:gemma4:26b",      # local last resort
+])
+agent = Agent("assistant", backend)
+backend.last_used             # the backend that served the latest call
+```
+
+`on=` changes what triggers a fallback (a tuple of exception classes or a `callable(exc) -> bool`).
+Streaming falls back only before the first chunk. A native tool loop can switch backend mid-turn:
+the backend that produced the conversation continues it natively, any other gets the earlier tool
+calls and results as text in the last user message, and tools never run twice. Structured history
+is sent only when every backend supports it. In agent YAML, a `fallback:` list of specs wraps the
+main backend.
+
 ## Ollama
 
 ```python
