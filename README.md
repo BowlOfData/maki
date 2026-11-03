@@ -49,15 +49,29 @@ from maki import MakiAnthropic   # pip install "maki-framework[anthropic]"
 agent = Agent(name="Reviewer", maki_instance=MakiAnthropic(model="claude-sonnet-4-5"), role="code reviewer")
 ```
 
+Pick a backend from one string, and chain several so a transient failure (network error, timeout, rate limit) moves to the next one:
+
+```python
+from maki import FallbackBackend, init_backend
+
+backend = FallbackBackend([
+    init_backend("anthropic:claude-sonnet-4-5"),
+    "openai:gpt-4o",          # spec strings are built with init_backend
+    "ollama:gemma4:26b",      # local last resort
+])
+agent = Agent(name="Reviewer", maki_instance=backend, role="code reviewer")
+```
+
 ## Why Maki
 
-- **Local and hosted models are equals.** Ollama, llama.cpp, vLLM, OpenAI, Anthropic and OpenRouter sit behind the same `LLMBackend` contract, and an in-process HuggingFace backend is included.
+- **Local and hosted models are equals.** Ollama, llama.cpp, vLLM, OpenAI, Anthropic and OpenRouter sit behind the same `LLMBackend` contract, and an in-process HuggingFace backend is included. `init_backend("provider:model")` builds any of them from a string, `FallbackBackend` fails over between them (even in the middle of a tool loop), and one conformance suite pins identical behaviour and error mapping across all of them.
 - **Guardrails on by default.** Content-derived URLs are checked against private and reserved address ranges at connect time. Plugins are fail-closed, and destructive methods (file writes, FTP transfers, trades) stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
 - **Small core.** Three dependencies (`requests`, `httpx`, `python-dotenv`); everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP; `AgentProxy` consumes it remotely.
+- **Typed, observable tools.** Native tool schemas come from type hints and docstrings, arguments are validated before a method runs, and `ToolPolicy` adds retries with backoff and optional parallel calls (destructive methods are never retried). `AgentCallback` hooks report task, model and tool events.
 - **Batteries included.** 18 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution, checkpoint/resume and maker/checker verification.
 - **Agents that iterate.** `agent.run_loop(goal, requirements, judge)` keeps an agent working until a separate judge, your tests or your own checks confirm every requirement, with stall detection, token and time budgets, resume and optional human approval; it runs locally, over HTTP and inside workflows.
-- **Memory that stays useful.** An opt-in `MemoryPolicy` shortens old turns, pins the facts that must never be lost and clips oversized tool output. In a live test on a local `gemma4:26b`, the default setup forgot a fact stated at the start of a 13-message chat while the policy setting answered correctly, with about 45% less text sent.
+- **Memory that stays useful.** An opt-in `MemoryPolicy` shortens old turns, pins the facts that must never be lost and clips oversized tool output; an optional summary tier folds evicted turns into a running summary instead of dropping them (in the same live test it recalled 4/4 early facts where dropping recalled 0/4). In a live test on a local `gemma4:26b`, the default setup forgot a fact stated at the start of a 13-message chat while the policy setting answered correctly, with about 45% less text sent.
 
 
 ## Documentation

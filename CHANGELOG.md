@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-11-03
+
 ### Added
+- `maki/test/test_backend_live_openrouter.py`: nine contract checks against the real OpenRouter API (chat, history, streaming, async, usage, the native tool loop, a typed plugin through an `Agent`, an unknown model, fallback from a dead backend), deselected by default and skipped without `OPENROUTER_API_KEY`; run with `pytest -m network`
 - `FallbackBackend([...])`: tries backends in order and moves to the next on a transient failure (network error, timeout, 408/429; configurable with `on=`). Spec strings such as `"openai:gpt-4o"` are accepted, streaming falls back before the first chunk, and a native tool loop can switch backend mid-turn without running a tool twice. Agent YAML accepts a `fallback:` list of `provider:model` strings or backend mappings (`base_url`, `temperature`, ...). A backend that just failed is tried last for `cooldown` seconds (default 30) so a dead primary does not cost its full timeout on every call; `async_chat()` and `session()` are supported
+
+### Changed
+- README and the architecture and backends docs describe `init_backend`, `FallbackBackend`, typed tool schemas and policies, and the summary memory tier
 
 ## [0.4.4] - 2026-11-03
 

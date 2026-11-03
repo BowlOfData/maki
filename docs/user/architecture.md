@@ -5,7 +5,7 @@
 Four layers on top of a shared infrastructure layer:
 
 - **Public API:** `maki/__init__.py` lazy-loads all exports on first access.
-- **LLM backends:** `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp`, `MakiVllm` and `HFBackend` all implement the abstract `LLMBackend` contract.
+- **LLM backends:** `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp`, `MakiVllm` and `HFBackend` all implement the abstract `LLMBackend` contract. `init_backend("provider:model")` builds one from a string, and `FallbackBackend` chains several so a transient failure moves to the next. A shared conformance suite keeps every backend's behaviour and error mapping identical.
 - **Agent system:** `Agent` composes `PluginHandler` and `ReasoningEngine` mixins; `AgentManager` orchestrates agents via `WorkflowTask` and `WorkflowState`. The loop engine (`maki/agents/loop.py`, with `loop_judge.py` and `loop_scratchpad.py`) iterates one agent until a separate judge, a command or a callable confirms every requirement; it also runs as a `WorkflowTask(loop=...)`. See [Agent loops](loops.md).
 - **Distributed layer:** `AgentServer` (FastAPI) exposes agents over HTTP, and runs loops for remote callers in background jobs (`loop_jobs.py`); `AgentProxy` is the remote-agent client with circuit breaking and `run_loop()`; `DistributedAgentManager` mixes local and remote agents.
 - **Infrastructure:** `Connector` (hardened HTTP: URL validation, connect-time IP pinning), shared data classes, typed exceptions, runtime config and logging.
@@ -17,11 +17,12 @@ Plugins sit alongside the agent layer. They are loaded on demand and invoked whe
 Top-level imports from `maki`:
 
 - `MakiLLama`, `MakiOpenAI`, `MakiAnthropic`, `MakiOpenRouter`, `MakiLlamaCpp`, `MakiVllm`, `HFBackend`
-- `LLMBackend`, `BackendType`
+- `LLMBackend`, `BackendType`, `init_backend`, `FallbackBackend`
 - `Agent`, `AgentManager`
 - `LoopSpec`, `Requirement` (the rest of the loop API lives in `maki.agents`)
 - `GenerationConfig`, `LLMResponse`, `Message`, `ToolCall`
-- `ConversationMemory`, `RateLimiter`
+- `ConversationMemory`, `MemoryPolicy`, `RateLimiter`
+- `ToolPolicy`, `AgentCallback`, `LoggingCallback`
 - `Connector`, `Utils`
 - `config`
 
