@@ -28,6 +28,33 @@ manager.add_agent("Researcher", role="researcher", stateful=True,
                   tool_policy={"retries": 2, "parallel": True})
 ```
 
+## Async
+
+Every blocking entry point has an awaitable twin, so an event loop (FastAPI, a bot, a notebook) keeps
+running while a model answers:
+
+```python
+answer = await agent.aexecute_task("Summarise this", use_plugins=True)
+
+async for chunk in agent.astream_task("Tell me a story"):
+    print(chunk, end="")
+
+results = await manager.agather_tasks([
+    {"agent": "Researcher", "task": "Find three sources"},
+    {"agent": "Writer", "task": "Draft the intro"},
+])                                   # different agents run at the same time, results keep this order
+```
+
+Available: `Agent.aexecute_task`, `aexecute_task_with_retry`, `astream_task`, `arun_loop`;
+`AgentManager.aassign_task`, `agather_tasks` (with `return_exceptions=`), `acollaborative_task`,
+`arun_workflow`; `AgentProxy.aexecute_task`, `astream_task`.
+
+These run the existing synchronous code on worker threads, so behaviour, memory, tool policies and
+callbacks are identical. Calls to one agent are still serialised by that agent (a stateful agent's
+history never interleaves); different agents overlap. Cancelling an `await` stops the wait, not a
+call already sent to the model, and breaking out of `astream_task` stops the stream after the chunk in
+flight. Worker threads come from the event loop's default executor.
+
 ## Memory and reasoning helpers
 
 ```python

@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 
+from ..aio import aiterate, run_in_thread
 from ..backend import LLMBackend
 from ..callbacks import AgentCallback, fire
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
@@ -384,6 +385,26 @@ class Agent(PluginHandler, ReasoningEngine):
 
         # Unreachable, but satisfies type checkers
         raise RuntimeError(f"Task '{task}' failed after {max_retries} attempts")
+
+    async def aexecute_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False) -> str:
+        """Awaitable :meth:`execute_task`; the model call runs on a worker thread (see :mod:`maki.aio`)."""
+        return await run_in_thread(self.execute_task, task, context, use_plugins)
+
+    async def aexecute_task_with_retry(self, task: str, context: Optional[Dict] = None, max_retries: int = 3,
+                                       retry_delay: float = 1.0, use_plugins: bool = False) -> str:
+        """Awaitable :meth:`execute_task_with_retry`; the waits between attempts happen on the worker thread."""
+        return await run_in_thread(self.execute_task_with_retry, task, context, max_retries, retry_delay, use_plugins)
+
+    async def arun_loop(self, goal: str, requirements, judge, **options):
+        """Awaitable :meth:`run_loop` (same arguments); the whole loop runs on one worker thread."""
+        return await run_in_thread(self.run_loop, goal, requirements, judge, **options)
+
+    def astream_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False):
+        """Async generator over :meth:`stream_task`: ``async for chunk in agent.astream_task(...)``.
+
+        Breaking out of the loop stops the stream after the chunk in flight and releases the agent.
+        """
+        return aiterate(lambda: self.stream_task(task, context, use_plugins))
 
     def run_loop(self, goal: str, requirements, judge, on_iteration=None, confirm_requirements=None,
                  approvals=None, overwrite=False, **options):

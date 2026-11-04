@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Union
 
 from ..agents.loop import Decision, Requirement
+from ..aio import aiterate, run_in_thread
 from ..connector import Connector
 from ..exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError
 from .circuit_breaker import CircuitBreaker, CircuitState
@@ -208,6 +209,16 @@ class AgentProxy:
         except _RETRYABLE:
             self._circuit_breaker.record_failure()
             raise
+
+    def astream_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False,
+                     trace_id: Optional[str] = None):
+        """Async generator over :meth:`stream_task`; the SSE connection is read on a worker thread."""
+        return aiterate(lambda: self.stream_task(task, context, use_plugins, trace_id))
+
+    async def aexecute_task(self, task: str, context: Optional[Dict] = None, use_plugins: bool = False,
+                            trace_id: Optional[str] = None) -> str:
+        """Awaitable :meth:`execute_task`; the HTTP call runs on a worker thread."""
+        return await run_in_thread(self.execute_task, task, context, use_plugins, trace_id)
 
     def execute_task_with_retry(
         self,

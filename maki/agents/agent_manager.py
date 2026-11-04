@@ -5,6 +5,7 @@ Manages a collection of agents and facilitates their coordination,
 collaboration, and workflow execution.
 """
 
+import asyncio
 import json
 import logging
 import threading
@@ -12,6 +13,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from ..aio import run_in_thread
 from ..backend import LLMBackend
 from ..callbacks import AgentCallback
 from ..objects import MemoryPolicy
@@ -136,6 +138,40 @@ class AgentManager:
             return agent.execute_task(task, context)
         except Exception as e:
             raise RuntimeError(f"Failed to assign task '{task}' to agent '{agent_name}': {str(e)}") from e
+
+    async def aassign_task(self, agent_name: str, task: str, context: Optional[Dict] = None) -> str:
+        """Awaitable :meth:`assign_task`; same validation and errors."""
+        return await run_in_thread(self.assign_task, agent_name, task, context)
+
+    async def agather_tasks(self, tasks: List[Dict], return_exceptions: bool = False) -> List[Any]:
+        """Run tasks on their agents at the same time and return the results in the order given.
+
+        Args:
+            tasks: Dicts with ``agent``, ``task`` and optional ``context`` (as in :meth:`coordinate_agents`).
+                Tasks for different agents overlap; tasks for one agent run one after another
+                (each agent executes one task at a time).
+            return_exceptions: When True a failed task's exception is returned in its place instead of
+                being raised (the other tasks still finish either way).
+
+        Raises:
+            ValueError: If a task is not a dict with ``agent`` and ``task``; nothing is started.
+            RuntimeError: From :meth:`assign_task` for the first failing task (``return_exceptions=False``).
+        """
+        for entry in tasks:
+            if not isinstance(entry, dict) or "agent" not in entry or "task" not in entry:
+                raise ValueError("Each task must be a dict with 'agent' and 'task' keys")
+        return await asyncio.gather(
+            *(self.aassign_task(entry["agent"], entry["task"], entry.get("context")) for entry in tasks),
+            return_exceptions=return_exceptions)
+
+    async def acollaborative_task(self, task: str, agents: List[str], context: Optional[Dict] = None,
+                                  strict: bool = False) -> str:
+        """Awaitable :meth:`collaborative_task`."""
+        return await run_in_thread(self.collaborative_task, task, agents, context, strict)
+
+    async def arun_workflow(self, workflow: List, **options) -> Dict[str, Any]:
+        """Awaitable :meth:`run_workflow` (same arguments); the workflow runs on a worker thread."""
+        return await run_in_thread(self.run_workflow, workflow, **options)
 
     def coordinate_agents(self, tasks: List[Dict], coordination_prompt: str = "") -> Dict[str, Any]:
         """

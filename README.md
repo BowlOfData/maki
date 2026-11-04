@@ -68,6 +68,7 @@ agent = Agent(name="Reviewer", maki_instance=backend, role="code reviewer")
 - **Guardrails on by default.** Content-derived URLs are checked against private and reserved address ranges at connect time. Plugins are fail-closed, and destructive methods (file writes, FTP transfers, trades) stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
 - **Small core.** Three dependencies (`requests`, `httpx`, `python-dotenv`); everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP; `AgentProxy` consumes it remotely.
+- **Async-friendly.** `await agent.aexecute_task(...)`, `async for chunk in agent.astream_task(...)` and `await manager.agather_tasks([...])` run agents concurrently without blocking your event loop.
 - **Typed, observable tools.** Native tool schemas come from type hints and docstrings, arguments are validated before a method runs, and `ToolPolicy` adds retries with backoff and optional parallel calls (destructive methods are never retried). `AgentCallback` hooks report task, model and tool events.
 - **Batteries included.** 18 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution, checkpoint/resume and maker/checker verification.
 - **Agents that iterate.** `agent.run_loop(goal, requirements, judge)` keeps an agent working until a separate judge, your tests or your own checks confirm every requirement, with stall detection, token and time budgets, resume and optional human approval; it runs locally, over HTTP and inside workflows.
