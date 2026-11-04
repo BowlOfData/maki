@@ -53,7 +53,7 @@ These run the existing synchronous code on worker threads, so behaviour, memory,
 callbacks are identical. Calls to one agent are still serialised by that agent (a stateful agent's
 history never interleaves); different agents overlap. Cancelling an `await` stops the wait, not a
 call already sent to the model, and breaking out of `astream_task` stops the stream after the chunk in
-flight. Worker threads come from the event loop's default executor.
+flight. Worker threads come from the event loop's default executor, and context variables (trace ids, logging context) are carried over. Callbacks and plugin methods run on those threads, so a callback that touches asyncio objects must hand off with `loop.call_soon_threadsafe`.
 
 ## Memory and reasoning helpers
 

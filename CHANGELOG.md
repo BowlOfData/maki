@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Async API: context variables (trace ids, logging context) now reach the worker thread, and calls queued on one busy agent wait on the event loop instead of each occupying an executor thread, so they no longer starve other agents (`aassign_task` and `agather_tasks` included)
+
 ## [0.4.6] - 2026-11-04
 
 ### Added

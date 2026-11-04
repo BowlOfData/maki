@@ -13,12 +13,15 @@ on worker threads so an event loop keeps running while a model answers:
 Different agents run at the same time; calls to one agent are still serialised by that agent's lock.
 Cancelling an awaiting task stops the wait, not the worker thread: a call already sent to the model
 finishes (and is billed). Worker threads come from the loop's default executor, so very many
-concurrent calls queue behind its size.
+concurrent calls queue behind its size (calls waiting on one busy agent occupy a thread each).
+Callbacks and plugin methods run on those threads, not on the loop.
 """
 
 import asyncio
+import contextvars
 import functools
 import threading
+import weakref
 from typing import Any, AsyncIterator, Callable, Iterable, TypeVar
 
 T = TypeVar("T")
@@ -26,9 +29,30 @@ T = TypeVar("T")
 _DATA, _ERROR, _DONE = 0, 1, 2
 
 
+def async_gate(owner: Any) -> asyncio.Lock:
+    """The asyncio lock that serialises *owner*'s async calls on the running event loop.
+
+    An agent runs one task at a time (a threading lock inside ``execute_task``). Waiting for that lock
+    on a worker thread would park one thread per queued call; waiting on this gate parks none, so the
+    executor stays free for other agents. One lock per event loop, created on first use.
+    """
+    gates = owner.__dict__.setdefault("_async_gates", weakref.WeakKeyDictionary())
+    loop = asyncio.get_running_loop()
+    gate = gates.get(loop)
+    if gate is None:
+        gate = gates[loop] = asyncio.Lock()
+    return gate
+
+
 async def run_in_thread(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-    """Call ``fn(*args, **kwargs)`` on a worker thread and await its result."""
-    return await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, *args, **kwargs))
+    """Call ``fn(*args, **kwargs)`` on a worker thread and await its result.
+
+    The caller's context variables (trace ids, logging context) are visible to ``fn``, as with
+    :func:`asyncio.to_thread`.
+    """
+    context = contextvars.copy_context()
+    call = functools.partial(context.run, fn, *args, **kwargs)
+    return await asyncio.get_running_loop().run_in_executor(None, call)
 
 
 def _pump(make_iterable: Callable[[], Iterable[T]], post: Callable[..., None], stop: threading.Event) -> None:
@@ -71,7 +95,9 @@ async def aiterate(make_iterable: Callable[[], Iterable[T]]) -> AsyncIterator[T]
         except RuntimeError:  # the loop is gone; nobody is listening
             stop.set()
 
-    threading.Thread(target=_pump, args=(make_iterable, post, stop), name="maki-aiterate", daemon=True).start()
+    context = contextvars.copy_context()
+    threading.Thread(target=context.run, args=(_pump, make_iterable, post, stop), name="maki-aiterate",
+                     daemon=True).start()
     try:
         while True:
             kind, value = await queue.get()

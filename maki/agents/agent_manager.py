@@ -124,6 +124,14 @@ class AgentManager:
             ValueError: If agent_name or task are invalid, or the agent is not registered.
             RuntimeError: If the agent raises an exception during task execution.
         """
+        agent = self._agent_for_task(agent_name, task)
+        try:
+            return agent.execute_task(task, context)
+        except Exception as e:
+            raise RuntimeError(f"Failed to assign task '{task}' to agent '{agent_name}': {str(e)}") from e
+
+    def _agent_for_task(self, agent_name: str, task: str) -> Any:
+        """The registered agent for *agent_name*, after validating the name and the task."""
         if not isinstance(agent_name, str) or not agent_name.strip():
             raise ValueError("Agent name must be a non-empty string")
 
@@ -133,15 +141,22 @@ class AgentManager:
         agent = self.get_agent(agent_name)
         if not agent:
             raise ValueError(f"Agent '{agent_name}' not found")
-
-        try:
-            return agent.execute_task(task, context)
-        except Exception as e:
-            raise RuntimeError(f"Failed to assign task '{task}' to agent '{agent_name}': {str(e)}") from e
+        return agent
 
     async def aassign_task(self, agent_name: str, task: str, context: Optional[Dict] = None) -> str:
-        """Awaitable :meth:`assign_task`; same validation and errors."""
-        return await run_in_thread(self.assign_task, agent_name, task, context)
+        """Awaitable :meth:`assign_task`; same validation and errors.
+
+        Goes through the agent's own ``aexecute_task`` when it has one (local agents and proxies), so
+        calls queued on one busy agent wait on the event loop instead of occupying worker threads.
+        """
+        agent = self._agent_for_task(agent_name, task)
+        runner = getattr(agent, "aexecute_task", None)
+        if not callable(runner):
+            return await run_in_thread(self.assign_task, agent_name, task, context)
+        try:
+            return await runner(task, context)
+        except Exception as e:
+            raise RuntimeError(f"Failed to assign task '{task}' to agent '{agent_name}': {str(e)}") from e
 
     async def agather_tasks(self, tasks: List[Dict], return_exceptions: bool = False) -> List[Any]:
         """Run tasks on their agents at the same time and return the results in the order given.

@@ -66,6 +66,21 @@ class TestBridges(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ZeroDivisionError):
             await run_in_thread(lambda: 1 / 0)
 
+    async def test_context_variables_reach_the_worker(self):
+        import contextvars
+        trace = contextvars.ContextVar("trace", default="none")
+        trace.set("abc")
+        self.assertEqual(await run_in_thread(trace.get), "abc")
+        self.assertEqual([x async for x in aiterate(lambda: [trace.get()])], ["abc"])
+        agent_seen = []
+
+        class Spy(Slow):
+            def chat(self, *a, **k):
+                agent_seen.append(trace.get())
+                return super().chat(*a, **k)
+        await Agent("a", Spy()).aexecute_task("x")
+        self.assertEqual(agent_seen, ["abc"])
+
     async def test_run_in_thread_does_not_block_the_loop(self):
         ticks = []
 
@@ -143,6 +158,30 @@ class TestAgent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(backend.peak, 1)
         self.assertEqual(len(agent._conversation_memory), 8)  # four whole turns, none interleaved
 
+    async def test_queued_calls_on_one_agent_do_not_starve_other_agents(self):
+        from concurrent.futures import ThreadPoolExecutor
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=2))
+        busy = Agent("busy", Slow(hold=0.25))
+        other = Agent("other", Slow(hold=0.0))
+        queued = [asyncio.create_task(busy.aexecute_task(f"t{i}")) for i in range(6)]
+        await asyncio.sleep(0.05)  # let the busy agent's calls line up
+        started = time.monotonic()
+        await asyncio.wait_for(other.aexecute_task("quick"), 5)
+        self.assertLess(time.monotonic() - started, 0.5)  # not stuck behind five queued busy calls
+        await asyncio.gather(*queued)
+
+    async def test_a_cancelled_waiter_does_not_hold_up_the_queue(self):
+        agent = Agent("a", Slow(hold=0.1))
+        first = asyncio.create_task(agent.aexecute_task("first"))
+        second = asyncio.create_task(agent.aexecute_task("second"))
+        third = asyncio.create_task(agent.aexecute_task("third"))
+        await asyncio.sleep(0.02)
+        second.cancel()
+        self.assertIn("x:", await asyncio.wait_for(third, 3))
+        await first
+        with self.assertRaises(asyncio.CancelledError):
+            await second
+
     async def test_errors_propagate(self):
         backend = Slow()
         backend.fail_times = 1
@@ -201,6 +240,33 @@ class TestManager(unittest.IsolatedAsyncioTestCase):
         results = await self.manager.agather_tasks([{"agent": n, "task": f"task-{n}"} for n in "abc"])
         self.assertLess(time.monotonic() - started, 0.6)  # sequential would be 0.75
         self.assertEqual([r.split("task-")[1][0] for r in results], ["a", "b", "c"])
+
+    async def test_aassign_task_wraps_errors_like_assign_task(self):
+        self.backend.fail_times = 1
+        with self.assertRaises(RuntimeError) as caught:
+            await self.manager.aassign_task("a", "hello")
+        self.assertIsInstance(caught.exception.__cause__, MakiNetworkError)
+        self.assertIn("agent 'a'", str(caught.exception))
+
+    async def test_gathering_many_tasks_for_one_agent_does_not_starve_another(self):
+        from concurrent.futures import ThreadPoolExecutor
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=2))
+        self.backend.hold = 0.2
+        busy = asyncio.create_task(self.manager.agather_tasks([{"agent": "a", "task": f"t{i}"} for i in range(5)]))
+        await asyncio.sleep(0.05)
+        started = time.monotonic()
+        quick = Slow(hold=0.0)
+        self.manager.agents["b"].maki = quick
+        await asyncio.wait_for(self.manager.aassign_task("b", "quick"), 5)
+        self.assertLess(time.monotonic() - started, 0.5)
+        await busy
+
+    async def test_objects_without_an_async_method_still_work(self):
+        class Plain:
+            def execute_task(self, task, context=None):
+                return f"plain:{task}"
+        self.manager.agents["p"] = Plain()
+        self.assertEqual(await self.manager.aassign_task("p", "t"), "plain:t")
 
     async def test_gather_errors(self):
         tasks = [{"agent": "a", "task": "ok"}, {"agent": "missing", "task": "x"}]
