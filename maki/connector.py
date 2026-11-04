@@ -45,9 +45,11 @@ the Maki exception tree:
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import socket
+import time
 import urllib.parse
 from typing import Any, Optional, Union
 
@@ -56,7 +58,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.connection import HTTPConnection, HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 
-from .config import DEFAULT_REQUEST_TIMEOUT
+from .config import DEFAULT_RATE_LIMIT_MAX_WAIT, DEFAULT_RATE_LIMIT_RETRIES, DEFAULT_REQUEST_TIMEOUT
 from .exceptions import (
     MakiAPIError,
     MakiError,
@@ -64,6 +66,7 @@ from .exceptions import (
     MakiTimeoutError,
     MakiValidationError,
     error_for_status,
+    retry_after_of,
 )
 from .utils import Utils
 
@@ -71,6 +74,19 @@ logger = logging.getLogger(__name__)
 
 # How much of an error-response body to include in raised exceptions.
 _DETAIL_LIMIT = 500
+_RATE_LIMIT_BACKOFF = 1.0  # seconds before the first retry when the server gave no Retry-After; doubles
+
+
+def rate_limit_wait(response, attempt: int, max_wait: float) -> Optional[float]:
+    """Seconds to wait before retrying a 429, or None when the server asks for longer than *max_wait*.
+
+    *attempt* is the 0-based number of retries already made. The server's ``Retry-After`` wins;
+    without one the wait is 1s, 2s, 4s, ... (never above *max_wait*).
+    """
+    asked = retry_after_of(response)
+    if asked is None:
+        return min(_RATE_LIMIT_BACKOFF * (2 ** attempt), max_wait)
+    return asked if asked <= max_wait else None
 
 
 def validate_url(url: str, allow_private: bool = False) -> None:
@@ -223,6 +239,9 @@ class Connector:
         headers:       Default headers applied to every request.
         verify:        TLS verification: True, False, or a CA-bundle path.
         cert:          Client certificate (path or (cert, key) tuple).
+        rate_limit_retries: Times a 429 response is retried (default 2; 0 disables).
+        max_retry_wait: Longest wait honoured for a 429, in seconds; a larger ``Retry-After``
+                       is not waited for and the error is raised at once.
     """
 
     def __init__(
@@ -233,8 +252,12 @@ class Connector:
         headers: Optional[dict] = None,
         verify: Union[bool, str] = True,
         cert: Optional[Any] = None,
+        rate_limit_retries: int = DEFAULT_RATE_LIMIT_RETRIES,
+        max_retry_wait: float = DEFAULT_RATE_LIMIT_MAX_WAIT,
     ) -> None:
         self.timeout = timeout if timeout is not None else DEFAULT_REQUEST_TIMEOUT
+        self.rate_limit_retries = max(0, int(rate_limit_retries))
+        self.max_retry_wait = max(0.0, float(max_retry_wait))
         self._ssrf_protect = ssrf_protect
         self._allow_private = allow_private
         self._session = requests.Session()
@@ -287,11 +310,30 @@ class Connector:
         # rather than session.request so that test suites patching
         # requests.Session.post/get keep intercepting these calls.
         sender = getattr(self._session, method.lower(), None)
+        retries = 0
+        while True:
+            response = self._send_once(method, url, sender, kwargs)
+            wait = self._rate_limit_wait(response, retries)
+            if wait is None:
+                break
+            logger.warning("%s %s rate limited (429); retry %d/%d in %.1fs",
+                           method, url, retries + 1, self.rate_limit_retries, wait)
+            try:
+                response.close()  # release the connection before waiting
+            except Exception:
+                pass
+            time.sleep(wait)
+            retries += 1
+        if raise_on_status:
+            self.raise_for_response(response)
+        return response
+
+    def _send_once(self, method: str, url: str, sender, kwargs: dict) -> requests.Response:
+        """One HTTP attempt; transport failures become the Maki exceptions."""
         try:
             if sender is not None:
-                response = sender(url, **kwargs)
-            else:
-                response = self._session.request(method, url, **kwargs)
+                return sender(url, **kwargs)
+            return self._session.request(method, url, **kwargs)
         except MakiError:
             raise  # raised by the pinned adapter at connect time
         except requests.exceptions.Timeout as e:
@@ -300,9 +342,12 @@ class Connector:
             raise MakiNetworkError(f"{method} {url} connection failed: {e}") from e
         except requests.exceptions.RequestException as e:
             raise MakiNetworkError(f"{method} {url} request failed: {e}") from e
-        if raise_on_status:
-            self.raise_for_response(response)
-        return response
+
+    def _rate_limit_wait(self, response, retries: int) -> Optional[float]:
+        """Seconds to wait before retrying this response, or None when it is not retried."""
+        if getattr(response, "status_code", None) != 429 or retries >= self.rate_limit_retries:
+            return None
+        return rate_limit_wait(response, retries, self.max_retry_wait)
 
     def get(self, url: str, **kwargs) -> requests.Response:
         return self.request("GET", url, **kwargs)
@@ -335,7 +380,7 @@ class Connector:
             label = f"HTTP server error {status}"
         else:
             label = f"HTTP client error {status}"
-        raise error_for_status(status, f"{label}: {detail}")
+        raise error_for_status(status, f"{label}: {detail}", retry_after=retry_after_of(response))
 
     @staticmethod
     def iter_lines(response, **kwargs):
@@ -408,8 +453,12 @@ class AsyncConnector:
         ssrf_protect: bool = True,
         allow_private: bool = False,
         headers: Optional[dict] = None,
+        rate_limit_retries: int = DEFAULT_RATE_LIMIT_RETRIES,
+        max_retry_wait: float = DEFAULT_RATE_LIMIT_MAX_WAIT,
     ) -> None:
         self.timeout = timeout if timeout is not None else DEFAULT_REQUEST_TIMEOUT
+        self.rate_limit_retries = max(0, int(rate_limit_retries))
+        self.max_retry_wait = max(0.0, float(max_retry_wait))
         self._ssrf_protect = ssrf_protect
         self._allow_private = allow_private
         self._headers = dict(headers) if headers else None
@@ -423,28 +472,41 @@ class AsyncConnector:
         timeout: Union[int, float, None] = None,
         **kwargs,
     ):
-        import httpx
-
         if self._ssrf_protect:
             validate_url(url, allow_private=self._allow_private)
             if not self._allow_private:
                 parsed = urllib.parse.urlparse(url)
                 _resolve_and_validate(parsed.hostname or "", parsed.port)
         effective_timeout = timeout if timeout is not None else self.timeout
+        retries = 0
+        while True:
+            response = await self._send_once(method, url, effective_timeout, kwargs)
+            wait = None
+            if response.status_code == 429 and retries < self.rate_limit_retries:
+                wait = rate_limit_wait(response, retries, self.max_retry_wait)
+            if wait is None:
+                break
+            logger.warning("%s %s rate limited (429); retry %d/%d in %.1fs",
+                           method, url, retries + 1, self.rate_limit_retries, wait)
+            await asyncio.sleep(wait)
+            retries += 1
+        if raise_on_status:
+            Connector.raise_for_response(response)
+        return response
+
+    async def _send_once(self, method: str, url: str, timeout, kwargs: dict):
+        """One HTTP attempt on a fresh client; transport failures become the Maki exceptions."""
+        import httpx
+
         try:
-            async with httpx.AsyncClient(
-                timeout=effective_timeout, headers=self._headers
-            ) as client:
-                response = await client.request(method, url, **kwargs)
+            async with httpx.AsyncClient(timeout=timeout, headers=self._headers) as client:
+                return await client.request(method, url, **kwargs)
         except httpx.TimeoutException as e:
             raise MakiTimeoutError(f"{method} {url} timed out: {e}") from e
         except httpx.ConnectError as e:
             raise MakiNetworkError(f"{method} {url} connection failed: {e}") from e
         except httpx.RequestError as e:
             raise MakiNetworkError(f"{method} {url} request failed: {e}") from e
-        if raise_on_status:
-            Connector.raise_for_response(response)
-        return response
 
     async def get(self, url: str, **kwargs):
         return await self.request("GET", url, **kwargs)

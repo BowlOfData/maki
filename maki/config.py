@@ -47,6 +47,10 @@ DEFAULT_OLLAMA_BASE_URL = os.getenv(
 DEFAULT_MODEL = os.getenv("MAKI_DEFAULT_MODEL", "gemma3")
 DEFAULT_TEMPERATURE = _get_float("MAKI_DEFAULT_TEMPERATURE", 0.7)
 DEFAULT_REQUEST_TIMEOUT = _get_int("MAKI_REQUEST_TIMEOUT", 120)
+# A 429 from an HTTP backend is retried this many times, waiting the server's Retry-After (or a short
+# backoff); a Retry-After above the cap is not waited for and the error is raised at once.
+DEFAULT_RATE_LIMIT_RETRIES = _get_int("MAKI_RATE_LIMIT_RETRIES", 2)
+DEFAULT_RATE_LIMIT_MAX_WAIT = _get_float("MAKI_RATE_LIMIT_MAX_WAIT", 30.0)
 DEFAULT_HTTP_TIMEOUT = _get_int("MAKI_HTTP_TIMEOUT", 10)
 DEFAULT_HTTP_READ_TIMEOUT = _get_int("MAKI_HTTP_READ_TIMEOUT", 60)
 

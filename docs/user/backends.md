@@ -30,6 +30,17 @@ arguments (`base_url`, `api_key`, `config`, ...) go to the backend's constructor
 YAML file, `model: "openai:gpt-4o"` without a `backend:` key does the same; an explicit
 `backend:` keeps `model` verbatim, so `backend: ollama` with `model: gemma4:26b` still works.
 
+## Rate limits (429)
+
+A 429 is retried before it reaches your code. The OpenAI, Anthropic and OpenRouter backends rely on
+their SDKs (two retries, honouring `Retry-After`); the HTTP backends (Ollama, llama.cpp, vLLM) do the
+same through `Connector`: up to `MAKI_RATE_LIMIT_RETRIES` (default 2) retries, waiting the server's
+`Retry-After` or 1s, 2s, 4s without one. A `Retry-After` above `MAKI_RATE_LIMIT_MAX_WAIT` (default
+30s) is not waited for and the error is raised at once. When retries run out the call raises
+`MakiAPIError` with `status_code == 429` and `retry_after` (seconds, or None) set, and
+[`FallbackBackend`](#falling-back-to-another-backend) moves to the next backend and keeps the limited
+one out of rotation for at least that long.
+
 ## Falling back to another backend
 
 `FallbackBackend` tries backends in order and moves on when one fails with a transient error

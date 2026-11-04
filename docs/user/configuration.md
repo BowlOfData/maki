@@ -14,6 +14,8 @@ Shared runtime defaults live in `maki/config.py`. Every value can be overridden 
 | `VLLM_API_KEY` | vLLM API key, only if the server was started with `--api-key` |
 | `LLAMACPP_API_KEY` | llama.cpp API key, only if the server was started with `--api-key` |
 | `MAKI_DEFAULT_MODEL` | Default model name |
+| `MAKI_RATE_LIMIT_RETRIES` | Times an HTTP backend (Ollama, llama.cpp, vLLM) retries a 429 response (default `2`, `0` disables) |
+| `MAKI_RATE_LIMIT_MAX_WAIT` | Longest `Retry-After` honoured for a 429, in seconds (default `30`); a longer request is raised at once |
 | `MAKI_DEFAULT_TEMPERATURE` | Sampling temperature |
 | `MAKI_REQUEST_TIMEOUT` | Per-request timeout (seconds) |
 | `MAKI_HTTP_TIMEOUT` | Low-level HTTP timeout |

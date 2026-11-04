@@ -176,9 +176,12 @@ class FallbackBackend(LLMBackend):
         return [b for b in candidates if id(b) not in cooling] + [b for b in candidates if id(b) in cooling]
 
     def _failed(self, backend: LLMBackend, exc: BaseException, more: bool) -> None:
+        # A 429 that names a wait keeps that backend out of rotation at least that long.
+        asked = getattr(exc, "retry_after", None)
+        pause = max(self.cooldown, asked) if self.cooldown and isinstance(asked, (int, float)) else self.cooldown
         with self._lock:
-            if self.cooldown:
-                self._down_until[id(backend)] = time.monotonic() + self.cooldown
+            if pause:
+                self._down_until[id(backend)] = time.monotonic() + pause
         logger.warning("%s(%s) failed (%s: %s)%s", type(backend).__name__, backend.model,
                        type(exc).__name__, exc, "; trying the next backend" if more else "")
 
