@@ -20,6 +20,14 @@ print(agent.execute_task("Review this design: a plugin system with file access."
 
 With `stateful=True` the agent keeps token-budgeted conversation history between tasks. To send that history as chat messages, or to cap plugin results and stored history, pass a `MemoryPolicy`; see [Agent memory](agent-memory.md).
 
+`AgentManager.add_agent()` accepts the same options as `Agent` (`stateful`, `allow_dangerous_tools`, `memory`, `tool_policy`, `callbacks`), so a manager-created agent needs no setup afterwards:
+
+```python
+manager.add_agent("Researcher", role="researcher", stateful=True,
+                  memory={"token_budget": 2000, "summarize_older": True},
+                  tool_policy={"retries": 2, "parallel": True})
+```
+
 ## Memory and reasoning helpers
 
 ```python

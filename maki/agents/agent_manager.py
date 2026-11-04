@@ -9,11 +9,14 @@ import json
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..backend import LLMBackend
+from ..callbacks import AgentCallback
+from ..objects import MemoryPolicy
 from .agent import Agent
+from .tool_policy import ToolPolicy
 from .workflow import WorkflowTask, WorkflowState, TaskStatus, TaskOutput
 from .approvals import ApprovalDecision, ApprovalStore
 from .loop import _fingerprint, resume_loop, run_loop
@@ -46,7 +49,11 @@ class AgentManager:
         logger.info("AgentManager initialized")
 
     def add_agent(self, name: str, role: str = "", instructions: str = "",
-                  maki_instance: LLMBackend = None, use_streaming: bool = False) -> Agent:
+                  maki_instance: LLMBackend = None, use_streaming: bool = False, *,
+                  stateful: bool = False, allow_dangerous_tools: bool = False,
+                  memory: Optional[Union[MemoryPolicy, dict]] = None,
+                  tool_policy: Optional[Union[ToolPolicy, dict]] = None,
+                  callbacks: Optional[List[AgentCallback]] = None) -> Agent:
         """
         Add a new agent to the manager.
 
@@ -59,6 +66,8 @@ class AgentManager:
             use_streaming: If True, execute_task uses streaming internally so the timeout
                            applies per-chunk rather than to the full response. Useful for
                            agents with large prompts or long expected outputs.
+            stateful, allow_dangerous_tools, memory, tool_policy, callbacks: Passed to
+                ``Agent`` unchanged (see its documentation).
 
         Returns:
             The created Agent instance
@@ -77,7 +86,9 @@ class AgentManager:
         if not (isinstance(maki_to_use, LLMBackend) or hasattr(maki_to_use, 'request')):
             raise TypeError("maki_instance must implement the LLMBackend interface")
 
-        agent = Agent(name, maki_to_use, role, instructions, use_streaming=use_streaming)
+        agent = Agent(name, maki_to_use, role, instructions, stateful=stateful, use_streaming=use_streaming,
+                      allow_dangerous_tools=allow_dangerous_tools, memory=memory, tool_policy=tool_policy,
+                      callbacks=callbacks)
         self.agents[name] = agent
         logger.info(f"Added agent '{name}' with role '{role}'")
         return agent
