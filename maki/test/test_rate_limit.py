@@ -1,6 +1,7 @@
 """429 handling: Retry-After parsing, Connector/AsyncConnector retries, error metadata, fallback cooldown."""
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -30,6 +31,14 @@ class TestParse(unittest.TestCase):
         with patch("maki.exceptions.time.time", return_value=1_000_000_000):
             self.assertAlmostEqual(parse_retry_after("Sun, 09 Sep 2001 01:46:50 GMT"), 10.0, places=0)
         self.assertEqual(parse_retry_after("Mon, 01 Jan 1990 00:00:00 GMT"), 0.0)
+
+    def test_a_zone_less_date_is_read_as_utc(self):
+        with patch("maki.exceptions.time.time", return_value=1_000_000_000):
+            self.assertAlmostEqual(parse_retry_after("Sun, 09 Sep 2001 01:46:50 -0000"), 10.0, places=0)
+
+    def test_plain_dict_headers_are_matched_case_insensitively(self):
+        self.assertEqual(retry_after_of(SimpleNamespace(headers={"Retry-After": "6"})), 6.0)
+        self.assertEqual(retry_after_of(SimpleNamespace(headers={"RETRY-AFTER": "6"})), 6.0)
 
     def test_from_responses_and_sdk_errors(self):
         self.assertEqual(retry_after_of(response(429, {"Retry-After": "7"})), 7.0)
@@ -101,6 +110,20 @@ class TestSyncConnector(unittest.TestCase):
         c = self._connector([response(429), response(429), response(429)])
         with patch("maki.connector.time.sleep"):
             self.assertEqual(c.post("http://x/y", raise_on_status=False).status_code, 429)
+
+    def test_a_consumed_body_is_not_replayed(self):
+        import io
+        for kwargs in ({"data": io.BytesIO(b"x")}, {"data": iter([b"x"])}, {"files": {"f": io.BytesIO(b"x")}},
+                       {"files": {"f": ("n", io.BytesIO(b"x"))}}):
+            with self.subTest(kwargs=list(kwargs)):
+                c = self._connector([response(429)])
+                with patch("maki.connector.time.sleep") as sleep, self.assertRaises(MakiAPIError):
+                    c.post("http://x/y", **kwargs)
+                sleep.assert_not_called()
+                self.assertEqual(c._session.post.call_count, 1)
+        c = self._connector([response(429), response(200)])  # json and bytes bodies replay fine
+        with patch("maki.connector.time.sleep"):
+            self.assertEqual(c.post("http://x/y", json={"a": 1}, data=None).status_code, 200)
 
     def test_streaming_responses_are_retried_and_closed(self):
         first = response(429)

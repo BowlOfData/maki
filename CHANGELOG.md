@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- 429 handling: the HTTP backends (`Connector` and `AsyncConnector`) retry a 429 up to `MAKI_RATE_LIMIT_RETRIES` times (default 2), waiting the server's `Retry-After` or a 1s/2s/4s backoff, and raise at once when `Retry-After` exceeds `MAKI_RATE_LIMIT_MAX_WAIT` (default 30s). `MakiAPIError.retry_after` carries the server's value for every backend (SDK ones included), and `FallbackBackend` keeps a rate-limited backend out of rotation at least that long. `Retry-After` accepts seconds or an HTTP date
+- 429 handling: the HTTP backends (`Connector` and `AsyncConnector`) retry a 429 up to `MAKI_RATE_LIMIT_RETRIES` times (default 2), waiting the server's `Retry-After` or a 1s/2s/4s backoff, and raise at once when `Retry-After` exceeds `MAKI_RATE_LIMIT_MAX_WAIT` (default 30s). `MakiAPIError.retry_after` carries the server's value for every backend (SDK ones included), and `FallbackBackend` keeps a rate-limited backend out of rotation at least that long. `Retry-After` accepts seconds or an HTTP date (a zone-less date is read as UTC). A request whose body is a stream or file is never replayed, so it is not retried
 - `AgentManager.add_agent()` accepts `stateful`, `allow_dangerous_tools`, `memory`, `tool_policy` and `callbacks` (keyword-only) and passes them to `Agent`, so a manager-created agent no longer needs them set afterwards
 
 ## [0.4.5] - 2026-11-03

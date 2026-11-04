@@ -2,6 +2,7 @@
 Custom exception classes for the Maki framework
 """
 
+import datetime
 import email.utils
 import time
 from typing import Any, Optional
@@ -50,6 +51,8 @@ def parse_retry_after(value: Any) -> Optional[float]:
             when = email.utils.parsedate_to_datetime(text)
         except (TypeError, ValueError):
             return None
+        if when.tzinfo is None:  # "-0000" means UTC with no zone information; naive would read as local time
+            when = when.replace(tzinfo=datetime.timezone.utc)
         seconds = when.timestamp() - time.time()
     if seconds != seconds or seconds in (float("inf"), float("-inf")):
         return None
@@ -60,8 +63,13 @@ def retry_after_of(response_or_error: Any) -> Optional[float]:
     """The ``Retry-After`` of an HTTP response, or of an SDK error that carries one (``error.response``)."""
     response = getattr(response_or_error, "response", response_or_error)
     headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
     try:
-        return parse_retry_after(headers.get("retry-after")) if headers is not None else None
+        value = headers.get("retry-after")
+        if value is None and isinstance(headers, dict):  # a plain dict is case-sensitive; HTTP headers are not
+            value = next((v for k, v in headers.items() if str(k).lower() == "retry-after"), None)
+        return parse_retry_after(value)
     except Exception:
         return None
 

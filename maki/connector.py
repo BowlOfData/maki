@@ -77,6 +77,22 @@ _DETAIL_LIMIT = 500
 _RATE_LIMIT_BACKOFF = 1.0  # seconds before the first retry when the server gave no Retry-After; doubles
 
 
+def _replayable(kwargs: dict) -> bool:
+    """False when the request body is a stream or file that a first attempt may have consumed."""
+    for key in ("data", "content"):
+        body = kwargs.get(key)
+        if body is not None and (hasattr(body, "read") or hasattr(body, "__next__") or hasattr(body, "__aiter__")):
+            return False
+    files = kwargs.get("files")
+    if files:
+        parts = files.values() if isinstance(files, dict) else files
+        for part in parts:
+            item = part[1] if isinstance(part, tuple) and len(part) > 1 else part
+            if hasattr(item, "read"):
+                return False
+    return True
+
+
 def rate_limit_wait(response, attempt: int, max_wait: float) -> Optional[float]:
     """Seconds to wait before retrying a 429, or None when the server asks for longer than *max_wait*.
 
@@ -311,9 +327,10 @@ class Connector:
         # requests.Session.post/get keep intercepting these calls.
         sender = getattr(self._session, method.lower(), None)
         retries = 0
+        retry_ok = _replayable(kwargs)
         while True:
             response = self._send_once(method, url, sender, kwargs)
-            wait = self._rate_limit_wait(response, retries)
+            wait = self._rate_limit_wait(response, retries) if retry_ok else None
             if wait is None:
                 break
             logger.warning("%s %s rate limited (429); retry %d/%d in %.1fs",
@@ -479,10 +496,11 @@ class AsyncConnector:
                 _resolve_and_validate(parsed.hostname or "", parsed.port)
         effective_timeout = timeout if timeout is not None else self.timeout
         retries = 0
+        retry_ok = _replayable(kwargs)
         while True:
             response = await self._send_once(method, url, effective_timeout, kwargs)
             wait = None
-            if response.status_code == 429 and retries < self.rate_limit_retries:
+            if retry_ok and response.status_code == 429 and retries < self.rate_limit_retries:
                 wait = rate_limit_wait(response, retries, self.max_retry_wait)
             if wait is None:
                 break
