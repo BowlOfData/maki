@@ -30,6 +30,37 @@ arguments (`base_url`, `api_key`, `config`, ...) go to the backend's constructor
 YAML file, `model: "openai:gpt-4o"` without a `backend:` key does the same; an explicit
 `backend:` keeps `model` verbatim, so `backend: ollama` with `model: gemma4:26b` still works.
 
+## Typed messages and tool calls
+
+Providers disagree on how a tool call looks (OpenAI wants JSON-string arguments and `tool` messages,
+Anthropic wants `tool_use` and `tool_result` blocks, Ollama takes argument objects). Maki's tool loop
+therefore works on provider-neutral `Message` objects and each backend converts them:
+
+```python
+from maki import Message, ToolCall
+
+history = [
+    Message("user", "What is in notes.txt?"),
+    Message("assistant", "", tool_calls=[ToolCall("c1", "files__read", {"path": "notes.txt"})]),
+    Message("tool", "buy milk", tool_call_id="c1", name="files__read"),
+]
+response = backend.chat_turn(history, tool_specs, system="Be brief.")
+response.tool_calls    # the model's next tool requests, each with an id (invented when the provider has none)
+response.content       # its answer when it asks for none
+```
+
+`chat_turn()` returns a normal `LLMResponse` with token counts on every round, tool rounds included
+(they used not to be counted). The agent uses it automatically for backends that set
+`supports_typed_messages` (all built-in ones except HuggingFace, which has no native tools). Because
+the messages are neutral, a `FallbackBackend` can hand a half-finished tool loop to another provider
+as it is. The older `chat_with_tools` / `append_tool_results` pair still works and is what a custom
+backend without typed support keeps using; to opt in, set `supports_typed_messages = True` and implement
+`to_wire_messages(messages)` (and `_chat_with_tools_full` for exact token counts on tool rounds). The
+shared conformance suite then checks it.
+
+Callbacks: with a typed backend `on_model_start` receives the typed `Message` list and `on_model_end`
+receives the full response (token counts included) instead of None on a tool round.
+
 ## Rate limits (429)
 
 A 429 is retried before it reaches your code. The OpenAI, Anthropic and OpenRouter backends rely on

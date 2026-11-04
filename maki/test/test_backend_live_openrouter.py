@@ -107,6 +107,49 @@ class TestLiveOpenRouter(unittest.TestCase):
         self.assertEqual(calculator.calls, [(17, 25)], "the model must call the tool with typed ints")
         self.assertIn("42", result)
 
+    def test_typed_tool_turn_round_trip(self):
+        specs = [{"name": "math__add", "description": "Add two integers.",
+                  "parameters": {"type": "object", "required": ["a", "b"],
+                                 "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}}}]
+        messages = [Message("user", "Use the tool to add 17 and 25.")]
+        first = self.llm.chat_turn(messages, specs, system="Always use the provided tool for arithmetic.")
+        self.assertEqual(len(first.tool_calls), 1)
+        call = first.tool_calls[0]
+        self.assertEqual((call.name, call.args), ("math__add", {"a": 17, "b": 25}))
+        self.assertTrue(call.id)
+        self.assertGreater(first.total_tokens, 0)
+        messages += [Message("assistant", first.content, tool_calls=[call]),
+                     Message("tool", "42", tool_call_id=call.id, name=call.name)]
+        final = self.llm.chat_turn(messages, specs)
+        self.assertFalse(final.tool_calls)
+        self.assertIn("42", final.content)
+
+    def test_tool_history_is_replayed_to_the_provider_without_errors(self):
+        from maki.objects import MemoryPolicy
+
+        class Calculator:
+            ALLOWED_METHODS = ["add"]
+            DANGEROUS_METHODS = None
+
+            def add(self, a: int, b: int) -> str:
+                """Add two integers.
+
+                Args:
+                    a: first number
+                    b: second number
+                """
+                return str(a + b)
+
+        agent = Agent("calc", self.llm, stateful=True, instructions="Always use the provided tool for arithmetic.",
+                      memory=MemoryPolicy(history_mode="messages", tool_history=True, tool_result_chars=200))
+        agent.plugins["math"] = Calculator()
+        agent.execute_task("What is 17 plus 25? Use the tool.", use_plugins=True)
+        stored = agent._conversation_memory.messages()[1]
+        self.assertTrue(stored.tool_trace, "the tool loop behind the answer is remembered")
+        # the provider must accept the replayed assistant tool call + tool result
+        answer = agent.execute_task("Now add 1 and 2. Use the tool.", use_plugins=True)
+        self.assertIn("3", answer)
+
     def test_unknown_model_is_an_api_error(self):
         from maki.makiOpenRouter import MakiOpenRouter
         with self.assertRaises(MakiAPIError) as caught:

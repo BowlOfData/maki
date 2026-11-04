@@ -284,6 +284,34 @@ class MakiOpenAI(LLMBackend):
             })
         return schemas
 
+    supports_typed_messages = True
+
+    def to_wire_messages(self, messages: list) -> list:
+        """Typed messages as OpenAI chat messages (tool calls with JSON-string arguments, ``tool`` results)."""
+        import json as _json
+        wire = []
+        for m in messages:
+            if m.role == "tool":
+                wire.append({"role": "tool", "tool_call_id": m.tool_call_id or "", "content": m.content})
+            elif m.role == "assistant" and m.tool_calls:
+                wire.append({
+                    "role": "assistant",
+                    "content": m.content,
+                    "tool_calls": [
+                        {"id": tc.id, "type": "function",
+                         "function": {"name": tc.name, "arguments": _json.dumps(tc.args)}}
+                        for tc in m.tool_calls
+                    ],
+                })
+            elif m.images and m.role == "user":
+                content: list = [{"type": "text", "text": m.content}]
+                content.extend({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                               for b64 in m.images)
+                wire.append({"role": "user", "content": content})
+            else:
+                wire.append({"role": m.role, "content": m.content})
+        return wire
+
     def chat_with_tools(
         self,
         messages: list,
@@ -297,6 +325,18 @@ class MakiOpenAI(LLMBackend):
         Returns ``(LLMResponse, None, messages)`` on a text answer, or
         ``(None, [ToolCall, ...], messages)`` when tool calls are requested.
         """
+        response, tool_calls, updated = self._chat_with_tools_full(messages, tools, system=system, config=config)
+        return (None, tool_calls, updated) if tool_calls else (response, None, updated)
+
+    def _chat_with_tools_full(
+        self,
+        messages: list,
+        tools: list,
+        *,
+        system: Optional[str] = None,
+        config: Optional[GenerationConfig] = None,
+    ):
+        """:meth:`chat_with_tools` with a real response (token counts included) on tool rounds too."""
         import time as _t
         if self._rate_limiter:
             self._rate_limiter.acquire()
@@ -334,12 +374,12 @@ class MakiOpenAI(LLMBackend):
         raw_tool_calls = msg.tool_calls
         updated = list(messages) + [self._assistant_entry(msg)]
 
+        result = self._parse_response(response, elapsed)
         if raw_tool_calls and choice.finish_reason == "tool_calls":
             tool_calls = self._tool_calls_from(raw_tool_calls)
             log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
-            return None, tool_calls, updated
+            return result, tool_calls, updated
 
-        result = self._parse_response(response, elapsed)
         log.info("chat_with_tools (text): %.2fs, %d tokens", elapsed, result.total_tokens)
         return result, None, updated
 

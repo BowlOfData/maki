@@ -27,6 +27,7 @@ memory:                     # optional; limits on what the agent keeps and sends
   older_turn_chars: 200
   summarize_older: true     # fold evicted turns into a running summary (one extra model call)
   summary_chars: 800        # cap on that summary
+  tool_history: true        # with history_mode: messages: replay each answer's tool calls and results
 tool_policy:                # optional; how tool calls run
   max_rounds: 8             # model/tool round trips before a final answer is forced
   retries: 2                # extra attempts for transient tool errors (network, timeout)

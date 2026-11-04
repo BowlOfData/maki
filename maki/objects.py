@@ -18,20 +18,99 @@ class BackendType(str, Enum):
 
 
 @dataclass
+class ToolCall:
+    """One native tool-call request emitted by the model.
+
+    ``id`` carries the per-call identifier used by OpenAI and Anthropic to
+    correlate results; backends that have none (Ollama) leave it empty, and
+    :meth:`LLMBackend.chat_turn` fills one in so a turn can move between backends.
+    ``name`` uses the ``"plugin__method"`` convention (double-underscore
+    separator) so plugin names that themselves contain underscores remain
+    unambiguous.
+    """
+    id: str
+    name: str
+    args: dict
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "args": self.args}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ToolCall':
+        return cls(id=data.get("id", ""), name=data["name"], args=data.get("args") or {})
+
+
+@dataclass
 class Message:
-    role: str          # "system" | "user" | "assistant"
+    """One chat message, in a provider-neutral form every backend converts for its own API.
+
+    Besides plain ``user``/``assistant``/``system`` text, a message can carry a tool exchange:
+
+    * an ``assistant`` message with ``tool_calls`` is the model asking for tools (``content`` is any
+      text it wrote alongside);
+    * a ``tool`` message holds one tool's result in ``content``, with ``tool_call_id`` naming the
+      call it answers (and ``name`` the tool);
+    * an ``assistant`` message stored in conversation memory may carry ``tool_trace``: the
+      intermediate messages of the tool loop that produced it (see ``MemoryPolicy.tool_history``).
+
+    All new fields are optional and only serialised when set, so plain messages and old snapshots
+    are unchanged.
+    """
+    role: str          # "system" | "user" | "assistant" | "tool"
     content: str
     images: Optional[list[str]] = field(default=None, repr=False)  # base64-encoded images for vision models
+    tool_calls: Optional[list[ToolCall]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
+    tool_trace: Optional[list['Message']] = field(default=None, repr=False)
 
     def to_dict(self) -> dict:
         d: dict = {"role": self.role, "content": self.content}
         if self.images:
             d["images"] = self.images
+        if self.tool_calls:
+            d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
+        if self.tool_call_id is not None:
+            d["tool_call_id"] = self.tool_call_id
+        if self.name is not None:
+            d["name"] = self.name
+        if self.tool_trace:
+            d["tool_trace"] = [m.to_dict() for m in self.tool_trace]
         return d
 
     @classmethod
     def from_dict(cls, data: dict) -> 'Message':
-        return cls(role=data["role"], content=data["content"], images=data.get("images"))
+        calls = data.get("tool_calls")
+        trace = data.get("tool_trace")
+        return cls(role=data["role"], content=data["content"], images=data.get("images"),
+                   tool_calls=[ToolCall.from_dict(c) for c in calls] if calls else None,
+                   tool_call_id=data.get("tool_call_id"), name=data.get("name"),
+                   tool_trace=[cls.from_dict(m) for m in trace] if trace else None)
+
+    def size(self) -> int:
+        """Characters this message adds to a prompt, its stored tool trace included."""
+        total = len(self.content)
+        for step in self.tool_trace or ():
+            total += len(step.content)
+            total += sum(len(tc.name) + len(json.dumps(tc.args, default=str)) for tc in step.tool_calls or ())
+        return total
+
+
+def expand_tool_traces(messages: list) -> list:
+    """*messages* with each stored ``tool_trace`` laid out in the order it happened.
+
+    A remembered answer carries the tool loop that produced it; a model should see that loop
+    (assistant tool calls, tool results) *before* the answer, so the trace messages are inserted ahead
+    of their assistant message and the stored answer itself is passed on without its trace.
+    """
+    out: list = []
+    for m in messages:
+        if m.tool_trace:
+            out.extend(m.tool_trace)
+            m = Message(m.role, m.content, m.images, tool_calls=m.tool_calls, tool_call_id=m.tool_call_id,
+                        name=m.name)
+        out.append(m)
+    return out
 
 
 class ConversationMemory:
@@ -127,9 +206,9 @@ class ConversationMemory:
         count = len(self._messages)
         total = max(1, len(self.summary) // 4) if self.summary else 0
         for i, m in enumerate(self._messages):
-            length = len(m.content)
-            if self._is_older(i, count):
-                length = min(length, self._older_chars + self._CLIP_MARKER_CHARS)
+            length = m.size()
+            if self._is_older(i, count):  # shortened turns lose their tool trace too
+                length = min(len(m.content), self._older_chars + self._CLIP_MARKER_CHARS)
             total += max(1, length // 4)
         return total
 
@@ -199,8 +278,9 @@ class ConversationMemory:
         count = len(self._messages)
         out = []
         for i, m in enumerate(self._messages):
-            content = clip_text(m.content, self._older_chars) if self._is_older(i, count) else m.content
-            out.append(Message(m.role, content, m.images))
+            older = self._is_older(i, count)
+            content = clip_text(m.content, self._older_chars) if older else m.content
+            out.append(Message(m.role, content, m.images, tool_trace=None if older else m.tool_trace))
         unsummarized = self.dropped_pairs - self.summarized_pairs
         notes = []
         if self.summary and include_summary:
@@ -208,7 +288,8 @@ class ConversationMemory:
         if unsummarized and out:
             notes.append(f"[{unsummarized} earlier turn(s) dropped]")
         if notes and out:
-            out[0] = Message(out[0].role, f"{' '.join(notes)} {out[0].content}", out[0].images)
+            out[0] = Message(out[0].role, f"{' '.join(notes)} {out[0].content}", out[0].images,
+                             tool_trace=out[0].tool_trace)
         return out
 
     def format_as_text(self) -> str:
@@ -308,6 +389,11 @@ class MemoryPolicy:
             model call (counted in ``agent.usage``) before a task that follows an eviction; if that
             call fails the turns are dropped as before. Stateful agents only.
         summary_chars: Maximum length of that summary (default 1200). It counts against the budget.
+        tool_history: Keep the tool calls and results behind each answer in the conversation and
+            replay them to the model, clipped to ``tool_result_chars``, so it can see which tools it
+            already used. Needs ``history_mode="messages"`` and a stateful agent on a backend with typed
+            messages (``chat_turn``);
+            older turns shortened by ``recent_turns`` lose their trace. Costs prompt tokens.
     """
     history_mode: str = "text"
     token_budget: Optional[int] = None
@@ -318,6 +404,7 @@ class MemoryPolicy:
     older_turn_chars: Optional[int] = None
     summarize_older: bool = False
     summary_chars: Optional[int] = None
+    tool_history: bool = False
 
     HISTORY_MODES = ("text", "messages")
 
@@ -333,6 +420,10 @@ class MemoryPolicy:
             raise ValueError("recent_turns and older_turn_chars must be set together")
         if not isinstance(self.summarize_older, bool):
             raise ValueError("summarize_older must be true or false")
+        if not isinstance(self.tool_history, bool):
+            raise ValueError("tool_history must be true or false")
+        if self.tool_history and self.history_mode != "messages":
+            raise ValueError("tool_history needs history_mode='messages' (tool turns are replayed as chat messages)")
         if self.summary_chars is not None and not self.summarize_older:
             raise ValueError("summary_chars needs summarize_older=True")
 
@@ -476,6 +567,7 @@ class LLMResponse:
     backend: BackendType = BackendType.OLLAMA
     reasoning: Optional[str] = None  # thinking text, when the backend returns it separately
     cached_tokens: int = 0  # prompt tokens served from the provider's prompt cache, when reported
+    tool_calls: Optional[list] = None  # list[ToolCall] when the model asked for tools (chat_turn)
 
     def __str__(self) -> str:
         return self.content
@@ -485,7 +577,7 @@ class LLMResponse:
         return self.completion_tokens / self.elapsed_seconds if self.elapsed_seconds else 0.0
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "content": self.content,
             "model": self.model,
             "prompt_tokens": self.prompt_tokens,
@@ -497,6 +589,9 @@ class LLMResponse:
             "reasoning": self.reasoning,
             "cached_tokens": self.cached_tokens,
         }
+        if self.tool_calls:
+            data["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> 'LLMResponse':
@@ -511,6 +606,7 @@ class LLMResponse:
             backend=BackendType(data["backend"]),
             reasoning=data.get("reasoning"),
             cached_tokens=data.get("cached_tokens", 0),
+            tool_calls=[ToolCall.from_dict(c) for c in data["tool_calls"]] if data.get("tool_calls") else None,
         )
 
 
@@ -561,18 +657,3 @@ class RateLimiter:
                     return
                 wait = (1.0 - self._tokens) / self._refill_rate
             await asyncio.sleep(wait)
-
-
-@dataclass
-class ToolCall:
-    """One native tool-call request emitted by the model.
-
-    ``id`` carries the per-call identifier used by OpenAI and Anthropic to
-    correlate results; it is an empty string for Ollama which has none.
-    ``name`` uses the ``"plugin__method"`` convention (double-underscore
-    separator) so plugin names that themselves contain underscores remain
-    unambiguous.
-    """
-    id: str
-    name: str
-    args: dict

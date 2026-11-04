@@ -54,6 +54,8 @@ class OllamaAdapter(Adapter):
     """Sync calls run the real Connector over a faked requests session; async calls run the real
     AsyncConnector over an httpx MockTransport, so both error paths are the production ones."""
 
+    keeps_call_ids = False
+
     def __init__(self, tc):
         import httpx
         self.tc = tc

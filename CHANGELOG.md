@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Typed messages: `Message` can carry `tool_calls`, a tool result (`role="tool"` with `tool_call_id` and `name`) and a stored `tool_trace`; `ToolCall` and `LLMResponse` (new `tool_calls` field) serialise them. New fields are written only when set, so plain messages and old snapshots are unchanged
+- `LLMBackend.chat_turn(messages, tool_specs, system=, config=)`: one tool-aware round over typed messages that returns an `LLMResponse` with `tool_calls` (every call gets an id, invented when the provider has none) and real token counts on tool rounds. Implemented by the Ollama, OpenAI, OpenRouter, llama.cpp, vLLM and Anthropic backends (`supports_typed_messages`, `to_wire_messages`); the dict-based `chat_with_tools` / `append_tool_results` still work for custom backends
+- The agent's native tool loop runs on typed messages for those backends, and a `FallbackBackend` of typed backends hands a half-finished tool loop to the next backend as it is (no flattening to text)
+- `MemoryPolicy(tool_history=True)` (needs `history_mode="messages"`): the tool calls and results behind each answer are remembered, clipped to `tool_result_chars`, counted against the token budget, replayed ahead of that answer and described to the summariser. Also settable under `memory:` in agent YAML
+- Conformance suite: typed-turn contract tests for every backend adapter; live typed tool-round and tool-history checks against Ollama and OpenRouter
+
+### Changed
+- Tool-call rounds are now counted in `agent.usage` (they were not before: only text answers were)
+- With a typed backend, `AgentCallback.on_model_start` receives typed `Message` objects instead of provider dicts, and `on_model_end` receives the response (with token counts) on tool rounds instead of None
+- Anthropic: the text of a response is the join of its text blocks (a response that opens with a `tool_use` or thinking block no longer raises)
+
 ## [0.4.6] - 2026-11-04
 
 ### Added

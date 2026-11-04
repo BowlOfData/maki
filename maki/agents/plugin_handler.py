@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..callbacks import fire
 from ..exceptions import MakiValidationError
-from ..objects import ToolCall, clip_text
+from ..objects import Message, ToolCall, clip_text
 from ..usage import TokenRelay
 from .tool_policy import ToolPolicy
 from .tool_schema import coerce_args, method_description, parameters_schema
@@ -509,20 +509,8 @@ class PluginHandler:
             relay.settle()
         return list(zip(tool_calls, results))
 
-    def execute_with_native_tools(
-        self, task: str, context: Optional[Dict], system: str
-    ) -> str:
-        """Drive the native tool-calling loop (up to ``ToolPolicy.max_rounds`` rounds, default ``_MAX_TOOL_ROUNDS``).
-
-        Builds the initial user message without a TOOL: prompt section,
-        then alternates between ``chat_with_tools`` calls and plugin
-        executions.  After the maximum rounds a final call with an empty
-        tools list forces a plain-text answer.
-        """
-        tool_specs = self._build_tool_specs()
-        tools = self.maki.to_tool_schemas(tool_specs)
-
-        # Build the initial user message without the TOOL: prompt section.
+    def _native_user_content(self, task: str, context: Optional[Dict]) -> str:
+        """The user message of a native tool loop: the task, its context and any text-mode history."""
         parts = [task]
         if context:
             parts.append(f"Context: {json.dumps(context)}")
@@ -530,10 +518,60 @@ class PluginHandler:
         history_section = getattr(self, "_build_history_section", lambda: "")()
         if history_section:
             parts.append(history_section)
-        user_content = "\n\n".join(parts)
+        return "\n\n".join(parts)
+
+    def _run_typed_tool_loop(self, task: str, context: Optional[Dict], system: str, tool_specs: List[dict]) -> str:
+        """The native tool loop over typed messages: the backend converts to and from its own format.
+
+        Nothing in here depends on a provider's message shape, so the same loop runs on any backend
+        with ``supports_typed_messages`` (and a fallback chain can change backend between rounds).
+        The messages after the user turn are kept in ``_last_tool_trace`` for the conversation memory.
+        """
+        prior = getattr(self, "_history_messages", lambda: None)() or []
+        messages: List[Message] = list(prior) + [Message("user", self._native_user_content(task, context))]
+        start = len(messages)
+        self._last_tool_trace = []
+        callbacks = self._callbacks()
+        for _ in range(self._tool_policy().max_rounds or _MAX_TOOL_ROUNDS):
+            fire(callbacks, "on_model_start", self, messages)
+            response = self.maki.chat_turn(messages, tool_specs, system=system)
+            calls = response.tool_calls
+            fire(callbacks, "on_model_end", self, response, calls)
+            if not calls:
+                self._last_tool_trace = messages[start:]
+                return response.content
+            messages.append(Message("assistant", response.content, tool_calls=list(calls)))
+            for call, result in self._execute_tool_calls(calls):
+                messages.append(Message("tool", result, tool_call_id=call.id, name=call.name))
+
+        # Max rounds reached: force a text answer by offering no tools.
+        fire(callbacks, "on_model_start", self, messages)
+        response = self.maki.chat_turn(messages, None, system=system)
+        fire(callbacks, "on_model_end", self, response, None)
+        self._last_tool_trace = messages[start:]
+        return response.content or ""
+
+    def execute_with_native_tools(
+        self, task: str, context: Optional[Dict], system: str
+    ) -> str:
+        """Drive the native tool-calling loop (up to ``ToolPolicy.max_rounds`` rounds, default ``_MAX_TOOL_ROUNDS``).
+
+        A backend with ``supports_typed_messages`` runs the provider-neutral loop
+        (:meth:`_run_typed_tool_loop`). Any other native backend uses its own message format through
+        ``chat_with_tools`` / ``append_tool_results``: the initial user message is built without a
+        TOOL: prompt section, then the loop alternates between model calls and plugin executions.
+        After the maximum rounds a final call with an empty tools list forces a plain-text answer.
+        """
+        tool_specs = self._build_tool_specs()
+        if getattr(self.maki, "supports_typed_messages", False) is True:
+            return self._run_typed_tool_loop(task, context, system, tool_specs)
+        tools = self.maki.to_tool_schemas(tool_specs)
+
+        user_content = self._native_user_content(task, context)
         # Structured prior turns, when the host agent's policy sends history as messages.
         prior = getattr(self, "_history_messages", lambda: None)() or []
-        messages = [m.to_dict() for m in prior] + [{"role": "user", "content": user_content}]
+        messages = [{k: v for k, v in m.to_dict().items() if k in ("role", "content", "images")}
+                    for m in prior] + [{"role": "user", "content": user_content}]
 
         for _ in range(self._tool_policy().max_rounds or _MAX_TOOL_ROUNDS):
             fire(self._callbacks(), "on_model_start", self, messages)

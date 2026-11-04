@@ -136,7 +136,12 @@ class MakiAnthropic(LLMBackend):
 
     def _parse_response(self, response: object, elapsed: float) -> LLMResponse:
         usage = response.usage  # type: ignore[attr-defined]
-        content = response.content[0].text if response.content else ""  # type: ignore[attr-defined]
+        # Text of the text blocks; a tool round may open with a non-text block (tool_use, thinking).
+        content = "".join(
+            b.text for b in (response.content or [])  # type: ignore[attr-defined]
+            if isinstance(getattr(b, "text", None), str)
+            and not (isinstance(getattr(b, "type", None), str) and b.type != "text")
+        )
         cached = getattr(usage, "cache_read_input_tokens", 0)
         return LLMResponse(
             content=content,
@@ -290,6 +295,41 @@ class MakiAnthropic(LLMBackend):
             })
         return schemas
 
+    supports_typed_messages = True
+
+    def to_wire_messages(self, messages: list) -> list:
+        """Typed messages as Anthropic messages: ``tool_use`` blocks for calls, and the results of one
+        turn batched into a single user message of ``tool_result`` blocks."""
+        wire: list = []
+        pending: list = []  # tool_result blocks waiting to become one user message
+
+        def flush() -> None:
+            if pending:
+                wire.append({"role": "user", "content": list(pending)})
+                pending.clear()
+
+        for m in messages:
+            if m.role == "tool":
+                pending.append({"type": "tool_result", "tool_use_id": m.tool_call_id or "", "content": m.content})
+                continue
+            flush()
+            if m.role not in ("user", "assistant"):
+                continue  # the system prompt travels in the top-level system parameter
+            if m.role == "assistant" and m.tool_calls:
+                blocks: list = [{"type": "text", "text": m.content}] if m.content.strip() else []
+                blocks.extend({"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.args}
+                              for tc in m.tool_calls)
+                wire.append({"role": "assistant", "content": blocks})
+            elif m.images and m.role == "user":
+                blocks = [{"type": "text", "text": m.content}]
+                blocks.extend({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}}
+                              for b64 in m.images)
+                wire.append({"role": "user", "content": blocks})
+            elif m.content.strip():
+                wire.append({"role": m.role, "content": m.content})
+        flush()
+        return wire
+
     def chat_with_tools(
         self,
         messages: list,
@@ -303,6 +343,18 @@ class MakiAnthropic(LLMBackend):
         Returns ``(LLMResponse, None, messages)`` on a text answer, or
         ``(None, [ToolCall, ...], messages)`` when tool calls are requested.
         """
+        response, tool_calls, updated = self._chat_with_tools_full(messages, tools, system=system, config=config)
+        return (None, tool_calls, updated) if tool_calls else (response, None, updated)
+
+    def _chat_with_tools_full(
+        self,
+        messages: list,
+        tools: list,
+        *,
+        system: Optional[str] = None,
+        config: Optional[GenerationConfig] = None,
+    ):
+        """:meth:`chat_with_tools` with a real response (token counts included) on tool rounds too."""
         import time as _t
         if self._rate_limiter:
             self._rate_limiter.acquire()
@@ -333,15 +385,15 @@ class MakiAnthropic(LLMBackend):
         content_blocks, tool_use_blocks = self._split_content(response)
         updated = list(messages) + [{"role": "assistant", "content": content_blocks}]
 
+        result = self._parse_response(response, elapsed)
         if response.stop_reason == "tool_use" and tool_use_blocks:
             tool_calls = [
                 ToolCall(id=b.id, name=b.name, args=b.input)
                 for b in tool_use_blocks
             ]
             log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
-            return None, tool_calls, updated
+            return result, tool_calls, updated
 
-        result = self._parse_response(response, elapsed)
         log.info("chat_with_tools (text): %.2fs, %d tokens", elapsed, result.total_tokens)
         return result, None, updated
 

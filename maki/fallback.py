@@ -157,6 +157,13 @@ class FallbackBackend(LLMBackend):
         return any(b.supports_native_tools for b in self.backends)
 
     @property
+    def supports_typed_messages(self) -> bool:  # type: ignore[override]
+        # The typed tool loop runs only when every backend that can serve it speaks typed messages;
+        # otherwise the agent keeps the transcript path below, which still switches backends.
+        native = [b for b in self.backends if b.supports_native_tools]
+        return bool(native) and all(b.supports_typed_messages for b in native)
+
+    @property
     def supports_history(self) -> bool:  # type: ignore[override]
         # Structured history goes only to a backend that honours it, so every backend must.
         return all(b.supports_history for b in self.backends)
@@ -282,6 +289,18 @@ class FallbackBackend(LLMBackend):
         return ChatSession(llm=self, system=system)
 
     # -- native tool calling ---------------------------------------------------------------------
+
+    def chat_turn(self, messages: List[Message], tool_specs: Optional[List[dict]] = None, *,
+                  system: Optional[str] = None, config: Optional[GenerationConfig] = None) -> LLMResponse:
+        """One typed round on the first backend that answers.
+
+        The messages are provider-neutral, so a failure on any round (the first or one after tools ran)
+        simply hands the same messages to the next backend: nothing is flattened or replayed.
+        """
+        typed = [b for b in self.backends if b.supports_typed_messages and (b.supports_native_tools or not tool_specs)]
+        if not typed:
+            raise NotImplementedError("None of the fallback backends supports typed messages for this turn.")
+        return self._try(typed, lambda b: b.chat_turn(messages, tool_specs, system=system, config=config))
 
     def to_tool_schemas(self, tool_specs: List[dict]) -> List[dict]:
         """Keep the neutral specs; each backend translates them when it is called."""

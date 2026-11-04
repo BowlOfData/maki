@@ -67,6 +67,8 @@ class Adapter:
     streams = True
     #: whether async_chat() is expected to work on this backend
     has_async = True
+    #: whether the wire format carries tool-call ids (Ollama's does not)
+    keeps_call_ids = True
 
     def make(self, **kwargs) -> LLMBackend:
         raise NotImplementedError
@@ -320,3 +322,106 @@ class BackendConformance:
         self.assertEqual(response.content, "final answer")
         self.assertIsNone(calls2)
         self.assertIn("FILE-CONTENTS", json.dumps(self.adapter.sent(self.backend).raw, default=str))
+
+    # -- typed messages --------------------------------------------------------------
+
+    def _needs_typed(self):
+        if not self.backend.supports_typed_messages:
+            self.skipTest("no typed messages")
+
+    def test_typed_backends_are_native_tool_backends(self):
+        if self.backend.supports_typed_messages:
+            self.assertTrue(self.backend.supports_native_tools)
+
+    def test_chat_turn_text_answer(self):
+        self._needs_typed()
+        self.adapter.script_text(self.backend, "typed answer")
+        history = [Message("user", "q1"), Message("assistant", "a1"), Message("user", "q2")]
+        response = self.backend.chat_turn(history, [TOOL_SPEC], system="sys")
+        self.assertIsInstance(response, LLMResponse)
+        self.assertEqual(response.content, "typed answer")
+        self.assertFalse(response.tool_calls)
+        sent = self.adapter.sent(self.backend)
+        self.assertEqual(sent.system, "sys")
+        self.assertIn("files__read", json.dumps(sent.tools))
+        self.assertEqual([t for t in sent.texts if t in ("q1", "a1", "q2")], ["q1", "a1", "q2"])
+        self.assertEqual(len(history), 3, "the caller's list must not be mutated")
+
+    def test_chat_turn_tool_request_keeps_the_response_and_gives_every_call_an_id(self):
+        self._needs_typed()
+        self.adapter.script_tool_call(self.backend, "files__read", {"path": "/tmp/x", "mode": "fast"})
+        response = self.backend.chat_turn([Message("user", "q")], [TOOL_SPEC])
+        self.assertIsInstance(response, LLMResponse)
+        self.assertEqual(len(response.tool_calls), 1)
+        call = response.tool_calls[0]
+        self.assertEqual((call.name, call.args), ("files__read", {"path": "/tmp/x", "mode": "fast"}))
+        self.assertTrue(call.id, "a call without a provider id gets one so the turn can move between backends")
+        self.assertGreater(response.total_tokens, 0, "a tool round still reports what it cost")
+
+    def test_chat_turn_tool_rounds_are_counted_in_usage(self):
+        self._needs_typed()
+        usage = attach_usage(self.backend)
+        self.adapter.script_tool_call(self.backend, "files__read", {"path": "/tmp/x"})
+        self.backend.chat_turn([Message("user", "q")], [TOOL_SPEC])
+        self.assertEqual(usage.calls, 1)
+        self.assertGreater(usage.total_tokens, 0)
+
+    def test_chat_turn_replays_a_tool_exchange(self):
+        self._needs_typed()
+        call = ToolCall(id="call_77", name="files__read", args={"path": "/tmp/x"})
+        messages = [Message("user", "q"),
+                    Message("assistant", "reading", tool_calls=[call]),
+                    Message("tool", "FILE-CONTENTS", tool_call_id="call_77", name="files__read")]
+        self.adapter.script_text(self.backend, "final answer")
+        response = self.backend.chat_turn(messages, [TOOL_SPEC])
+        self.assertEqual(response.content, "final answer")
+        self.assertFalse(response.tool_calls)
+        raw = json.dumps(self.adapter.sent(self.backend).raw, default=str)
+        for needle in ("FILE-CONTENTS", "files__read", "reading", "/tmp/x"):
+            self.assertIn(needle, raw)
+        if self.adapter.keeps_call_ids:
+            self.assertGreaterEqual(raw.count("call_77"), 2, "the call and its result must name the same id")
+
+    def test_chat_turn_with_two_calls_in_one_turn(self):
+        self._needs_typed()
+        calls = [ToolCall("a1", "files__read", {"path": "/a"}), ToolCall("b2", "files__read", {"path": "/b"})]
+        messages = [Message("user", "q"), Message("assistant", "", tool_calls=calls),
+                    Message("tool", "RES-A", tool_call_id="a1", name="files__read"),
+                    Message("tool", "RES-B", tool_call_id="b2", name="files__read")]
+        self.adapter.script_text(self.backend, "done")
+        self.assertEqual(self.backend.chat_turn(messages, [TOOL_SPEC]).content, "done")
+        raw = json.dumps(self.adapter.sent(self.backend).raw, default=str)
+        for needle in ("RES-A", "RES-B", "/a", "/b"):
+            self.assertIn(needle, raw)
+
+    def test_chat_turn_without_tools_sends_none(self):
+        self._needs_typed()
+        self.adapter.script_text(self.backend, "plain")
+        self.backend.chat_turn([Message("user", "q")], None)
+        self.assertFalse(self.adapter.sent(self.backend).tools)
+        self.adapter.script_text(self.backend, "plain")
+        self.backend.chat_turn([Message("user", "q")], [])
+        self.assertFalse(self.adapter.sent(self.backend).tools)
+
+    def test_chat_turn_lays_a_stored_tool_trace_out_before_the_answer(self):
+        self._needs_typed()
+        call = ToolCall("t1", "files__read", {"path": "/p"})
+        trace = [Message("assistant", "", tool_calls=[call]), Message("tool", "TRACE-RESULT", tool_call_id="t1")]
+        history = [Message("user", "earlier q"), Message("assistant", "earlier a", tool_trace=trace),
+                   Message("user", "now")]
+        self.adapter.script_text(self.backend, "ok")
+        self.backend.chat_turn(history, [TOOL_SPEC])
+        raw = json.dumps(self.adapter.sent(self.backend).raw, default=str)
+        self.assertLess(raw.index("TRACE-RESULT"), raw.index("earlier a"))
+        self.assertLess(raw.index("earlier q"), raw.index("TRACE-RESULT"))
+        self.assertNotIn("tool_trace", raw)
+
+    def test_chat_turn_errors_map_onto_the_maki_exception_tree(self):
+        self._needs_typed()
+        for kind, expected in ERROR_KINDS:
+            with self.subTest(kind=kind):
+                backend = self.adapter.make()
+                self.adapter.script_error(backend, kind)
+                with self.assertRaises(expected):
+                    backend.chat_turn([Message("user", "q")], [TOOL_SPEC])
+

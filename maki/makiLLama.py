@@ -195,7 +195,8 @@ class MakiLLama(LLMBackend):
         if effective_system:
             msgs.append(Message("system", effective_system).to_dict())
         if history:
-            msgs.extend(m.to_dict() for m in history)
+            # Plain chat sends the text of each turn; a remembered tool trace is only replayed by chat_turn().
+            msgs.extend(Message(m.role, m.content, m.images).to_dict() for m in history)
         msgs.append(Message("user", prompt, images=images).to_dict())
         return msgs
 
@@ -483,6 +484,22 @@ class MakiLLama(LLMBackend):
             })
         return schemas
 
+    supports_typed_messages = True
+
+    def to_wire_messages(self, messages: list) -> list:
+        """Typed messages as Ollama chat messages (tool calls carry their arguments as an object)."""
+        wire = []
+        for m in messages:
+            entry: dict = {"role": m.role, "content": m.content}
+            if m.images:
+                entry["images"] = m.images
+            if m.tool_calls:
+                entry["tool_calls"] = [{"function": {"name": tc.name, "arguments": tc.args}} for tc in m.tool_calls]
+            if m.role == "tool" and m.name:
+                entry["tool_name"] = m.name
+            wire.append(entry)
+        return wire
+
     def chat_with_tools(
         self,
         messages: list,
@@ -496,6 +513,18 @@ class MakiLLama(LLMBackend):
         Returns ``(LLMResponse, None, messages)`` on a text answer, or
         ``(None, [ToolCall, ...], messages)`` when tool calls are requested.
         """
+        response, tool_calls, updated = self._chat_with_tools_full(messages, tools, system=system, config=config)
+        return (None, tool_calls, updated) if tool_calls else (response, None, updated)
+
+    def _chat_with_tools_full(
+        self,
+        messages: list,
+        tools: list,
+        *,
+        system: Optional[str] = None,
+        config: Optional[GenerationConfig] = None,
+    ):
+        """:meth:`chat_with_tools` with a real response (token counts included) on tool rounds too."""
         import time as _t
         if self._rate_limiter:
             self._rate_limiter.acquire()
@@ -543,7 +572,8 @@ class MakiLLama(LLMBackend):
                         args = {}
                 tool_calls.append(ToolCall(id="", name=name, args=args))
             log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
-            return None, tool_calls, updated
+            # A tool round's text is not an answer: keep any thinking out of it.
+            return self._parse_response(data, elapsed, thinking_fallback=False), tool_calls, updated
 
         response = self._parse_response(data, elapsed)
         log.info("chat_with_tools (text): %.2fs", elapsed)

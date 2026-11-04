@@ -10,7 +10,7 @@ import threading
 from typing import Any
 import inspect
 
-_WRAPPED = ("chat", "chat_collect", "chat_with_tools")
+_WRAPPED = ("chat", "chat_collect", "chat_with_tools", "chat_turn")
 _nesting = threading.local()  # depth of counted calls on this thread: only the outermost one records
 
 

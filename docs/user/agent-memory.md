@@ -69,6 +69,7 @@ agent.remember("goal", "Migrate the billing service without downtime.", pin=True
 | `token_budget` | 4096 | How much conversation to keep, in estimated tokens (`len // 4`). The oldest turns are dropped first. |
 | `recent_turns`, `older_turn_chars` | none | Set together. The last `recent_turns` turns stay whole and each older message is cut to `older_turn_chars`, keeping its start and end, with an `[... N characters omitted ...]` marker. Shortened turns count at their shortened size against `token_budget`, so more turns fit. |
 | `summarize_older`, `summary_chars` | off, 1200 | Instead of dropping turns that no longer fit, the model folds them into a running summary kept at the top of the history. See [Summaries](#summaries). |
+| `tool_history` | off | Remember the tool calls and results behind each answer and replay them, so the model sees which tools it already ran. Needs `history_mode="messages"` and a backend with typed messages. See [Tool history](#tool-history). |
 | `pinned_chars` | none | Size cap for pinned facts. Pinning needs it set. |
 | `tool_result_chars` | none | A plugin result longer than this is cut to that many characters (start and end kept) plus the marker. Errors and short results are untouched. |
 | `history_entry_chars` | none | The same clipping for what `task_history` and `reasoning_history` store. The conversation itself keeps full answers. |
@@ -106,6 +107,21 @@ agent = Agent("assistant", backend, stateful=True,
 
 The summary recovered every fact the dropping setup lost and sent about 42% fewer prompt tokens than keeping everything (16 filler turns). The price is one extra model call per task once turns are being evicted, roughly doubling the time here. The summary also kept some filler (a language-learning tip) next to the facts, because it summarises whatever was evicted; pin the facts that matter.
 
+## Tool history
+
+By default a stateful agent remembers only the final answer of each turn, so on the next turn the model does not know which tools it ran or what they returned. With `tool_history=True` the tool loop behind each answer is stored with it and replayed ahead of that answer:
+
+```python
+agent = Agent("assistant", backend, stateful=True,
+              memory=MemoryPolicy(history_mode="messages", tool_history=True, tool_result_chars=500))
+```
+
+- Results are clipped to `tool_result_chars` when stored, so set it; without it every result is kept whole.
+- The trace counts against `token_budget`, so a long tool exchange ages out like any other text.
+- A turn shortened by `recent_turns`/`older_turn_chars` loses its trace, and when turns are folded into a summary the summariser is told which tools ran and what they returned.
+- It needs `history_mode="messages"` (the trace is replayed as chat messages) and a backend with typed messages: Ollama, OpenAI, Anthropic, OpenRouter, llama.cpp and vLLM. Other backends ignore it.
+- It costs prompt tokens, which is why it is off by default.
+
 ## Pinned facts
 
 A goal or constraint that must outlive the conversation can be pinned. Pinned facts go in the system message of every call and are never dropped.
@@ -137,7 +153,7 @@ agent.unpin("goal")          # stop sending it (it stays in agent.memory)
 
 ## With `maki serve`
 
-The same fields go under `memory:` in the agent YAML (`summarize_older` and `summary_chars` included). Unknown keys are an error, and so is `summary_chars` without `summarize_older`.
+The same fields go under `memory:` in the agent YAML (`summarize_older`, `summary_chars` and `tool_history` included). Unknown keys are an error, and so is `summary_chars` without `summarize_older`.
 
 ```yaml
 name: researcher

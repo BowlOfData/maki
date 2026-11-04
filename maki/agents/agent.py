@@ -132,6 +132,7 @@ class Agent(PluginHandler, ReasoningEngine):
         # One in-flight task at a time; acquired by execute_task / stream_task so
         # concurrent callers (workflow thread pools, FastAPI handlers) are serialized.
         self._execution_lock = threading.Lock()
+        self._last_tool_trace: List[Message] = []  # tool loop messages of the latest native task
 
         # Validate and initialise mixin contracts (must come after all attrs are set).
         self._init_reasoning()
@@ -180,6 +181,17 @@ class Agent(PluginHandler, ReasoningEngine):
             return
         memory.set_summary(clip_text(text, limit), len(pairs))
 
+    @staticmethod
+    def _tools_note(message: Message, limit: int) -> str:
+        """A one-line note of the tools behind a remembered answer, for the summariser (empty if none)."""
+        used = []
+        results = {m.tool_call_id: m.content for m in message.tool_trace or () if m.role == "tool"}
+        for step in message.tool_trace or ():
+            for call in step.tool_calls or ():
+                result = clip_text(results.get(call.id, ""), max(40, limit // 4)).replace("\n", " ")
+                used.append(f"{call.name}({json.dumps(call.args, default=str)}) -> {result}")
+        return f"\n  [tools used: {'; '.join(used)}]" if used else ""
+
     def _summarize(self, previous: str, messages: List[Message], limit: int) -> str:
         """Ask the backend for an updated summary covering ``previous`` plus ``messages``."""
         keep = _SUMMARY_TOTAL_CHARS // 200   # fewer, readable messages beat many unreadable ones
@@ -187,7 +199,7 @@ class Agent(PluginHandler, ReasoningEngine):
         messages = messages[omitted:]
         each = min(_SUMMARY_INPUT_CHARS, _SUMMARY_TOTAL_CHARS // max(1, len(messages)))
         turns = (f"({omitted} older message(s) left out)\n" if omitted else "") + "\n".join(
-            f"{'User' if m.role == 'user' else 'Assistant'}: {clip_text(m.content, each)}"
+            f"{'User' if m.role == 'user' else 'Assistant'}: {clip_text(m.content, each)}{self._tools_note(m, each)}"
             for m in messages)
         prompt = (
             "Update the running summary of a conversation with the new turns below.\n"
@@ -221,6 +233,15 @@ class Agent(PluginHandler, ReasoningEngine):
         if not self.stateful or self._history_messages() is not None:
             return ""
         return self._conversation_memory.format_as_text()
+
+    def _remembered_trace(self) -> Optional[List[Message]]:
+        """The tool loop behind the latest answer, clipped, when the policy keeps tool history; else None."""
+        trace, self._last_tool_trace = self._last_tool_trace, []
+        policy = self.memory_policy
+        if not trace or policy is None or not policy.tool_history:
+            return None
+        return [Message(m.role, clip_text(m.content, policy.tool_result_chars) if m.role == "tool" else m.content,
+                        tool_calls=m.tool_calls, tool_call_id=m.tool_call_id, name=m.name) for m in trace]
 
     def _record_task(self, task: str, context: Optional[Dict], result: str) -> None:
         self.task_history.append(self._bounded_entry({
@@ -263,6 +284,7 @@ class Agent(PluginHandler, ReasoningEngine):
         """The model round(s) for one task: native tool loop, or chat plus ``TOOL:`` directives."""
         if self.stateful:
             self._fold_summary()
+        self._last_tool_trace = []  # a trace is only ever the one of this task
         system_msg = self._build_system_message()
 
         if use_plugins and self.plugins and getattr(self.maki, "supports_native_tools", False) is True:
@@ -334,7 +356,7 @@ class Agent(PluginHandler, ReasoningEngine):
             # Maintain stateful conversation history
             if self.stateful:
                 self._conversation_memory.append(Message("user", task))
-                self._conversation_memory.append(Message("assistant", result))
+                self._conversation_memory.append(Message("assistant", result, tool_trace=self._remembered_trace()))
 
         return result
 
