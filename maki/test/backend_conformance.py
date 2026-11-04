@@ -97,6 +97,10 @@ class Adapter:
     def sent(self, backend) -> Sent:
         raise NotImplementedError
 
+    def tools_forbidden(self, sent: Sent) -> bool:
+        """Whether the last request offered no usable tool (``tool_choice="none"``)."""
+        return not sent.tools
+
 
 class BackendConformance:
     """Mixin of contract tests; combine with ``unittest.TestCase`` and set ``adapter_class``."""
@@ -393,6 +397,16 @@ class BackendConformance:
         raw = json.dumps(self.adapter.sent(self.backend).raw, default=str)
         for needle in ("RES-A", "RES-B", "/a", "/b"):
             self.assertIn(needle, raw)
+
+    def test_chat_turn_can_forbid_tools_after_a_tool_exchange(self):
+        self._needs_typed()
+        call = ToolCall("call_9", "files__read", {"path": "/tmp/x"})
+        messages = [Message("user", "q"), Message("assistant", "", tool_calls=[call]),
+                    Message("tool", "RES", tool_call_id="call_9", name="files__read")]
+        self.adapter.script_text(self.backend, "wrapped up")
+        response = self.backend.chat_turn(messages, [TOOL_SPEC], tool_choice="none")
+        self.assertEqual(response.content, "wrapped up")
+        self.assertTrue(self.adapter.tools_forbidden(self.adapter.sent(self.backend)))
 
     def test_chat_turn_without_tools_sends_none(self):
         self._needs_typed()

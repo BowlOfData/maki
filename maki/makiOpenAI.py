@@ -335,8 +335,11 @@ class MakiOpenAI(LLMBackend):
         *,
         system: Optional[str] = None,
         config: Optional[GenerationConfig] = None,
+        tool_choice: Optional[str] = None,
     ):
         """:meth:`chat_with_tools` with a real response (token counts included) on tool rounds too."""
+        if tool_choice == "none":
+            tools = []  # OpenAI-style APIs accept tool messages without tool definitions
         import time as _t
         if self._rate_limiter:
             self._rate_limiter.acquire()

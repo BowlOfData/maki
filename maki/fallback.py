@@ -15,10 +15,12 @@ status) the same call is repeated on the next one. Errors that no other model wo
 401, validation) are raised at once. When every backend failed, the last error is raised with its
 original type, so ``ToolPolicy`` retries and callers still classify it correctly.
 
-Native tool loops can switch backends in the middle of a turn. Tool schemas and tool messages differ
-per provider, so the loop is carried in a neutral form: the backend that produced a conversation
-continues it natively, and any other backend gets the earlier tool calls and their results folded into
-the last user message as text. Tools run exactly once either way.
+Native tool loops can switch backends in the middle of a turn. When every backend speaks typed messages
+(``supports_typed_messages``, true for all built-in providers with native tools) the loop is already
+provider-neutral: the next backend simply receives the same ``Message`` list, tool calls and results
+included. For other backends the loop is carried in a neutral transcript instead: the backend that
+produced a conversation continues it natively, and any other backend gets the earlier tool calls and
+their results folded into the last user message as text. Tools run exactly once either way.
 """
 
 import json
@@ -291,7 +293,8 @@ class FallbackBackend(LLMBackend):
     # -- native tool calling ---------------------------------------------------------------------
 
     def chat_turn(self, messages: List[Message], tool_specs: Optional[List[dict]] = None, *,
-                  system: Optional[str] = None, config: Optional[GenerationConfig] = None) -> LLMResponse:
+                  system: Optional[str] = None, config: Optional[GenerationConfig] = None,
+                  tool_choice: Optional[str] = None) -> LLMResponse:
         """One typed round on the first backend that answers.
 
         The messages are provider-neutral, so a failure on any round (the first or one after tools ran)
@@ -300,7 +303,8 @@ class FallbackBackend(LLMBackend):
         typed = [b for b in self.backends if b.supports_typed_messages and (b.supports_native_tools or not tool_specs)]
         if not typed:
             raise NotImplementedError("None of the fallback backends supports typed messages for this turn.")
-        return self._try(typed, lambda b: b.chat_turn(messages, tool_specs, system=system, config=config))
+        return self._try(typed, lambda b: b.chat_turn(messages, tool_specs, system=system, config=config,
+                                                      tool_choice=tool_choice))
 
     def to_tool_schemas(self, tool_specs: List[dict]) -> List[dict]:
         """Keep the neutral specs; each backend translates them when it is called."""

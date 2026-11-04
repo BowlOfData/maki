@@ -24,6 +24,7 @@ class TypedFake(LLMBackend):
         self.model, self.temperature, self.label = label, 0.0, label
         self.script = list(script or [])
         self.rounds = []       # (messages as sent, tool specs)
+        self.choices = []      # tool_choice of each round
         self.legacy_calls = 0
         self.fail = None
 
@@ -37,7 +38,8 @@ class TypedFake(LLMBackend):
         self.legacy_calls += 1
         raise AssertionError("the typed loop must not use chat_with_tools")
 
-    def chat_turn(self, messages, tool_specs=None, *, system=None, config=None):
+    def chat_turn(self, messages, tool_specs=None, *, system=None, config=None, tool_choice=None):
+        self.choices.append(tool_choice)
         self.rounds.append(([Message.from_dict(m.to_dict()) for m in expand_tool_traces(messages)], tool_specs))
         if self.fail is not None and any(m.role == "tool" for m in messages):
             raise self.fail
@@ -131,8 +133,20 @@ class TestTypedLoop(unittest.TestCase):
         backend = TypedFake(script=[reply("", [call("a", "1")]), reply("", [call("b", "2")]), reply("forced")])
         agent = agent_with(backend, tool_policy=ToolPolicy(max_rounds=2))
         self.assertEqual(agent.execute_task("go", use_plugins=True), "forced")
-        self.assertIsNone(backend.rounds[-1][1])
+        self.assertEqual(backend.choices, [None, None, "none"])  # the last round lists tools but forbids them
+        self.assertTrue(backend.rounds[-1][1])
         self.assertEqual(len(agent.plugins["echo"].runs), 2)
+
+    def test_the_closing_round_carries_an_instruction_that_is_not_remembered(self):
+        backend = TypedFake(script=[reply("", [call("a", "1")]), reply("closing answer")])
+        agent = agent_with(backend, tool_policy=ToolPolicy(max_rounds=1), stateful=True,
+                           memory=MemoryPolicy(history_mode="messages", tool_history=True))
+        self.assertEqual(agent.execute_task("go", use_plugins=True), "closing answer")
+        last = backend.rounds[-1][0]
+        self.assertEqual((last[-1].role, "tool calls" in last[-1].content), ("user", True))
+        self.assertEqual([m.role for m in last[:-1]], ["user", "assistant", "tool"])
+        stored = agent._conversation_memory.messages()[1].tool_trace
+        self.assertEqual([m.role for m in stored], ["assistant", "tool"])  # the instruction is not history
 
     def test_callbacks_see_typed_messages_and_the_real_response(self):
         seen = {"start": [], "end": []}
@@ -205,6 +219,13 @@ class TestToolHistory(unittest.TestCase):
         self.assertIsNone(agent._conversation_memory.messages()[1].tool_trace)
         agent.execute_task("two", use_plugins=True)
         self.assertEqual([m.role for m in backend.rounds[-1][0]], ["user", "assistant", "user"])
+
+    def test_long_tool_arguments_are_clipped_in_the_stored_trace(self):
+        backend, agent = self._agent([reply("", [call("y" * 500)]), reply("answer")])
+        agent.execute_task("q", use_plugins=True)
+        stored_call = agent._conversation_memory.messages()[1].tool_trace[0].tool_calls[0]
+        self.assertIn("characters omitted", stored_call.args["text"])
+        self.assertEqual((stored_call.id, stored_call.name), ("c1", "echo__say"))
 
     def test_a_task_without_tools_leaves_no_trace_and_no_stale_one(self):
         backend, agent = self._agent([reply("", [call()]), reply("a1"), reply("a2")])
@@ -283,7 +304,7 @@ class TestFallbackTyped(unittest.TestCase):
             supports_typed_messages = False
         self.assertFalse(FallbackBackend([TypedFake(), Untyped()]).supports_typed_messages)
         self.assertTrue(FallbackBackend([TypedFake(), TypedFake()]).supports_typed_messages)
-        self.assertFalse(FallbackBackend([TypedFake(native=False)] if False else [Untyped()]).supports_typed_messages)
+        self.assertFalse(FallbackBackend([Untyped()]).supports_typed_messages)
 
     def test_a_chain_of_plain_backends_is_not_typed(self):
         class Plain(LLMBackend):

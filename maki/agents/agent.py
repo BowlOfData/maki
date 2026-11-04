@@ -18,7 +18,7 @@ from ..aio import aiterate, async_gate, run_in_thread
 from ..backend import LLMBackend
 from ..callbacks import AgentCallback, fire
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
-from ..objects import ConversationMemory, MemoryPolicy, Message, clip_text
+from ..objects import ConversationMemory, MemoryPolicy, Message, ToolCall, clip_text
 from ..usage import Usage, attach_usage
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
@@ -240,8 +240,13 @@ class Agent(PluginHandler, ReasoningEngine):
         policy = self.memory_policy
         if not trace or policy is None or not policy.tool_history:
             return None
-        return [Message(m.role, clip_text(m.content, policy.tool_result_chars) if m.role == "tool" else m.content,
-                        tool_calls=m.tool_calls, tool_call_id=m.tool_call_id, name=m.name) for m in trace]
+        limit = policy.tool_result_chars
+
+        def clipped(calls):  # a long argument (a file body to write, say) is history, not something to replay whole
+            return [ToolCall(c.id, c.name, {k: clip_text(v, limit) if isinstance(v, str) else v
+                                            for k, v in c.args.items()}) for c in calls] if calls else calls
+        return [Message(m.role, clip_text(m.content, limit) if m.role == "tool" else m.content,
+                        tool_calls=clipped(m.tool_calls), tool_call_id=m.tool_call_id, name=m.name) for m in trace]
 
     def _record_task(self, task: str, context: Optional[Dict], result: str) -> None:
         self.task_history.append(self._bounded_entry({

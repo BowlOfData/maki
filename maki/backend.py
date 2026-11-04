@@ -182,12 +182,17 @@ class LLMBackend(ABC):
         *,
         system: Optional[str] = None,
         config: Optional[GenerationConfig] = None,
+        tool_choice: Optional[str] = None,
     ) -> Tuple[LLMResponse, Optional[List[ToolCall]], List[dict]]:
         """Like :meth:`chat_with_tools` but the response is always present, with its token counts.
 
         The default wraps ``chat_with_tools`` and invents an empty response for a tool-call round
         (that method returns None there). Backends override it to report real usage on every round.
+        ``tool_choice="none"`` means the tools are listed (a provider may insist on them when the
+        conversation already holds tool calls) but must not be used; the default simply offers none.
         """
+        if tool_choice == "none":
+            tools = []
         response, calls, updated = self.chat_with_tools(messages, tools, system=system, config=config)
         if response is None:
             response = LLMResponse(content="", model=self.model, prompt_tokens=0, completion_tokens=0,
@@ -201,13 +206,15 @@ class LLMBackend(ABC):
         *,
         system: Optional[str] = None,
         config: Optional[GenerationConfig] = None,
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
         """One model round over typed messages, with optional tools.
 
         *messages* is the whole conversation so far (``user``/``assistant`` text, ``assistant``
         messages with ``tool_calls`` and ``tool`` messages holding their results). *tool_specs* are
         backend-agnostic specs (``name``, ``description``, ``parameters``); None or empty forces a
-        plain-text answer. The returned response carries ``tool_calls`` (each with an id, invented
+        plain-text answer; ``tool_choice="none"`` lists them but forbids using them (the agent's final
+        round after the tool-round limit, where Anthropic still wants the tools defined). The returned response carries ``tool_calls`` (each with an id, invented
         when the provider has none) when the model wants tools, and ``content`` otherwise.
 
         Raises:
@@ -215,7 +222,8 @@ class LLMBackend(ABC):
         """
         wire = self.to_wire_messages(expand_tool_traces(messages))
         tools = self.to_tool_schemas(tool_specs) if tool_specs else []
-        response, calls, _ = self._chat_with_tools_full(wire, tools, system=system, config=config)
+        extra = {"tool_choice": tool_choice} if tool_choice else {}
+        response, calls, _ = self._chat_with_tools_full(wire, tools, system=system, config=config, **extra)
         if calls:
             for call in calls:
                 if not call.id:

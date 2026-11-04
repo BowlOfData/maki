@@ -523,9 +523,12 @@ class MakiLLama(LLMBackend):
         *,
         system: Optional[str] = None,
         config: Optional[GenerationConfig] = None,
+        tool_choice: Optional[str] = None,
     ):
         """:meth:`chat_with_tools` with a real response (token counts included) on tool rounds too."""
         import time as _t
+        if tool_choice == "none":
+            tools = []  # Ollama takes tool messages without tool definitions
         if self._rate_limiter:
             self._rate_limiter.acquire()
         cfg = config or self.config

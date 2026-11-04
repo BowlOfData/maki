@@ -300,6 +300,11 @@ class _AnthropicClient:
 
 
 class AnthropicAdapter(Adapter):
+    def tools_forbidden(self, sent):
+        # Anthropic wants the tools defined while the history holds tool blocks, so they are listed
+        # and switched off with tool_choice.
+        return bool(sent.tools) and sent.raw.get("tool_choice") == {"type": "none"}
+
     def __init__(self, tc):
         import maki.makiAnthropic as mod
 

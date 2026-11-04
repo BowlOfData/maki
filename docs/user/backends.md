@@ -49,6 +49,8 @@ response.tool_calls    # the model's next tool requests, each with an id (invent
 response.content       # its answer when it asks for none
 ```
 
+`tool_choice="none"` lists the tools but forbids using them (the agent's final round once the tool-round limit is reached; Anthropic wants tools defined while the history holds tool blocks).
+
 `chat_turn()` returns a normal `LLMResponse` with token counts on every round, tool rounds included
 (they used not to be counted). The agent uses it automatically for backends that set
 `supports_typed_messages` (all built-in ones except HuggingFace, which has no native tools). Because

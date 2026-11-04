@@ -150,6 +150,30 @@ class TestLiveOpenRouter(unittest.TestCase):
         answer = agent.execute_task("Now add 1 and 2. Use the tool.", use_plugins=True)
         self.assertIn("3", answer)
 
+    def test_the_final_round_after_the_tool_limit_still_answers(self):
+        from maki.agents.tool_policy import ToolPolicy
+
+        class Counter:
+            ALLOWED_METHODS = ["bump"]
+            DANGEROUS_METHODS = None
+            runs = 0
+
+            def bump(self, n: int) -> str:
+                """Return n plus one.
+
+                Args:
+                    n: the number
+                """
+                Counter.runs += 1
+                return str(n + 1)
+
+        agent = Agent("c", self.llm, instructions="Use the tool to add one, then keep using it until told to stop.",
+                      tool_policy=ToolPolicy(max_rounds=1))
+        agent.plugins["counter"] = Counter()
+        answer = agent.execute_task("Start from 1 and bump it repeatedly with the tool.", use_plugins=True)
+        self.assertEqual(Counter.runs, 1, "one tool round, then the limit")
+        self.assertTrue(answer.strip(), "the forced final round must still produce text")
+
     def test_unknown_model_is_an_api_error(self):
         from maki.makiOpenRouter import MakiOpenRouter
         with self.assertRaises(MakiAPIError) as caught:

@@ -353,6 +353,7 @@ class MakiAnthropic(LLMBackend):
         *,
         system: Optional[str] = None,
         config: Optional[GenerationConfig] = None,
+        tool_choice: Optional[str] = None,
     ):
         """:meth:`chat_with_tools` with a real response (token counts included) on tool rounds too."""
         import time as _t
@@ -365,6 +366,8 @@ class MakiAnthropic(LLMBackend):
             kwargs["system"] = effective_system
         if tools:
             kwargs["tools"] = tools
+            if tool_choice == "none":  # Anthropic wants tools defined while the history holds tool blocks
+                kwargs["tool_choice"] = {"type": "none"}
 
         t0 = _t.perf_counter()
         try:

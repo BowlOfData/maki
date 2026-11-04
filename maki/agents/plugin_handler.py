@@ -40,6 +40,10 @@ _REQUIRED_ATTRS = ("name", "maki")
 
 # Maximum tool-call rounds before forcing a final text answer.
 _MAX_TOOL_ROUNDS = 5
+_FINAL_ROUND_NOTE = (
+    "You have reached the limit on tool calls. Do not call any more tools: answer now, in plain text, "
+    "using the results above."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +537,7 @@ class PluginHandler:
         self._last_tool_trace = []
         callbacks = self._callbacks()
         for _ in range(self._tool_policy().max_rounds or _MAX_TOOL_ROUNDS):
-            fire(callbacks, "on_model_start", self, messages)
+            fire(callbacks, "on_model_start", self, list(messages))
             response = self.maki.chat_turn(messages, tool_specs, system=system)
             calls = response.tool_calls
             fire(callbacks, "on_model_end", self, response, calls)
@@ -544,9 +548,11 @@ class PluginHandler:
             for call, result in self._execute_tool_calls(calls):
                 messages.append(Message("tool", result, tool_call_id=call.id, name=call.name))
 
-        # Max rounds reached: force a text answer by offering no tools.
-        fire(callbacks, "on_model_start", self, messages)
-        response = self.maki.chat_turn(messages, None, system=system)
+        # Max rounds reached: force a text answer. Some models answer a bare "continue" with nothing
+        # after a tool exchange, so this one call carries an instruction (it is not stored in the trace).
+        closing = messages + [Message("user", _FINAL_ROUND_NOTE)]
+        fire(callbacks, "on_model_start", self, list(closing))
+        response = self.maki.chat_turn(closing, tool_specs, system=system, tool_choice="none")
         fire(callbacks, "on_model_end", self, response, None)
         self._last_tool_trace = messages[start:]
         return response.content or ""
