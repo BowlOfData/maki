@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Tool-call rounds are now counted in `agent.usage` (they were not before: only text answers were)
 - With a typed backend, `AgentCallback.on_model_start` receives typed `Message` objects instead of provider dicts, and `on_model_end` receives the response (with token counts) on tool rounds instead of None
 - The agent's closing round after `ToolPolicy.max_rounds` now offers the tools with `tool_choice="none"` (Anthropic insists on tool definitions while the history holds tool blocks) and carries a short "answer now" instruction, because some local models return nothing when simply asked to continue after a tool exchange (seen with `gemma4`). The instruction is not stored in the remembered trace
+- The async per-agent gate also works on event loop implementations that cannot be weakly referenced
 - Anthropic: an empty tool result is sent as "(no output)" because empty `tool_result` content is not reliably accepted
 - Remembered tool-call arguments are clipped to `tool_result_chars` like results, so a large write is not replayed whole
 - Anthropic: the text of a response is the join of its text blocks (a response that opens with a `tool_use` or thinking block no longer raises)

@@ -36,11 +36,17 @@ def async_gate(owner: Any) -> asyncio.Lock:
     on a worker thread would park one thread per queued call; waiting on this gate parks none, so the
     executor stays free for other agents. One lock per event loop, created on first use.
     """
-    gates = owner.__dict__.setdefault("_async_gates", weakref.WeakKeyDictionary())
     loop = asyncio.get_running_loop()
-    gate = gates.get(loop)
+    try:
+        gates = owner.__dict__.setdefault("_async_gates", weakref.WeakKeyDictionary())
+        key = loop
+        gates.get(key)  # probes that this loop type can be weakly referenced
+    except TypeError:  # an event loop implementation without weakref support: key by id (a tiny leak)
+        gates = owner.__dict__.setdefault("_async_gates_by_id", {})
+        key = id(loop)
+    gate = gates.get(key)
     if gate is None:
-        gate = gates[loop] = asyncio.Lock()
+        gate = gates[key] = asyncio.Lock()
     return gate
 
 

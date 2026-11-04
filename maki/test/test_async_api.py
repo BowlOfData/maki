@@ -138,6 +138,32 @@ class TestBridges(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await run_in_thread(closed.wait, 2))
 
 
+class TestAsyncGate(unittest.IsolatedAsyncioTestCase):
+    async def test_one_gate_per_owner_and_loop(self):
+        from maki.aio import async_gate
+
+        class Owner:
+            pass
+        a, b = Owner(), Owner()
+        self.assertIs(async_gate(a), async_gate(a))
+        self.assertIsNot(async_gate(a), async_gate(b))
+
+    async def test_a_loop_that_cannot_be_weakly_referenced_still_gets_a_gate(self):
+        from unittest.mock import patch
+
+        from maki.aio import async_gate
+
+        class SlottedLoop:
+            __slots__ = ()  # no __weakref__, like a compiled event loop that does not support it
+
+        class Owner:
+            pass
+        owner, loop = Owner(), SlottedLoop()
+        with patch("maki.aio.asyncio.get_running_loop", return_value=loop):
+            first = async_gate(owner)
+            self.assertIs(async_gate(owner), first)
+
+
 class TestAgent(unittest.IsolatedAsyncioTestCase):
     async def test_aexecute_task_matches_the_sync_result(self):
         agent = Agent("a", Slow("one"))
