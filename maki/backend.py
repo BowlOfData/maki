@@ -214,7 +214,8 @@ class LLMBackend(ABC):
         messages with ``tool_calls`` and ``tool`` messages holding their results). *tool_specs* are
         backend-agnostic specs (``name``, ``description``, ``parameters``); None or empty forces a
         plain-text answer; ``tool_choice="none"`` lists them but forbids using them (the agent's final
-        round after the tool-round limit, where Anthropic still wants the tools defined). The returned response carries ``tool_calls`` (each with an id, invented
+        round after the tool-round limit, where Anthropic still wants the tools defined).
+        The returned response carries ``tool_calls`` (each with an id, invented
         when the provider has none) when the model wants tools, and ``content`` otherwise.
 
         Raises:
