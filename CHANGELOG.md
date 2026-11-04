@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- `AgentManager.add_agent()` accepts `stateful`, `allow_dangerous_tools`, `memory`, `tool_policy` and `callbacks` (keyword-only) and passes them to `Agent`, so a manager-created agent no longer needs them set afterwards
+
 ## [0.4.5] - 2026-11-03
 
 ### Added
