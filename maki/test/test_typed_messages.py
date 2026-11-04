@@ -371,6 +371,12 @@ class TestWireFormats(unittest.TestCase):
         self.assertEqual([(b["type"], b["tool_use_id"], b["content"]) for b in results],
                          [("tool_result", "id_a", "RA"), ("tool_result", "id_b", "RB")])
 
+    def test_anthropic_never_sends_an_empty_tool_result(self):
+        wire = self._backends()["anthropic"].to_wire_messages(
+            [Message("user", "q"), Message("assistant", "", tool_calls=[call()]),
+             Message("tool", "", tool_call_id="c1", name="echo__say")])
+        self.assertEqual(wire[-1]["content"][0]["content"], "(no output)")
+
     def test_images_survive_on_user_messages(self):
         for name, backend in self._backends().items():
             with self.subTest(backend=name):

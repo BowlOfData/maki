@@ -310,7 +310,9 @@ class MakiAnthropic(LLMBackend):
 
         for m in messages:
             if m.role == "tool":
-                pending.append({"type": "tool_result", "tool_use_id": m.tool_call_id or "", "content": m.content})
+                # An empty result is sent as a short placeholder: empty content is not reliably accepted.
+                pending.append({"type": "tool_result", "tool_use_id": m.tool_call_id or "",
+                                "content": m.content if m.content.strip() else "(no output)"})
                 continue
             flush()
             if m.role not in ("user", "assistant"):

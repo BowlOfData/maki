@@ -21,9 +21,13 @@ class AgentCallback:
 
     def on_task_error(self, agent: Any, task: str, error: BaseException, elapsed: float) -> None: ...
 
-    def on_model_start(self, agent: Any, messages: list) -> None: ...
+    def on_model_start(self, agent: Any, messages: list) -> None:
+        """A model round is about to run. *messages* is a copy of the conversation: typed ``Message``
+        objects on backends with ``supports_typed_messages``, the provider's own dicts otherwise."""
 
-    def on_model_end(self, agent: Any, response: Any, tool_calls: Any) -> None: ...
+    def on_model_end(self, agent: Any, response: Any, tool_calls: Any) -> None:
+        """A model round finished. *tool_calls* lists the tools it asked for (None when it answered).
+        *response* carries the token counts; the provider-dict path passes None on a tool round."""
 
     def on_tool_start(self, agent: Any, call: Any) -> None: ...
 
