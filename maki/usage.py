@@ -70,7 +70,7 @@ class Usage:
         return self.to_dict()
 
     def __setstate__(self, state: dict) -> None:
-        self.__init__(**state)
+        self.__init__(**state)  # type: ignore[misc]
 
     def to_dict(self) -> dict:
         data = {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens,
@@ -99,11 +99,13 @@ class TokenRelay:
             return fn
 
         def run(*args: Any, **kwargs: Any) -> Any:
-            before = self.usage.thread_tokens()
+            usage = self.usage
+            assert usage is not None
+            before = usage.thread_tokens()
             try:
                 return fn(*args, **kwargs)
             finally:
-                spent = self.usage.thread_tokens() - before
+                spent = usage.thread_tokens() - before
                 with self._lock:
                     self._tokens += spent
 

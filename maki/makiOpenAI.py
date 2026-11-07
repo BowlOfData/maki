@@ -116,7 +116,7 @@ class MakiOpenAI(LLMBackend):
                 else:
                     msgs.append({"role": m.role, "content": m.content})
         if images:
-            content: list[dict] = [{"type": "text", "text": prompt}]
+            content = [{"type": "text", "text": prompt}]
             for b64 in images:
                 content.append({
                     "type": "image_url",

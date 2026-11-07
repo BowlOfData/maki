@@ -101,7 +101,7 @@ class FileMover:
                                                     "create_dirs": create_dirs})
         if problem:
             return self._failure(problem)
-        overwrite, dry_run, create_dirs = (self._as_flag(v) for v in (overwrite, dry_run, create_dirs))
+        overwrite, dry_run, create_dirs = (bool(self._as_flag(v)) for v in (overwrite, dry_run, create_dirs))
         name_problem = check_path(dst, self.windows_rules)
         if name_problem:
             return self._failure(f"Invalid destination name: {name_problem}")

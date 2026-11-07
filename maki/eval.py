@@ -296,6 +296,7 @@ def _score(case: EvalCase, answer: str, agent: Agent, judge: Optional[Agent]) ->
         if not ok:
             failed.append(detail or "check failed")
     if case.criteria:
+        assert judge is not None  # _validate() requires a judge for criteria cases
         verdict = _judge(judge, case.task, case.criteria, answer)
         if verdict is None:
             return False, "", "the judge gave no usable verdict"
@@ -391,10 +392,11 @@ def run_eval(
 
     report = EvalReport(suite=name)
     for label, target in named:
-        backend = target
         if isinstance(target, str):
             from .backend_factory import init_backend
             backend = init_backend(target)
+        else:
+            backend = target
         if warmup:
             _warm_up(backend, label, report)
         for case in cases:

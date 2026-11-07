@@ -22,7 +22,7 @@ import contextvars
 import functools
 import threading
 import weakref
-from typing import Any, AsyncIterator, Callable, Iterable, TypeVar
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Iterable, TypeVar
 
 T = TypeVar("T")
 
@@ -43,7 +43,7 @@ def async_gate(owner: Any) -> asyncio.Lock:
         gates.get(key)  # probes that this loop type can be weakly referenced
     except TypeError:  # an event loop implementation without weakref support: key by id (a tiny leak)
         gates = owner.__dict__.setdefault("_async_gates_by_id", {})
-        key = id(loop)
+        key = id(loop)  # type: ignore[assignment]  # the fallback keys by id
     gate = gates.get(key)
     if gate is None:
         gate = gates[key] = asyncio.Lock()
@@ -83,7 +83,7 @@ def _pump(make_iterable: Callable[[], Iterable[T]], post: Callable[..., None], s
                 pass
 
 
-async def aiterate(make_iterable: Callable[[], Iterable[T]]) -> AsyncIterator[T]:
+async def aiterate(make_iterable: Callable[[], Iterable[T]]) -> AsyncGenerator[T, None]:
     """Iterate a blocking iterable on a worker thread, yielding its items to the event loop.
 
     *make_iterable* is called on the worker thread (so a generator function's body, including its

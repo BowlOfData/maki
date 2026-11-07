@@ -102,16 +102,16 @@ class WorkflowTask:
         self.loop = loop
         self.gate_reason: Optional[str] = None
         self.status = TaskStatus.PENDING
-        self.result = None
+        self.result: Any = None
         # Structured output from this task.  Populated by the agent (or post-processor)
         # after execution.  Dependents receive it via the ``context`` dict under their
         # dependency name, so downstream agents can consume typed data directly rather
         # than parsing free-text strings.
         self.data: Optional[Dict[str, Any]] = None
-        self.timestamp = None
+        self.timestamp: Optional[float] = None
         self.attempts = 0
         self.execution_time = 0.0
-        self.resources_used = {}
+        self.resources_used: Dict[str, Any] = {}
 
     def to_dict(self) -> dict:
         """Serialize to a JSON-compatible dict.
@@ -193,15 +193,15 @@ class WorkflowState:
 
     def __init__(self, workflow_id: str):
         self.workflow_id = workflow_id
-        self.tasks = {}
+        self.tasks: Dict[str, Any] = {}
         self.status = "running"
         self.start_time = time.time()
-        self.end_time = None
-        self.metrics = {}
-        self.error_log = []
+        self.end_time: Optional[float] = None
+        self.metrics: Dict[str, Any] = {}
+        self.error_log: List[Any] = []
 
     def update_task_status(self, task_name: str, status: TaskStatus, result: Any = None,
-                           execution_time: float = 0.0, resources_used: Dict = None,
+                           execution_time: float = 0.0, resources_used: Optional[Dict] = None,
                            data: Optional[Dict[str, Any]] = None,
                            reason: Optional[str] = None,
                            verification: Optional[Dict[str, Any]] = None):

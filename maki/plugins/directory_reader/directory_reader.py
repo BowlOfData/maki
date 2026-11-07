@@ -27,7 +27,7 @@ class DirectoryReader(FileReader):
         "read_directory_as_text",
     ]
 
-    def __init__(self, maki_instance=None, base_dir: str = None):
+    def __init__(self, maki_instance=None, base_dir: Optional[str] = None):
         """
         Initialize the DirectoryReader plugin.
 
@@ -233,7 +233,7 @@ class DirectoryReader(FileReader):
         return result
 
 
-def register_plugin(maki_instance=None, base_dir: str = None):
+def register_plugin(maki_instance=None, base_dir: Optional[str] = None):
     """
     Register the DirectoryReader plugin with the Maki framework.
 

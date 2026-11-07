@@ -19,7 +19,7 @@ import logging
 import os
 import time
 from abc import abstractmethod
-from typing import List, Optional
+from typing import Any, Iterable, List, Optional
 
 from . import makiOpenAI
 from .config import DEFAULT_REQUEST_TIMEOUT
@@ -137,7 +137,7 @@ class OpenAICompatServer(ContextAware, makiOpenAI.MakiOpenAI):
             self._context_cache = cached
         return cached
 
-    def _note_request(self, messages: list, context_length: Optional[int] = None) -> None:
+    def _note_request(self, messages: Iterable[Any], context_length: Optional[int] = None) -> None:
         # The window is only worth a probe for prompts big enough to be judged at all.
         if context_length is None and self.on_truncation != "ignore" \
                 and estimate_tokens(messages_chars(messages)) >= self._size_check.min_tokens:

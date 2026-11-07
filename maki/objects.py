@@ -2,7 +2,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field, fields
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, Optional
 import threading
 import time as _time
 
@@ -208,7 +208,7 @@ class ConversationMemory:
         for i, m in enumerate(self._messages):
             length = m.size()
             if self._is_older(i, count):  # shortened turns lose their tool trace too
-                length = min(len(m.content), self._older_chars + self._CLIP_MARKER_CHARS)
+                length = min(len(m.content), (self._older_chars or 0) + self._CLIP_MARKER_CHARS)
             total += max(1, length // 4)
         return total
 
@@ -358,7 +358,7 @@ def clip_entry(entry: dict, limit: Optional[int]) -> dict:
     """Return ``entry`` with every long text or structured value clipped to ``limit`` characters."""
     if limit is None:
         return entry
-    out = {}
+    out: Dict[str, Any] = {}
     for key, value in entry.items():
         if value is None or isinstance(value, (bool, int, float)):
             out[key] = value

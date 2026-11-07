@@ -273,7 +273,7 @@ class FallbackBackend(LLMBackend):
         last: Optional[BaseException] = None
         for index, backend in enumerate(ordered):
             try:
-                result = await backend.async_chat(prompt, history=history, config=config, system=system,
+                result = await backend.async_chat(prompt,  # type: ignore[attr-defined]  # filtered to async-capable backends above history=history, config=config, system=system,
                                                   images=images)
             except Exception as exc:
                 if not self._on(exc):

@@ -104,7 +104,7 @@ class Agent(PluginHandler, ReasoningEngine):
         self.stateful = stateful
         self.use_streaming = use_streaming
         self.allow_dangerous_tools = allow_dangerous_tools
-        self.memory = {}
+        self.memory: Dict[str, Any] = {}
         self.memory_policy: Optional[MemoryPolicy] = (
             MemoryPolicy.from_dict(memory) if isinstance(memory, dict) else memory)
         if self.memory_policy is not None and not isinstance(self.memory_policy, MemoryPolicy):
@@ -317,7 +317,7 @@ class Agent(PluginHandler, ReasoningEngine):
             # Native tool-calling path: backend drives structured tool calls.
             return self.execute_with_native_tools(task, context, system_msg)
         user_msg = self._build_user_message(task, context, use_plugins)
-        chat_kwargs = {"system": system_msg}
+        chat_kwargs: Dict[str, Any] = {"system": system_msg}
         history = self._history_messages()
         if history is not None:
             chat_kwargs["history"] = history
@@ -542,7 +542,7 @@ class Agent(PluginHandler, ReasoningEngine):
                 self._fold_summary()
         system_msg = self._build_system_message()
         user_msg = self._build_user_message(task, context, use_plugins)
-        stream_kwargs = {"system": system_msg}
+        stream_kwargs: Dict[str, Any] = {"system": system_msg}
         history = self._history_messages()
         if history is not None:
             stream_kwargs["history"] = history

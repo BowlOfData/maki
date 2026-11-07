@@ -51,7 +51,7 @@ class AgentManager:
         logger.info("AgentManager initialized")
 
     def add_agent(self, name: str, role: str = "", instructions: str = "",
-                  maki_instance: LLMBackend = None, use_streaming: bool = False, *,
+                  maki_instance: Optional[LLMBackend] = None, use_streaming: bool = False, *,
                   stateful: bool = False, allow_dangerous_tools: bool = False,
                   memory: Optional[Union[MemoryPolicy, dict]] = None,
                   tool_policy: Optional[Union[ToolPolicy, dict]] = None,
@@ -642,6 +642,7 @@ class AgentManager:
     def _run_loop_task(self, wt: WorkflowTask, agent: Any, context: Dict, state: WorkflowState, start: float):
         """Run a ``loop=`` task: COMPLETED only when its loop succeeds, otherwise FAILED."""
         cfg = wt.loop
+        assert cfg is not None
         judge = self.get_agent(cfg.judge)
         goal = wt.task + (f"\n\nContext: {json.dumps(context, default=str)}" if context else "")
         spec = cfg.to_spec(f"{state.workflow_id}/{wt.name}", goal)
@@ -652,7 +653,7 @@ class AgentManager:
 
         # Resume this task's loop only when it is the same work (goal and requirements unchanged).
         try:
-            checkpoint = LoopStore(spec.loop_dir).load()
+            checkpoint = LoopStore(str(spec.loop_dir)).load()
         except (OSError, ValueError):  # unreadable checkpoint: start over rather than fail the task
             checkpoint = None
         if not isinstance(checkpoint, dict):
@@ -661,7 +662,7 @@ class AgentManager:
                      and checkpoint.get("goal") == spec.goal
                      and checkpoint.get("requirements_fingerprint") == _fingerprint(spec.requirements))
         runner = resume_loop if resumable else run_loop
-        extra = {} if resumable else {"overwrite": True}  # a changed goal/requirements replaces the old attempt
+        extra: Dict[str, Any] = {} if resumable else {"overwrite": True}  # a changed goal/requirements replaces the old attempt
         result = runner(agent, judge, spec, on_iteration=log_iteration, **extra)
 
         wt.attempts += result.iterations
@@ -786,8 +787,10 @@ class AgentManager:
         """``(name, result)`` if the task is parked, rejected or failed at its approval gate, else None."""
         ctx = context or {}
         try:
-            key = wt.approval.key_fn(ctx)
-            summary = wt.approval.summary_fn(ctx) if wt.approval.summary_fn else wt.task
+            approval = wt.approval
+            assert approval is not None
+            key = approval.key_fn(ctx)
+            summary = approval.summary_fn(ctx) if approval.summary_fn else wt.task
             decision = approval_store.check(state.workflow_id, wt.name, key, summary)
         except Exception as e:  # fail closed: never run on an approval error
             err = f"approval check failed: {e}"

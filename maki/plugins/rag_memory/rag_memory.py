@@ -363,7 +363,7 @@ def _chunk_text(text: str, size: int, overlap: int) -> List[str]:
     # Split on sentence boundaries where possible
     sentences = re.split(r"(?<=[.!?])\s+", text)
     chunks = []
-    current = []
+    current: List[str] = []
     current_len = 0
 
     for sentence in sentences:

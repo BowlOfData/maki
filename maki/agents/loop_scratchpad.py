@@ -23,7 +23,7 @@ import tempfile
 try:  # POSIX
     import fcntl
 except ImportError:  # pragma: no cover - Windows
-    fcntl = None
+    fcntl = None  # type: ignore[assignment]
     import msvcrt
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional

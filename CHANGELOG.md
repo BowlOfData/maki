@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The wheel no longer contains the test suite and dev tools (`maki/test`); the sdist still does. `include-package-data` is off, so only declared data (`py.typed`, the GUI's QML) ships
 - SPDX `license = "MIT"` with `license-files` (needs setuptools >= 77); `Development Status :: 4 - Beta` classifier
 - CI: coverage floor (85%), `pip-audit`, a package job (build, `twine check`, install the wheel and import it); publishing now runs the test suite first and `twine check`s the artifacts. Dependabot for pip and GitHub Actions
+- Type checking: the shipped package is clean under `mypy maki` (config in `pyproject.toml`; the test suite and dev tools are excluded) and CI runs it. Fixes were annotations and implicit-`Optional` defaults, plus two small behaviour-neutral guards; `Decision.CONTINUE/STOP` are declared `ClassVar`s and `aiterate` is typed as an `AsyncGenerator`
 - Added `SECURITY.md`, `CONTRIBUTING.md` (with the stability and deprecation policy), `CODE_OF_CONDUCT.md`, `CODEOWNERS`, issue and PR templates; `.vscode/` is no longer tracked
 
 ### Testing

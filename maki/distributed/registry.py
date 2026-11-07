@@ -21,7 +21,7 @@ Usage
     ])
 """
 import logging
-from typing import Optional
+from typing import Any, Optional, cast
 
 from ..agents.agent_manager import AgentManager
 from .proxy import AgentProxy
@@ -70,7 +70,7 @@ class DistributedAgentManager(AgentManager):
             raise ValueError("Agent name must be a non-empty string")
 
         proxy = AgentProxy(endpoint=endpoint, api_key=api_key, timeout=timeout)
-        self.agents[name] = proxy
+        self.agents[name] = cast(Any, proxy)  # same surface as Agent
         logger.info(
             "Registered remote agent '%s' → %s (server name: '%s')",
             name, endpoint, proxy.name,

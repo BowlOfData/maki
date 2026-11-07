@@ -8,13 +8,13 @@ suitable for LLM context. Generic — no domain-specific knowledge.
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class JsonReader:
     """Plugin that reads a JSON array file and returns selected fields as compact text."""
 
-    def __init__(self, maki_instance=None, base_dir: str = None):
+    def __init__(self, maki_instance=None, base_dir: Optional[str] = None):
         self.maki = maki_instance
         self.logger = logging.getLogger(__name__)
         self.base_dir = os.path.realpath(base_dir if base_dir is not None else os.getcwd())
@@ -118,5 +118,5 @@ class JsonReader:
         return result
 
 
-def register_plugin(maki_instance=None, base_dir: str = None):
+def register_plugin(maki_instance=None, base_dir: Optional[str] = None):
     return JsonReader(maki_instance, base_dir=base_dir)

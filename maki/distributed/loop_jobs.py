@@ -104,6 +104,8 @@ def _usable_state(state: Any) -> bool:
 
 
 def _parse_requirement(n: int, item: Union[str, Mapping[str, Any]]) -> Requirement:
+    rid: str
+    text: Any
     if isinstance(item, str):
         rid, text = f"r{n}", item
     elif isinstance(item, Mapping):
@@ -511,7 +513,8 @@ class LoopJobs:
     @staticmethod
     def _snapshot_from_state(loop_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
         status = str(state.get("status", "unknown"))
-        reqs = state.get("requirements") if isinstance(state.get("requirements"), list) else []
+        raw_reqs = state.get("requirements")
+        reqs: List[Any] = raw_reqs if isinstance(raw_reqs, list) else []
         return {
             "id": loop_id, "status": "interrupted" if status == "running" else status,
             "goal": state.get("goal", ""),
@@ -536,7 +539,7 @@ class LoopJobs:
         for name in names:
             state = self._load_state(name)
             lid = state.get("loop_id") if state else None
-            if not isinstance(lid, str) or not LOOP_ID_PATTERN.match(lid) or lid in known:
+            if state is None or not isinstance(lid, str) or not LOOP_ID_PATTERN.match(lid) or lid in known:
                 continue
             known[lid] = self._snapshot_from_state(lid, state)
         return sorted(known.values(), key=lambda s: (s.get("created_at") or 0, s["id"]), reverse=True)

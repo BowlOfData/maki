@@ -16,7 +16,7 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..callbacks import fire
 from ..exceptions import MakiValidationError
@@ -233,6 +233,10 @@ class PluginHandler:
     contract definition.
     """
 
+    # Provided by the host class (checked at construction; annotations only, they create no attribute).
+    maki: Any
+    name: str
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Wrap the subclass ``__init__`` to enforce the plugin contract."""
         super().__init_subclass__(**kwargs)
@@ -257,8 +261,8 @@ class PluginHandler:
             if not hasattr(self, 'plugins'):
                 self.plugins = {}
 
-        _checked._plugin_contract_checked = True
-        cls.__init__ = _checked
+        setattr(_checked, '_plugin_contract_checked', True)
+        setattr(cls, '__init__', _checked)
 
     def _call_llm(self, prompt: str) -> str:
         """Send a plain prompt to the backend and return the response text."""
@@ -283,7 +287,7 @@ class PluginHandler:
             )
         self.plugins: Dict = {}
 
-    def load_plugin(self, plugin_name: str, plugin_path: str = None, **options):
+    def load_plugin(self, plugin_name: str, plugin_path: Optional[str] = None, **options):
         """
         Load a plugin for this agent.
 

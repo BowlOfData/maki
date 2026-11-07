@@ -73,7 +73,9 @@ class Journal:
             return
         current = now.year * 12 + now.month
         for name in self._month_files():
-            year, month = (int(g) for g in _FILE.match(name).groups())
+            matched = _FILE.match(name)
+            assert matched is not None  # _month_files() lists only names matching _FILE
+            year, month = (int(g) for g in matched.groups())
             if current - (year * 12 + month) >= self.retention_months:
                 try:
                     os.unlink(os.path.join(self.directory, name))

@@ -56,6 +56,7 @@ class _OutputTail:
 
     def _pump(self) -> None:
         while True:
+            assert self._proc.stdout is not None
             chunk = self._proc.stdout.read(8192)
             if not chunk:
                 return
@@ -109,7 +110,8 @@ def run_command_check(argv: Sequence[str], cwd: Optional[str] = None,
             return CheckResult(False, f"command timed out after {timeout}s: {' '.join(argv)}")
     finally:
         if not reader.alive():  # closing a pipe another thread is blocked on would hang; leave it
-            proc.stdout.close()
+            if proc.stdout is not None:
+                proc.stdout.close()
     output = reader.text
     if proc.returncode == 0:
         return CheckResult(True, output)

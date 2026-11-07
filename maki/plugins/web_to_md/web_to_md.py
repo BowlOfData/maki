@@ -85,7 +85,7 @@ class WebToMd:
     # Public API
     # ------------------------------------------------------------------
 
-    def fetch_and_convert_to_md(self, url: str, output_file: str = None) -> Dict[str, Any]:
+    def fetch_and_convert_to_md(self, url: str, output_file: Optional[str] = None) -> Dict[str, Any]:
         """
         Fetch a web page and convert its article body to Markdown.
 

@@ -39,7 +39,7 @@ import time
 import uuid
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 from .approvals import ApprovalDecision, ApprovalStore
 from .loop_judge import CheckResult, _last_json_object, judge_requirements, run_command_check
@@ -115,6 +115,8 @@ class StopReason(Enum):
 class Decision:
     """A human's answer from the ``on_iteration`` hook: keep going (optionally with a note
     the agent must address next iteration) or stop."""
+    CONTINUE: ClassVar["Decision"]
+    STOP: ClassVar["Decision"]
     stop: bool = False
     note: str = ""
 
@@ -228,7 +230,7 @@ class LoopTask:
 
     def to_spec(self, loop_id: str, goal: str) -> LoopSpec:
         base = self.loop_dir_base or os.path.dirname(default_loop_dir("x"))
-        return LoopSpec(goal, self.requirements, max_iterations=self.max_iterations, max_seconds=self.max_seconds,
+        return LoopSpec(goal, cast(Sequence[Requirement], self.requirements), max_iterations=self.max_iterations, max_seconds=self.max_seconds,
                         stall_limit=self.stall_limit, context=self.context, use_plugins=self.use_plugins,
                         artifact_fn=self.artifact_fn, cwd=self.cwd, loop_id=loop_id,
                         loop_dir=os.path.join(base, *(safe_id(part) for part in loop_id.split("/"))),
@@ -340,7 +342,7 @@ def draft_requirements(agent: Any, goal: str, max_items: int = 8) -> Tuple[Requi
     raw = agent.execute_task_with_retry(prompt)
     obj = _last_json_object(getattr(raw, "text", raw) if not isinstance(raw, str) else raw, "requirements")
     items = obj.get("requirements") if obj else None
-    texts = [i.get("text") for i in items if isinstance(i, dict) and isinstance(i.get("text"), str)
+    texts: List[str] = [i["text"] for i in items if isinstance(i, dict) and isinstance(i.get("text"), str)
              and i["text"].strip()] if isinstance(items, list) else []
     if not texts:
         raise ValueError("the drafting agent returned no usable requirements")
@@ -391,11 +393,11 @@ def _failing_text(reqs: Sequence[Requirement], results: Dict[str, CheckResult], 
     verdict (or none), so "the judge failed" is never presented as something to fix."""
     lines = []
     for r in reqs:
-        res = results[r.id]
+        res: Optional[CheckResult] = results[r.id]
         if judge_error and r.kind == "agent":
             res = (last_good or {}).get(r.id)
-            if res is None:
-                continue
+        if res is None:
+            continue
         if not res.passed:
             lines.append(f"- {r.id} ({r.text}): {res.feedback or 'not met'}")
     return "\n".join(lines)

@@ -144,8 +144,8 @@ class FTPClient:
             'error': None
         }
 
-    def connect(self, host: str, username: str, password: str = None, port: int = None,
-                protocol: str = 'ftp', cert_path: str = None, known_hosts_path: str = None) -> Dict[str, Any]:
+    def connect(self, host: str, username: str, password: Optional[str] = None, port: Optional[int] = None,
+                protocol: str = 'ftp', cert_path: Optional[str] = None, known_hosts_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Connect to an FTP or SFTP server.
 
@@ -240,7 +240,7 @@ class FTPClient:
         if cert_path and os.path.exists(cert_path):
             auth = {'key_filename': cert_path}
         else:
-            auth = {'password': password}
+            auth = {'password': password}  # type: ignore[dict-item]  # None means key-less/agent auth
         self.sftp_connection.connect(hostname=host, port=port, username=username, timeout=30, **auth)
 
         self.connected = True
@@ -255,7 +255,7 @@ class FTPClient:
                 - 'success': Boolean indicating if disconnection was successful
                 - 'error': Error message if disconnection failed
         """
-        result = {
+        result: Dict[str, Any] = {
             'success': False,
             'error': None
         }

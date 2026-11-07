@@ -632,7 +632,7 @@ class WebSearch:
 
         published_str = ""
         if entry.get("published_parsed"):
-            post_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+            post_dt = datetime(*entry.published_parsed[:6]).replace(tzinfo=timezone.utc)
             if not (week_start <= post_dt <= now):
                 return None
             published_str = post_dt.strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -232,7 +232,7 @@ class _PinnedHTTPSConnection(HTTPSConnection):
     def _new_conn(self) -> socket.socket:
         # Preserve the original hostname for SNI / certificate matching
         # before the socket target is swapped to the validated IP.
-        if self.server_hostname is None:
+        if getattr(self, "server_hostname", None) is None:
             self.server_hostname = self.host
         return _connect_pinned(self, lambda: HTTPSConnection._new_conn(self))
 

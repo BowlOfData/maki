@@ -21,7 +21,7 @@ class FileReader:
     # Methods callable by the LLM via TOOL: directives (read-only).
     ALLOWED_METHODS = ["read_file", "read_file_as_lines", "get_file_info"]
 
-    def __init__(self, maki_instance=None, base_dir: str = None):
+    def __init__(self, maki_instance=None, base_dir: Optional[str] = None):
         """
         Initialize the FileReader plugin.
 
@@ -264,7 +264,7 @@ class FileReader:
 
 
 # Plugin registration function
-def register_plugin(maki_instance=None, base_dir: str = None):
+def register_plugin(maki_instance=None, base_dir: Optional[str] = None):
     """
     Register the FileReader plugin with the Maki framework.
 

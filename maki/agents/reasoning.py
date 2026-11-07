@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from ..exceptions import MakiNetworkError, MakiTimeoutError, MakiAPIError
 from ..objects import clip_entry
@@ -95,6 +95,10 @@ class ReasoningEngine:
     contract definition.
     """
 
+    # Provided by the host class (checked at construction; annotations only, they create no attribute).
+    maki: Any
+    reasoning_history: Any
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Wrap the subclass ``__init__`` to enforce the reasoning contract."""
         super().__init_subclass__(**kwargs)
@@ -114,8 +118,8 @@ class ReasoningEngine:
                     f"attributes before __init__ returns."
                 )
 
-        _checked._reasoning_contract_checked = True
-        cls.__init__ = _checked
+        setattr(_checked, '_reasoning_contract_checked', True)
+        setattr(cls, '__init__', _checked)
 
     def _call_llm(self, prompt: str) -> str:
         """Send a plain prompt to the backend and return the response text."""

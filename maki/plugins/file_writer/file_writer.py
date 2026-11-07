@@ -7,7 +7,7 @@ It allows agents to write content to files with various options for handling exi
 
 import os
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 
 class FileWriter:
@@ -28,7 +28,7 @@ class FileWriter:
     ]
     DANGEROUS_METHODS = ["write_file", "append_to_file", "write_file_lines"]
 
-    def __init__(self, maki_instance=None, base_dir: str = None):
+    def __init__(self, maki_instance=None, base_dir: Optional[str] = None):
         """
         Initialize the FileWriter plugin.
 
@@ -319,7 +319,7 @@ class FileWriter:
 
 
 # Plugin registration function
-def register_plugin(maki_instance=None, base_dir: str = None):
+def register_plugin(maki_instance=None, base_dir: Optional[str] = None):
     """
     Register the FileWriter plugin with the Maki framework.
 
