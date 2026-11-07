@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
+
 ### Added
 - Typed messages: `Message` can carry `tool_calls`, a tool result (`role="tool"` with `tool_call_id` and `name`) and a stored `tool_trace`; `ToolCall` and `LLMResponse` (new `tool_calls` field) serialise them. New fields are written only when set, so plain messages and old snapshots are unchanged
 - `LLMBackend.chat_turn(messages, tool_specs, system=, config=)`: one tool-aware round over typed messages that returns an `LLMResponse` with `tool_calls` (every call gets an id, invented when the provider has none) and real token counts on tool rounds. Implemented by the Ollama, OpenAI, OpenRouter, llama.cpp, vLLM and Anthropic backends (`supports_typed_messages`, `to_wire_messages`); the dict-based `chat_with_tools` / `append_tool_results` still work for custom backends
