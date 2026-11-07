@@ -28,6 +28,10 @@ class MakiTimeoutError(MakiNetworkError):
     pass
 
 
+class MakiContextError(MakiError):
+    """A server silently cut a prompt to fit its context window (raised when ``on_truncation="error"``)."""
+
+
 class MakiAPIError(MakiError):
     """Exception raised for API response errors"""
 

@@ -34,6 +34,7 @@ from .config import (
     VLLM_API_KEY_ENV,
 )
 from .connector import Connector
+from .context import ContextInfo
 from .makiOpenAICompat import OpenAICompatServer
 from .objects import BackendType, GenerationConfig, LLMResponse
 
@@ -83,11 +84,22 @@ class MakiVllm(OpenAICompatServer):
         timeout: int = DEFAULT_REQUEST_TIMEOUT,
         rate_limit: Optional[int] = None,
         base_url: str = DEFAULT_VLLM_BASE_URL,
+        on_truncation: str = "warn",
     ) -> None:
         super().__init__(
             model=model, base_url=base_url, api_key=api_key, config=config,
-            system_prompt=system_prompt, timeout=timeout, rate_limit=rate_limit,
+            system_prompt=system_prompt, timeout=timeout, rate_limit=rate_limit, on_truncation=on_truncation,
         )
+
+    def _probe_context(self) -> ContextInfo:
+        """The served model's context length (``max_model_len`` in the model list), when the server reports it."""
+        listing = Connector.json_or_raise(self._http.get(
+            f"{self.base_url}/models", headers=self._headers(), timeout=5))
+        for entry in listing.get("data", []):
+            length = entry.get("max_model_len")
+            if entry.get("id") == self.model and isinstance(length, int) and length > 0:
+                return ContextInfo(loaded_length=length, source="vllm")
+        return ContextInfo(source="vllm")
 
     def _server_extra_body(self, cfg: GenerationConfig) -> dict:
         """Add the vLLM sampling and structured-output parameters."""

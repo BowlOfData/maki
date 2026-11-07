@@ -196,3 +196,49 @@ class TestFallbackUsesRetryAfter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRedaction(unittest.TestCase):
+    def test_credential_parameters_are_masked_and_the_rest_is_kept(self):
+        from maki.connector import redact
+        cases = {
+            "GET https://x.test/v1?api_key=SECRET123&q=cats failed": "GET https://x.test/v1?api_key=***&q=cats failed",
+            "url: /p?q=1&token=abc.def-1_2&z=3": "url: /p?q=1&token=***&z=3",
+            "https://x.test/?KEY=AbC": "https://x.test/?KEY=***",
+            "https://x.test/?access_token=zzz#frag": "https://x.test/?access_token=***#frag",
+            "https://x.test/?password=p%40ss&user=bob": "https://x.test/?password=***&user=bob",
+            "('Connection aborted.', url: /a?signature=ff00&b=2)": "('Connection aborted.', url: /a?signature=***&b=2)",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(redact(text), expected)
+        self.assertEqual(redact("no secrets here: key words"), "no secrets here: key words")
+        self.assertEqual(redact(12345), "12345")
+
+    def test_errors_from_the_connector_do_not_carry_the_key(self):
+        c = Connector(ssrf_protect=False, rate_limit_retries=0)
+        c._session.get = MagicMock(side_effect=requests.exceptions.ConnectionError(
+            "Max retries exceeded with url: /v1?api_key=TOPSECRET&q=1"))
+        with self.assertRaises(Exception) as caught:
+            c.get("http://x.test/v1?api_key=TOPSECRET&q=1")
+        self.assertNotIn("TOPSECRET", str(caught.exception))
+        self.assertIn("api_key=***", str(caught.exception))
+
+    def test_the_retry_log_line_does_not_carry_the_key(self):
+        c = Connector(ssrf_protect=False)
+        c._session.get = MagicMock(side_effect=[response(429, {"Retry-After": "1"}), response(200)])
+        with patch("maki.connector.time.sleep"), self.assertLogs("maki.connector", "WARNING") as logs:
+            c.get("http://x.test/v1?token=TOPSECRET")
+        self.assertNotIn("TOPSECRET", "\n".join(logs.output))
+        self.assertIn("token=***", "\n".join(logs.output))
+
+    def test_async_errors_are_masked_too(self):
+        async def run():
+            def handler(request):
+                raise httpx.ConnectError("boom for https://x.test/?api_key=TOPSECRET")
+            real = httpx.AsyncClient
+            with patch("httpx.AsyncClient", lambda **k: real(transport=httpx.MockTransport(handler), **k)):
+                return await AsyncConnector(ssrf_protect=False).get("http://x.test/?api_key=TOPSECRET")
+        with self.assertRaises(Exception) as caught:
+            asyncio.run(run())
+        self.assertNotIn("TOPSECRET", str(caught.exception))

@@ -48,6 +48,8 @@ nav:
       - Agent memory: agent-memory.md
       - Memory (Obsidian and RAG): memory.md
       - Agent loops: loops.md
+      - Skills: skills.md
+      - Evaluating models: eval.md
       - Serving agents: serving.md
   - Reference:
       - Configuration: configuration.md

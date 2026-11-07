@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import time
 import logging
+from dataclasses import replace
 from typing import Generator, Optional, Union
 
 
@@ -28,6 +29,8 @@ from .connector import AsyncConnector, Connector
 from .utils import Utils
 from .objects import LLMResponse, Message, GenerationConfig, RateLimiter, BackendType, ToolCall
 from .session import ChatSession
+from .context import (DEFAULT_NUM_CTX_CAP, ContextAware, ContextInfo, choose_num_ctx, estimate_tokens,
+                      messages_chars)
 from .exceptions import MakiNetworkError
 
 # ---------------------------------------------------------------------------
@@ -35,12 +38,14 @@ from .exceptions import MakiNetworkError
 # ---------------------------------------------------------------------------
 log = logging.getLogger(__name__)
 
+_PROBE_TIMEOUT = 5  # seconds: a probe must not hold up a request the way a generation may
+
 # ---------------------------------------------------------------------------
 # Core wrapper
 # ---------------------------------------------------------------------------
 
 
-class MakiLLama(LLMBackend):
+class MakiLLama(ContextAware, LLMBackend):
     """
     A flexible wrapper around the Ollama HTTP API.
 
@@ -79,6 +84,9 @@ class MakiLLama(LLMBackend):
         think: Optional[bool] = None,
         json_format: bool = False,
         keep_alive: Optional[str] = None,
+        num_ctx: Union[int, str, None] = None,
+        num_ctx_cap: int = DEFAULT_NUM_CTX_CAP,
+        on_truncation: str = "warn",
     ) -> None:
         self.model = model
         self.temperature = config.temperature if config else DEFAULT_TEMPERATURE
@@ -90,6 +98,7 @@ class MakiLLama(LLMBackend):
         self.think = think
         self.json_format = json_format
         self.keep_alive = keep_alive
+        self._init_context(num_ctx, num_ctx_cap, on_truncation)
         # Operator-configured endpoint: private/LAN addresses are legitimate
         # (loopback Ollama is the common case), so allow_private=True.
         self._http = Connector(timeout=timeout, allow_private=True)
@@ -183,6 +192,89 @@ class MakiLLama(LLMBackend):
     # Core generation
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Context window (see maki.context)
+    # ------------------------------------------------------------------
+
+    def _init_context(self, num_ctx: Union[int, str, None], cap: int, on_truncation: str) -> None:
+        if num_ctx is not None and num_ctx != "auto" and (
+                isinstance(num_ctx, bool) or not isinstance(num_ctx, int) or num_ctx < 1):
+            raise ValueError("num_ctx must be a positive integer, 'auto' or None")
+        if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
+            raise ValueError("num_ctx_cap must be a positive integer")
+        self._init_size_check(on_truncation)
+        self.num_ctx_cap = cap
+        self._auto_num_ctx = num_ctx == "auto"
+        self._resolved_num_ctx: Optional[int] = None  # chosen once, then kept (a change reloads the model)
+        self._context_hint = 0
+        self._max_context: Optional[int] = None
+        if isinstance(num_ctx, int):
+            self.config = replace(self.config, num_ctx=num_ctx)
+
+    def hint_context(self, tokens: int) -> None:
+        """Tell an ``num_ctx="auto"`` backend how many prompt tokens its user expects to need.
+
+        :class:`~maki.agents.agent.Agent` calls this with its history budget. It costs nothing: the window is
+        chosen at the first request. Without a hint the first request's own size decides.
+        """
+        self._context_hint = max(self._context_hint, int(tokens))
+
+    def context_info(self) -> ContextInfo:
+        """The model's maximum context (``/api/show``) and the window it is loaded with (``/api/ps``).
+
+        Either value is None when Ollama does not report it or cannot be reached.
+        """
+        max_length = loaded = None
+        try:
+            shown = Connector.json_or_raise(self._http.post(
+                f"{self.base_url}/api/show", json={"model": self.model, "name": self.model}, timeout=_PROBE_TIMEOUT))
+            sizes = [v for k, v in (shown.get("model_info") or {}).items()
+                     if k.endswith(".context_length") and isinstance(v, int)]
+            max_length = max(sizes) if sizes else None
+        except Exception as exc:  # a probe must never break a request
+            log.debug("context probe (/api/show) failed: %s", exc)
+        try:
+            running = Connector.json_or_raise(self._http.get(f"{self.base_url}/api/ps", timeout=_PROBE_TIMEOUT))
+            for entry in running.get("models", []):
+                if entry.get("name") in (self.model, f"{self.model}:latest") or entry.get("model") == self.model:
+                    loaded = entry.get("context_length") if isinstance(entry.get("context_length"), int) else None
+        except Exception as exc:
+            log.debug("context probe (/api/ps) failed: %s", exc)
+        if max_length:
+            self._max_context = max_length
+        return ContextInfo(max_length, loaded, "ollama")
+
+    def _learn_window(self) -> Optional[int]:
+        """The window the model is loaded with (``/api/ps``), remembered once found."""
+        known = getattr(self, "_loaded_window", None)
+        if known:
+            return known
+        try:
+            running = Connector.json_or_raise(self._http.get(f"{self.base_url}/api/ps", timeout=_PROBE_TIMEOUT))
+        except Exception as exc:  # the check just stays silent
+            log.debug("context probe (/api/ps) failed: %s", exc)
+            return None
+        for entry in running.get("models", []):
+            if entry.get("name") in (self.model, f"{self.model}:latest") or entry.get("model") == self.model:
+                length = entry.get("context_length")
+                if isinstance(length, int) and length > 0:
+                    self._loaded_window = length
+                    return length
+        return None
+
+    def _prepare_context(self, messages: list, options: dict) -> None:
+        """Fix ``num_ctx`` in *options* for ``"auto"`` backends and note the request for truncation checks."""
+        if getattr(self, "_auto_num_ctx", False) and "num_ctx" not in options:
+            if getattr(self, "_resolved_num_ctx", None) is None:
+                info = self.context_info()
+                need = max(getattr(self, "_context_hint", 0), estimate_tokens(messages_chars(messages)))
+                need += options.get("num_predict") or 0
+                self._resolved_num_ctx = choose_num_ctx(need, model_max=info.max_length, loaded=info.loaded_length,
+                                                        cap=getattr(self, "num_ctx_cap", DEFAULT_NUM_CTX_CAP))
+                log.info("num_ctx fixed at %d for %s (need about %d tokens)", self._resolved_num_ctx, self.model, need)
+            options["num_ctx"] = self._resolved_num_ctx
+        self._note_request(messages, options.get("num_ctx") or getattr(self, "_max_context", None))
+
     def _build_messages(
         self,
         prompt: str,
@@ -219,6 +311,7 @@ class MakiLLama(LLMBackend):
             "stream": stream,
             "options": cfg.to_ollama_options(),
         }
+        self._prepare_context(payload["messages"], payload["options"])
         effective_think = think if think is not None else self.think
         if effective_think is not None:
             payload["think"] = effective_think
@@ -234,6 +327,7 @@ class MakiLLama(LLMBackend):
     def _parse_response(self, data: dict, elapsed: float, *, thinking_fallback: bool = True) -> LLMResponse:
         prompt_tokens = data.get("prompt_eval_count", 0)
         completion_tokens = data.get("eval_count", 0)
+        self._report_prompt_size(prompt_tokens)
         content = data["message"]["content"]
         # Thinking models (gemma4, qwen3, …) may leave content empty when the model
         # exhausted its budget on the reasoning trace. Fall back to the thinking field
@@ -386,6 +480,7 @@ class MakiLLama(LLMBackend):
                 content = thinking
         prompt_tokens = last_data.get("prompt_eval_count", 0)
         completion_tokens = last_data.get("eval_count", 0)
+        self._report_prompt_size(prompt_tokens)
         log.info("chat_collect: %.2fs, %d tokens", elapsed, prompt_tokens + completion_tokens)
         return LLMResponse(
             content=content,
@@ -516,6 +611,21 @@ class MakiLLama(LLMBackend):
         response, tool_calls, updated = self._chat_with_tools_full(messages, tools, system=system, config=config)
         return (None, tool_calls, updated) if tool_calls else (response, None, updated)
 
+    @staticmethod
+    def _tool_calls_from(raw_tool_calls: list) -> list:
+        """Ollama tool calls (arguments as an object or a JSON string) as :class:`ToolCall` objects."""
+        tool_calls = []
+        for tc in raw_tool_calls:
+            fn = tc.get("function", {})
+            args = fn.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            tool_calls.append(ToolCall(id="", name=fn.get("name", ""), args=args))
+        return tool_calls
+
     def _chat_with_tools_full(
         self,
         messages: list,
@@ -546,6 +656,7 @@ class MakiLLama(LLMBackend):
             "stream": False,
             "options": cfg.to_ollama_options(),
         }
+        self._prepare_context(full_messages, payload["options"])
         if tools:
             payload["tools"] = tools
         if self.think is not None:
@@ -563,17 +674,7 @@ class MakiLLama(LLMBackend):
         updated = list(messages) + [msg]
 
         if raw_tool_calls:
-            tool_calls = []
-            for tc in raw_tool_calls:
-                fn = tc.get("function", {})
-                name = fn.get("name", "")
-                args = fn.get("arguments", {})
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except json.JSONDecodeError:
-                        args = {}
-                tool_calls.append(ToolCall(id="", name=name, args=args))
+            tool_calls = self._tool_calls_from(raw_tool_calls)
             log.debug("chat_with_tools: %d tool call(s) requested", len(tool_calls))
             # A tool round's text is not an answer: keep any thinking out of it.
             return self._parse_response(data, elapsed, thinking_fallback=False), tool_calls, updated

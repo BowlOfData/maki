@@ -20,7 +20,7 @@ __all__ = ["LLMBackend", "Connector", "Utils", "Agent", "AgentManager", "MakiLLa
            "LoopSpec", "Requirement",
            "LLMResponse",
            "GenerationConfig", "Message", "ConversationMemory", "MemoryPolicy", "RateLimiter", "BackendType",
-           "ToolCall", "AgentCallback", "LoggingCallback", "ToolPolicy", "init_backend", "FallbackBackend", "config", "__version__"]
+           "ToolCall", "AgentCallback", "LoggingCallback", "ToolPolicy", "init_backend", "FallbackBackend", "EvalCase", "EvalSuite", "run_eval", "SkillRegistry", "config", "__version__"]
 
 _LAZY_EXPORTS = {
     "LLMBackend":     (".backend",       "LLMBackend"),
@@ -50,6 +50,10 @@ _LAZY_EXPORTS = {
     "LoggingCallback": (".callbacks",    "LoggingCallback"),
     "ToolPolicy":     (".agents.tool_policy", "ToolPolicy"),
     "FallbackBackend": (".fallback",     "FallbackBackend"),
+    "EvalCase":       (".eval",          "EvalCase"),
+    "SkillRegistry":  (".skills",        "SkillRegistry"),
+    "EvalSuite":      (".eval",          "EvalSuite"),
+    "run_eval":       (".eval",          "run_eval"),
 }
 
 

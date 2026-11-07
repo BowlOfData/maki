@@ -37,6 +37,10 @@ fallback:                   # optional; backends tried in order when the main on
   - backend: ollama        # or mappings with backend/model/base_url/temperature/think
     model: gemma4:26b
     base_url: http://gpu-box:11434
+skills:                     # optional; Agent Skills the model can load on demand (see docs/user/skills.md)
+  paths: [./skills]         # folders that contain skill folders; trusted
+  trust_project: false      # also load skills from ./.maki, ./.agents and ./.claude skills folders
+  catalog_chars: 4000       # size budget of the skill list shown to the model
 allow_dangerous_tools: false  # optional, default false; opt-in to let TOOL:
                               # directives call methods a plugin marks in
                               # DANGEROUS_METHODS (file writes, FTP, trades)
@@ -147,6 +151,17 @@ def _read_config(path: str) -> dict:
     return cfg
 
 
+def _skills_from_cfg(section):
+    """The ``skills:`` section as what ``Agent(skills=...)`` takes; a bad section is a startup error."""
+    if section is None or section is False:
+        return None
+    from ..skills import coerce_registry
+    try:
+        return coerce_registry(section)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid 'skills' section: {exc}") from exc
+
+
 def _memory_from_cfg(section) -> Optional[MemoryPolicy]:
     if section is None:
         return None
@@ -188,6 +203,7 @@ def _agent_from_cfg(cfg: dict) -> Agent:
         allow_dangerous_tools=bool(cfg.get("allow_dangerous_tools", False)),
         memory=_memory_from_cfg(cfg.get("memory")),
         tool_policy=_tool_policy_from_cfg(cfg.get("tool_policy")),
+        skills=_skills_from_cfg(cfg.get("skills")),
     )
 
     for plugin_name in plugin_names:

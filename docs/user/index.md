@@ -13,11 +13,13 @@ pip install maki-framework
 ## Why Maki
 
 - **Local and hosted models are equals.** Ollama, llama.cpp and vLLM sit next to OpenAI, Anthropic and OpenRouter behind the same `LLMBackend` contract. Agents, workflows and plugins never know which one they are talking to.
-- **Guardrails on by default.** Outbound requests go through a hardened connector that blocks private and reserved address ranges for content-derived URLs. Plugins are fail-closed: a model can only call methods a plugin explicitly lists, and destructive ones stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
-- **Small core.** The base install has three dependencies (`requests`, `httpx`, `python-dotenv`). Everything else is an opt-in extra.
+- **Guardrails on by default.** Outbound requests go through a hardened connector that blocks loopback, private and reserved address ranges for content-derived URLs. Plugins are fail-closed: a model can only call methods a plugin explicitly lists, and destructive ones stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
+- **Small core.** The base install has three dependencies (`requests`, `httpx`, `python-dotenv`, plus `urllib3`, which `requests` already pulls in). Everything else is an opt-in extra.
 - **Agents as services.** `maki serve` exposes any agent over HTTP, and `AgentProxy` lets another process use it as if it were local.
 - **Batteries included.** 18 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution and checkpoint/resume.
 - **Agents that iterate.** Give an agent a goal and requirements and let it loop until a judge or your own checks are satisfied; see [Agent loops](loops.md).
+- **Know your model.** `maki eval` runs your tasks through the whole agent on several models and reports pass rate, time and tokens; maki also notices when a local server silently cuts a prompt that does not fit its context window; see [Evaluating models](eval.md) and [Backends](backends.md#context-windows-on-local-servers).
+- **Skills.** Agents load Agent Skills (`SKILL.md` folders shared with Claude Code and Codex) only when a task needs them, so small context windows stay small; see [Skills](skills.md).
 - **Memory that stays useful.** An opt-in `MemoryPolicy` shortens old turns, pins the facts that must never be lost and clips oversized tool output, so long conversations keep giving correct answers; see [Agent memory](agent-memory.md).
 
 !!! note "Who it is not for"
@@ -35,4 +37,6 @@ pip install maki-framework
 | Let an agent read files or search the web | [Plugins](plugins.md) |
 | Keep a long-running agent's answers correct and its prompts small | [Agent memory](agent-memory.md) |
 | Give an agent a notes vault or a searchable knowledge base | [Memory: Obsidian and RAG](memory.md) |
+| Compare local models on my own tasks | [Evaluating models](eval.md) |
+| Give an agent reusable instructions it loads on demand | [Skills](skills.md) |
 | Expose an agent over HTTP | [Serving agents](serving.md) |

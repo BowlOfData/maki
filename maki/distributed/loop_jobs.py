@@ -349,8 +349,11 @@ class LoopJobs:
             LoopJobNotFound: no such loop.
             ValueError: it cannot be resumed over HTTP (finished successfully, or it had
                 commands/callables) or a value is above the caps.
-            LoopJobBusy: another loop is already running.
+            LoopJobBusy: this loop, or another one, is already running.
         """
+        live = self.get(loop_id)
+        if live is not None and not live.finished:  # running: not "not found", though it may have no checkpoint yet
+            raise LoopJobBusy("this loop is still running")
         state = self._load_state(loop_id)
         if state is None:
             if os.path.exists(os.path.join(self.caps.loop_dir_base, safe_id(loop_id), "state.json")):

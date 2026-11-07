@@ -6,7 +6,22 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  test:
+    # Never publish a tag that does not pass the suite.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install and test
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,openai,anthropic,distributed,distributed-redis,ftp,web,trends,alpaca]"
+          pytest
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,9 +30,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build tooling
-        run: python -m pip install --upgrade pip build
+        run: python -m pip install --upgrade pip build twine
       - name: Build sdist and wheel
-        run: python -m build
+        run: |
+          python -m build
+          twine check dist/*
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

@@ -3,6 +3,7 @@ Tests for the hardened HTTP layer (maki/connector.py): URL validation,
 DNS resolution + pinning, error classification, and config-driven timeouts.
 """
 import asyncio
+import os
 import socket
 import unittest
 from unittest.mock import MagicMock, patch
@@ -55,9 +56,64 @@ class TestValidateUrl(unittest.TestCase):
         with self.assertRaises(MakiValidationError):
             validate_url("http://192.168.1.1/admin")
 
-    def test_allows_loopback(self):
-        validate_url("http://127.0.0.1:11434/api/chat")
-        validate_url("http://localhost:11434/api/chat")
+    def test_loopback_literals_are_refused_for_content_derived_urls(self):
+        for url in ("http://127.0.0.1:11434/api/chat", "http://[::ffff:127.0.0.1]/", "http://[::1]/"):
+            with self.subTest(url=url), self.assertRaisesRegex(MakiValidationError, "loopback"):
+                validate_url(url)
+
+    def test_localhost_by_name_passes_the_static_check_and_is_judged_when_it_resolves(self):
+        validate_url("http://localhost:11434/api/chat")  # a name: the address decides, at connect time
+        with patch("maki.connector.socket.getaddrinfo", return_value=_addrinfo("127.0.0.1", 80)):
+            with self.assertRaisesRegex(MakiValidationError, "loopback"):
+                _resolve_and_validate("localhost", 80)
+
+    def test_legacy_spellings_of_loopback_are_caught_when_they_resolve(self):
+        """``127.1``, ``2130706433`` and ``0x7f000001`` are not IP literals to the static check; libc turns
+        them into 127.0.0.1 and the connect-time check refuses that."""
+        for host in ("127.1", "2130706433", "0x7f000001", "localhost"):
+            with self.subTest(host=host), patch("maki.connector.socket.getaddrinfo",
+                                                return_value=_addrinfo("127.0.0.1", 80)):
+                with self.assertRaisesRegex(MakiValidationError, "loopback"):
+                    _resolve_and_validate(host, 80)
+
+    def test_the_operator_can_allow_loopback_and_operator_endpoints_never_need_to(self):
+        with patch.dict(os.environ, {"MAKI_ALLOW_LOOPBACK_URLS": "1"}):
+            validate_url("http://127.0.0.1:11434/api/chat")
+            self.assertEqual(_resolve_and_validate("127.0.0.1", 80), ["127.0.0.1"])
+            with self.assertRaises(MakiValidationError):  # the switch opens loopback only, nothing private
+                validate_url("http://10.0.0.1/")
+        validate_url("http://127.0.0.1:11434/api/chat", allow_private=True)  # Ollama, llama.cpp, vLLM, proxies
+
+    def test_the_switch_accepts_the_usual_spellings_and_nothing_else(self):
+        for value, allowed in (("1", True), ("true", True), ("YES", True), (" on ", True), ("0", False),
+                               ("", False), ("no", False), ("2", False)):
+            with self.subTest(value=value), patch.dict(os.environ, {"MAKI_ALLOW_LOOPBACK_URLS": value}):
+                if allowed:
+                    validate_url("http://127.0.0.1/")
+                else:
+                    with self.assertRaises(MakiValidationError):
+                        validate_url("http://127.0.0.1/")
+
+    def test_a_connector_for_content_derived_urls_cannot_reach_a_local_service(self):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"local service secret")
+
+            def log_message(self, *args):
+                pass
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{server.server_port}/"
+        with self.assertRaises(MakiValidationError):
+            Connector(timeout=3).get(url)
+        self.assertEqual(Connector(timeout=3, allow_private=True).get(url).text, "local service secret")
 
     def test_allows_public_hosts(self):
         validate_url("https://example.com/page")
@@ -116,8 +172,11 @@ class TestResolveAndValidate(unittest.TestCase):
                 _resolve_and_validate("10.0.0.1", 80)
             mock_resolve.assert_not_called()
 
-    def test_loopback_literal_allowed(self):
-        self.assertEqual(_resolve_and_validate("127.0.0.1", 80), ["127.0.0.1"])
+    def test_loopback_literal_refused_unless_the_operator_allows_it(self):
+        with self.assertRaises(MakiValidationError):
+            _resolve_and_validate("127.0.0.1", 80)
+        with patch.dict(os.environ, {"MAKI_ALLOW_LOOPBACK_URLS": "1"}):
+            self.assertEqual(_resolve_and_validate("127.0.0.1", 80), ["127.0.0.1"])
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +232,7 @@ class TestConnectionPinning(unittest.TestCase):
                 conn._new_conn()
         self.assertEqual(conn.host, "example.com")
 
+    @patch.dict(os.environ, {"MAKI_ALLOW_LOOPBACK_URLS": "1"})  # the test server is the local "CDN"
     def test_host_header_survives_connect_before_request(self):
         """urllib3 connects an HTTPS connection *before* sending the request,
         so a pinned connection that leaves the IP in place sends

@@ -19,6 +19,7 @@ from ..backend import LLMBackend
 from ..callbacks import AgentCallback, fire
 from ..exceptions import MakiError, MakiNetworkError, MakiTimeoutError, MakiAPIError
 from ..objects import ConversationMemory, MemoryPolicy, Message, ToolCall, clip_text
+from ..skills import coerce_registry
 from ..usage import Usage, attach_usage
 from .plugin_handler import PluginHandler
 from .reasoning import ReasoningEngine
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Default cap on the running summary when MemoryPolicy(summarize_older=True) sets no summary_chars.
 _DEFAULT_SUMMARY_CHARS = 1200
+_CONTEXT_OVERHEAD_TOKENS = 2048  # system message, tool schemas and the task itself, on top of the history budget
 # Each evicted message is clipped to this many characters in the summarisation prompt, and the
 # turns together to _SUMMARY_TOTAL_CHARS, so a large eviction cannot overflow the model's window.
 _SUMMARY_INPUT_CHARS = 1500
@@ -40,12 +42,16 @@ _RETRYABLE_ERRORS = (MakiNetworkError, MakiTimeoutError)
 class Agent(PluginHandler, ReasoningEngine):
     """An individual agent that can perform tasks using the Maki framework."""
 
+    MAX_MEMORY_ENTRIES = 10_000     # keys in ``remember()`` memory
+    MAX_MEMORY_KEY_CHARS = 512
+
     def __init__(self, name: str, maki_instance: LLMBackend, role: str = "", instructions: str = "",
                  stateful: bool = False, use_streaming: bool = False,
                  allow_dangerous_tools: bool = False,
                  memory: Optional[Union[MemoryPolicy, dict]] = None,
                  tool_policy: Optional[Union[ToolPolicy, dict]] = None,
-                 callbacks: Optional[List[AgentCallback]] = None):
+                 callbacks: Optional[List[AgentCallback]] = None,
+                 skills: Any = None):
         """
         Initialize an agent.
 
@@ -68,6 +74,10 @@ class Agent(PluginHandler, ReasoningEngine):
             tool_policy: Optional ``ToolPolicy`` (or a dict of its fields): tool round limit,
                 per-tool retries with backoff, parallel tool calls. ``None`` keeps the defaults.
             callbacks: Optional ``AgentCallback`` observers for task, model and tool events.
+            skills: Agent Skills the model can load on demand: ``True`` (user skills), a folder or list of
+                folders, a :class:`~maki.skills.SkillRegistry`, or an options dict (see :mod:`maki.skills`).
+                Adds the ``skills`` plugin (``skills.load``, ``skills.read``) and, for tasks run with
+                ``use_plugins=True``, a catalog of skill names and descriptions in the system message.
 
         Raises:
             ValueError: If name is not a valid string
@@ -128,6 +138,9 @@ class Agent(PluginHandler, ReasoningEngine):
             max_entries=self._max_history_entries,
         )
         self._apply_tiers()
+        hint = getattr(maki_instance, "hint_context", None)
+        if callable(hint):  # a backend that sizes its context window ('auto') learns what this agent needs
+            hint(self._history_token_budget() + _CONTEXT_OVERHEAD_TOKENS)
 
         # One in-flight task at a time; acquired by execute_task / stream_task so
         # concurrent callers (workflow thread pools, FastAPI handlers) are serialized.
@@ -137,6 +150,9 @@ class Agent(PluginHandler, ReasoningEngine):
         # Validate and initialise mixin contracts (must come after all attrs are set).
         self._init_reasoning()
         self._init_plugins()
+        self.skills = coerce_registry(skills)
+        if self.skills:
+            self.plugins["skills"] = self.skills.plugin()
 
         logger.info(f"Agent '{self.name}' initialized with role '{self.role}'")
 
@@ -256,11 +272,16 @@ class Agent(PluginHandler, ReasoningEngine):
             'timestamp': time.time()
         }))
 
-    def _build_system_message(self) -> str:
-        """Return the system message (role + instructions) for this agent."""
+    def _build_system_message(self, with_skills: bool = False) -> str:
+        """Return the system message (role + instructions, pinned facts, and the skill catalog) for this agent."""
         base = f"You are {self.name}, a {self.role}. {self.instructions}".strip()
+        parts = [base]
         pinned = self._pinned_block()
-        return f"{base}\n\n{pinned}" if pinned else base
+        if pinned:
+            parts.append(pinned)
+        if with_skills and self.skills:
+            parts.append(self.skills.catalog())
+        return "\n\n".join(parts)
 
     @staticmethod
     def _pinned_lines(pinned: Dict[str, Any]) -> str:
@@ -290,7 +311,7 @@ class Agent(PluginHandler, ReasoningEngine):
         if self.stateful:
             self._fold_summary()
         self._last_tool_trace = []  # a trace is only ever the one of this task
-        system_msg = self._build_system_message()
+        system_msg = self._build_system_message(with_skills=use_plugins)
 
         if use_plugins and self.plugins and getattr(self.maki, "supports_native_tools", False) is True:
             # Native tool-calling path: backend drives structured tool calls.
@@ -571,7 +592,16 @@ class Agent(PluginHandler, ReasoningEngine):
         caps the total size of the pinned facts; going over it raises ``ValueError``. A pinned key
         can only be changed with ``pin=True`` or after ``unpin()``: a plain ``remember`` (which the
         HTTP ``/memory/set`` endpoint uses) must not rewrite what the operator pinned.
+
+        Raises:
+            ValueError: For a key that is not a short non-empty string, a new key once ``MAX_MEMORY_ENTRIES``
+                are stored (a remote caller must not be able to grow the agent's memory without end), or a
+                pinning conflict.
         """
+        if not isinstance(key, str) or not key or len(key) > self.MAX_MEMORY_KEY_CHARS:
+            raise ValueError(f"memory keys must be non-empty strings of at most {self.MAX_MEMORY_KEY_CHARS} characters")
+        if key not in self.memory and len(self.memory) >= self.MAX_MEMORY_ENTRIES:
+            raise ValueError(f"agent memory is full ({self.MAX_MEMORY_ENTRIES} entries); forget something first")
         if pin:
             policy = self.memory_policy
             if policy is None or policy.pinned_chars is None:

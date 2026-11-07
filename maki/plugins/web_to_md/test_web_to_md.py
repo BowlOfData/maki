@@ -96,6 +96,7 @@ class TestWebToMdSSRFProtection(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("169.254.169.254", result["error"])
 
+    @patch.dict(os.environ, {"MAKI_ALLOW_LOOPBACK_URLS": "1"})  # the first hop is a loopback test server
     def test_redirect_to_internal_host_is_blocked(self):
         import http.server
         import threading

@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
 
 _LOOP_BODY_LIMIT = 256 * 1024  # bytes; a loop request is a goal plus at most 30 short requirements
+DEFAULT_BODY_LIMIT = 4 * 1024 * 1024  # bytes allowed in any request body unless the operator says otherwise
 _SSE_POLL_SECONDS = 0.25
 
 
@@ -221,7 +222,9 @@ def _auth(
 # /health is deliberately unauthenticated: load-balancer and k8s probes
 # cannot send credentials, and the body contains no sensitive data.
 @router.get("/health")
-def health(request: Request):
+async def health(request: Request):
+    # async on purpose: it needs no thread, so a probe still answers while every worker thread is busy
+    # waiting for the agent (one task runs at a time, the others queue in the thread pool)
     ag: Agent = request.app.state.agent
     return {
         "status": "ok",
@@ -511,8 +514,13 @@ def history_clear(request: Request, _: None = Depends(_auth)):
     return {"ok": True}
 
 
+def _framework_version() -> str:
+    from .. import __version__
+    return __version__
+
+
 def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agent] = None,
-               loop_caps: Optional[LoopCaps] = None) -> FastAPI:
+               loop_caps: Optional[LoopCaps] = None, max_body_bytes: int = DEFAULT_BODY_LIMIT) -> FastAPI:
     """
     Build and return a FastAPI application wrapping *agent*.
 
@@ -523,14 +531,23 @@ def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agen
         judge:     A separate, stateless reviewer agent. Enables the ``/loop`` endpoints;
                    without it they answer 503 (the served agent never judges its own work).
         loop_caps: Operator limits for remote loops (iterations, wall-clock, storage).
+        max_body_bytes: Largest request body accepted anywhere (413 beyond it; ``/loop`` has its own,
+                   smaller limit). Default 4 MiB.
+
+    With an ``api_key`` the interactive API docs (``/docs``, ``/redoc``, ``/openapi.json``) are switched
+    off, since they are served without authentication; without one they stay on for development.
     """
-    app = FastAPI(title="Maki Agent Server", version="0.1.0")
+    if isinstance(max_body_bytes, bool) or not isinstance(max_body_bytes, int) or max_body_bytes < 1:
+        raise ValueError("max_body_bytes must be a positive integer")
+    docs = {} if api_key is None else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    app = FastAPI(title="Maki Agent Server", version=_framework_version(), **docs)
     app.state.agent = agent
     app.state.api_key = api_key
     app.state.loop_jobs = LoopJobs(agent, judge, loop_caps) if judge is not None else None
     app.state.loop_heartbeat_seconds = 15.0
 
     app.add_middleware(_TracingMiddleware)
-    app.add_middleware(_BodyLimitMiddleware, max_bytes=_LOOP_BODY_LIMIT, prefix="/loop")
+    app.add_middleware(_BodyLimitMiddleware, max_bytes=max_body_bytes, prefix="/")
+    app.add_middleware(_BodyLimitMiddleware, max_bytes=min(_LOOP_BODY_LIMIT, max_body_bytes), prefix="/loop")
     app.include_router(router)
     return app

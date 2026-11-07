@@ -65,10 +65,12 @@ agent = Agent(name="Reviewer", maki_instance=backend, role="code reviewer")
 ## Why Maki
 
 - **Local and hosted models are equals.** Ollama, llama.cpp, vLLM, OpenAI, Anthropic and OpenRouter sit behind the same `LLMBackend` contract, and an in-process HuggingFace backend is included. `init_backend("provider:model")` builds any of them from a string, `FallbackBackend` fails over between them (even in the middle of a tool loop), and one conformance suite pins identical behaviour and error mapping across all of them.
-- **Guardrails on by default.** Content-derived URLs are checked against private and reserved address ranges at connect time. Plugins are fail-closed, and destructive methods (file writes, FTP transfers, trades) stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
-- **Small core.** Three dependencies (`requests`, `httpx`, `python-dotenv`); everything else is an opt-in extra.
+- **Guardrails on by default.** Content-derived URLs are checked against loopback, private and reserved address ranges at connect time. Plugins are fail-closed, and destructive methods (file writes, FTP transfers, trades) stay disabled until you pass `Agent(allow_dangerous_tools=True)`.
+- **Small core.** Three libraries (`requests`, `httpx`, `python-dotenv`, plus `urllib3`, which `requests` already brings); everything else is an opt-in extra. Their minimum versions are the oldest with no published security advisory.
 - **Agents as services.** `maki serve` exposes any agent over HTTP; `AgentProxy` consumes it remotely.
 - **One tool loop for every provider.** Tool calls and results are typed `Message` objects that each backend converts to its own API, so a `FallbackBackend` can move a half-finished tool loop between providers, and with `MemoryPolicy(tool_history=True)` an agent remembers which tools it ran.
+- **Know your model.** `python -m maki eval` runs your tasks through the whole agent on several local or hosted models and reports pass rate, time and tokens. maki also warns when a local server silently drops the start of a prompt that does not fit its context window, and `MakiLLama(num_ctx="auto")` sizes the window once instead of guessing.
+- **Skills, loaded on demand.** Agents read Agent Skills (`SKILL.md` folders, the format Claude Code and Codex use) only when a task needs them, from `.agents/skills` and friends, with project skills opt-in.
 - **Async-friendly.** `await agent.aexecute_task(...)`, `async for chunk in agent.astream_task(...)` and `await manager.agather_tasks([...])` run agents concurrently without blocking your event loop.
 - **Typed, observable tools.** Native tool schemas come from type hints and docstrings, arguments are validated before a method runs, and `ToolPolicy` adds retries with backoff and optional parallel calls (destructive methods are never retried). `AgentCallback` hooks report task, model and tool events.
 - **Batteries included.** 18 built-in plugins and a workflow engine with dependency resolution, retries, parallel execution, checkpoint/resume and maker/checker verification.
@@ -86,6 +88,8 @@ agent = Agent(name="Reviewer", maki_instance=backend, role="code reviewer")
 | [Agents](https://bowlofdata.github.io/maki/docs/agents/) | Memory, reasoning, streaming, tools |
 | [Workflows](https://bowlofdata.github.io/maki/docs/workflows/) | Multi-agent pipelines and verified tasks |
 | [Agent memory](https://bowlofdata.github.io/maki/docs/agent-memory/) | Keep long conversations correct and prompts small |
+| [Evaluating models](https://bowlofdata.github.io/maki/docs/eval/) | Compare models on your own tasks with `maki eval` |
+| [Skills](https://bowlofdata.github.io/maki/docs/skills/) | Load Agent Skills on demand (shared with Claude Code and Codex) |
 | [Agent loops](https://bowlofdata.github.io/maki/docs/loops/) | Iterate an agent until its requirements are met |
 | [Plugins](https://bowlofdata.github.io/maki/docs/plugins/) | Built-in plugins and the safety model |
 | [Serving agents](https://bowlofdata.github.io/maki/docs/serving/) | `maki serve` and `AgentProxy` |

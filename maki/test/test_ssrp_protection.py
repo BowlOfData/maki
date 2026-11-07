@@ -15,11 +15,16 @@ from maki.utils import Utils  # noqa: E402
 class TestSSRFProtection(unittest.TestCase):
 
     def test_validate_domain_with_localhost(self):
-        """Test that localhost is allowed"""
-        # This should not raise an exception
+        """The name localhost passes the format check (the address it resolves to decides later); loopback IP
+        literals are refused unless the operator allows them."""
         Utils._validate_domain("localhost")
-        Utils._validate_domain("127.0.0.1")
-        Utils._validate_domain("::1")
+        for literal in ("127.0.0.1", "::1", "127.8.9.10", "::ffff:127.0.0.1"):
+            with self.subTest(literal=literal), self.assertRaises(ValueError):
+                Utils._validate_domain(literal)
+        Utils._validate_domain("127.0.0.1", allow_private=True)
+        with patch.dict(os.environ, {"MAKI_ALLOW_LOOPBACK_URLS": "1"}):
+            Utils._validate_domain("127.0.0.1")
+            Utils._validate_domain("::1")
 
     def test_validate_domain_with_private_ips(self):
         """Test that private IPs are blocked"""

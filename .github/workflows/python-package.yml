@@ -41,11 +41,33 @@ jobs:
       run: |
         # pyproject.toml addopts excludes @pytest.mark.network tests by default;
         # the scheduled cron run below adds -m network to check live endpoints.
-        pytest
+        # The coverage floor (measured: 91%) stops the suite from quietly eroding.
+        pytest --cov=maki --cov-fail-under=85
+    - name: Audit dependencies for known vulnerabilities
+      if: matrix.python-version == '3.12'
+      run: pip-audit --skip-editable
     - name: Test network-dependent tests (scheduled only)
       if: github.event_name == 'schedule'
       run: |
         pytest -m network --tb=short || true
+
+  # The wheel must build, pass twine's checks and import without the test suite.
+  package:
+    name: Build and check the package
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Build and check
+      run: |
+        python -m pip install --upgrade pip build twine
+        python -m build
+        twine check dist/*
+        python -m venv /tmp/wheel-env
+        /tmp/wheel-env/bin/pip install dist/*.whl
+        /tmp/wheel-env/bin/python -c "import maki; print(maki.__name__)"
 
   # The file_mover plugin promises the same behaviour on every OS. Run its tests on macOS and Windows too.
   # Windows is best effort: a failure there is reported but does not fail the workflow.

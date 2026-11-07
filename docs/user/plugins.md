@@ -51,7 +51,7 @@ Tool calls are **fail-closed**:
 - A plugin exposes only the methods listed in its class-level `ALLOWED_METHODS`. No list means nothing is exposed.
 - Destructive methods (file writes and moves, FTP transfers and deletes, trades) are listed in `DANGEROUS_METHODS` and additionally require `Agent(allow_dangerous_tools=True)`.
 - The trading plugin runs in paper mode unless you opt in to live trading.
-- Web plugins fetch through Maki's hardened connector, which blocks private and reserved address ranges for content-derived URLs.
+- Web plugins fetch through Maki's hardened connector, which blocks loopback, private and reserved address ranges for content-derived URLs (checked again at connect time, so a redirect or a hostname that resolves to one is refused too). Set `MAKI_ALLOW_LOOPBACK_URLS=1` only if an agent must fetch pages from services on the same machine.
 
 ```python
 # Needed before the model may write files:

@@ -306,6 +306,13 @@ class FallbackBackend(LLMBackend):
         return self._try(typed, lambda b: b.chat_turn(messages, tool_specs, system=system, config=config,
                                                       tool_choice=tool_choice))
 
+    def hint_context(self, tokens: int) -> None:
+        """Pass an agent's expected prompt size to every backend that sizes its own context window."""
+        for backend in self.backends:
+            hint = getattr(backend, "hint_context", None)
+            if callable(hint):
+                hint(tokens)
+
     def to_tool_schemas(self, tool_specs: List[dict]) -> List[dict]:
         """Keep the neutral specs; each backend translates them when it is called."""
         return list(tool_specs)

@@ -24,6 +24,7 @@ from typing import List, Optional
 from . import makiOpenAI
 from .config import DEFAULT_REQUEST_TIMEOUT
 from .connector import Connector
+from .context import ContextAware, ContextInfo, estimate_tokens, messages_chars
 from .exceptions import MakiAPIError, MakiNetworkError, MakiTimeoutError, error_for_status, retry_after_of
 from .objects import GenerationConfig, LLMResponse, Message, RateLimiter
 
@@ -34,7 +35,7 @@ log = logging.getLogger(__name__)
 _NO_KEY = "no-key"
 
 
-class OpenAICompatServer(makiOpenAI.MakiOpenAI):
+class OpenAICompatServer(ContextAware, makiOpenAI.MakiOpenAI):
     """Base class for self-hosted OpenAI-compatible inference servers.
 
     Subclasses MakiOpenAI: chat(), stream(), async_chat(), session() and the
@@ -55,6 +56,7 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
         system_prompt: Optional[str] = None,
         timeout: int = DEFAULT_REQUEST_TIMEOUT,
         rate_limit: Optional[int] = None,
+        on_truncation: str = "warn",
     ) -> None:
         if makiOpenAI._openai_sdk is None:
             raise ImportError(
@@ -69,6 +71,8 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key or os.environ.get(self._api_key_env)
         self._rate_limiter = RateLimiter(rate_limit) if rate_limit is not None else None
+        self._init_size_check(on_truncation)
+        self._context_cache: Optional[ContextInfo] = None
 
         # Operator-configured endpoint (usually loopback or LAN), so
         # allow_private=True, matching MakiLLama's Ollama connection.
@@ -110,8 +114,39 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
                 return value
         return None
 
+    # ------------------------------------------------------------------
+    # Context window (see maki.context)
+    # ------------------------------------------------------------------
+
+    def hint_context(self, tokens: int) -> None:
+        """Accepted so an Agent can hint any backend; these servers take their window from their own flags."""
+
+    def _probe_context(self) -> ContextInfo:
+        """Ask the server for its context window. Subclasses that know how override this."""
+        return ContextInfo()
+
+    def context_info(self) -> ContextInfo:
+        """The server's context window, as far as it will say (probed once, then cached)."""
+        cached = getattr(self, "_context_cache", None)
+        if cached is None:
+            try:
+                cached = self._probe_context()
+            except Exception as exc:  # a probe must never break a request
+                log.debug("context probe failed: %s", exc)
+                cached = ContextInfo()
+            self._context_cache = cached
+        return cached
+
+    def _note_request(self, messages: list, context_length: Optional[int] = None) -> None:
+        # The window is only worth a probe for prompts big enough to be judged at all.
+        if context_length is None and self.on_truncation != "ignore" \
+                and estimate_tokens(messages_chars(messages)) >= self._size_check.min_tokens:
+            context_length = self.context_info().effective
+        super()._note_request(messages, context_length)
+
     def _parse_response(self, response: object, elapsed: float) -> LLMResponse:
         result = super()._parse_response(response, elapsed)
+        self._report_prompt_size(result.prompt_tokens)
         reasoning = self._reasoning_of(response.choices[0].message)  # type: ignore[attr-defined]
         if reasoning:
             result.reasoning = reasoning
@@ -157,6 +192,7 @@ class OpenAICompatServer(makiOpenAI.MakiOpenAI):
             raise error_for_status(e.status_code, f"chat_collect() HTTP error {e.status_code}: {e}",
                                    retry_after=retry_after_of(e)) from e
         elapsed = time.perf_counter() - t0
+        self._report_prompt_size(usage.prompt_tokens if usage else 0)
         result = LLMResponse(
             content="".join(content),
             model=model,

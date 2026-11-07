@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import re
 import logging
 import socket
 import time
@@ -74,6 +75,17 @@ logger = logging.getLogger(__name__)
 
 # How much of an error-response body to include in raised exceptions.
 _DETAIL_LIMIT = 500
+_SECRET_PARAM = re.compile(
+    r"([?&;](?:api[_-]?key|key|token|access[_-]?token|auth|secret|password|passwd|sig|signature)=)[^&\s'\")#]+",
+    re.IGNORECASE)
+
+
+def redact(text: str) -> str:
+    """*text* with the values of credential-looking query parameters (``?api_key=...``) replaced by ``***``.
+
+    Error messages and log lines carry URLs, and some APIs take their key in the query string.
+    """
+    return _SECRET_PARAM.sub(r"\1***", str(text))
 _RATE_LIMIT_BACKOFF = 1.0  # seconds before the first retry when the server gave no Retry-After; doubles
 
 
@@ -85,10 +97,12 @@ def _replayable(kwargs: dict) -> bool:
             return False
     files = kwargs.get("files")
     if files:
-        parts = files.values() if isinstance(files, dict) else files
-        for part in parts:
-            item = part[1] if isinstance(part, tuple) and len(part) > 1 else part
-            if hasattr(item, "read"):
+        # requests takes {"field": spec} or [("field", spec), ...]; a spec is a file object or (name, fileobj, ...)
+        specs = files.values() if isinstance(files, dict) else [
+            part[1] for part in files if isinstance(part, (tuple, list)) and len(part) > 1]
+        for spec in specs:
+            fileobj = spec[1] if isinstance(spec, (tuple, list)) and len(spec) > 1 else spec
+            if hasattr(fileobj, "read"):
                 return False
     return True
 
@@ -113,7 +127,10 @@ def validate_url(url: str, allow_private: bool = False) -> None:
     """
     if not isinstance(url, str) or not url.strip():
         raise MakiValidationError("URL must be a non-empty string")
-    parsed = urllib.parse.urlparse(url)
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError as exc:  # e.g. "http://[::1": urlparse itself refuses it
+        raise MakiValidationError(f"Malformed URL: {exc}") from exc
     if parsed.scheme not in ("http", "https"):
         raise MakiValidationError("URL must use http or https protocol")
     if not parsed.hostname:
@@ -334,7 +351,7 @@ class Connector:
             if wait is None:
                 break
             logger.warning("%s %s rate limited (429); retry %d/%d in %.1fs",
-                           method, url, retries + 1, self.rate_limit_retries, wait)
+                           method, redact(url), retries + 1, self.rate_limit_retries, wait)
             try:
                 response.close()  # release the connection before waiting
             except Exception:
@@ -354,11 +371,11 @@ class Connector:
         except MakiError:
             raise  # raised by the pinned adapter at connect time
         except requests.exceptions.Timeout as e:
-            raise MakiTimeoutError(f"{method} {url} timed out: {e}") from e
+            raise MakiTimeoutError(redact(f"{method} {url} timed out: {e}")) from e
         except requests.exceptions.ConnectionError as e:
-            raise MakiNetworkError(f"{method} {url} connection failed: {e}") from e
+            raise MakiNetworkError(redact(f"{method} {url} connection failed: {e}")) from e
         except requests.exceptions.RequestException as e:
-            raise MakiNetworkError(f"{method} {url} request failed: {e}") from e
+            raise MakiNetworkError(redact(f"{method} {url} request failed: {e}")) from e
 
     def _rate_limit_wait(self, response, retries: int) -> Optional[float]:
         """Seconds to wait before retrying this response, or None when it is not retried."""
@@ -505,7 +522,7 @@ class AsyncConnector:
             if wait is None:
                 break
             logger.warning("%s %s rate limited (429); retry %d/%d in %.1fs",
-                           method, url, retries + 1, self.rate_limit_retries, wait)
+                           method, redact(url), retries + 1, self.rate_limit_retries, wait)
             await asyncio.sleep(wait)
             retries += 1
         if raise_on_status:
@@ -520,11 +537,11 @@ class AsyncConnector:
             async with httpx.AsyncClient(timeout=timeout, headers=self._headers) as client:
                 return await client.request(method, url, **kwargs)
         except httpx.TimeoutException as e:
-            raise MakiTimeoutError(f"{method} {url} timed out: {e}") from e
+            raise MakiTimeoutError(redact(f"{method} {url} timed out: {e}")) from e
         except httpx.ConnectError as e:
-            raise MakiNetworkError(f"{method} {url} connection failed: {e}") from e
+            raise MakiNetworkError(redact(f"{method} {url} connection failed: {e}")) from e
         except httpx.RequestError as e:
-            raise MakiNetworkError(f"{method} {url} request failed: {e}") from e
+            raise MakiNetworkError(redact(f"{method} {url} request failed: {e}")) from e
 
     async def get(self, url: str, **kwargs):
         return await self.request("GET", url, **kwargs)

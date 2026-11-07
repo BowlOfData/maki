@@ -41,12 +41,40 @@ class Utils:
         "255.255.255.255"
     ]
 
+    # IPv6 prefix that embeds an IPv4 address in its last 32 bits (RFC 6052 NAT64).
+    _NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+    @staticmethod
+    def _embedded_ipv4(ip: ipaddress.IPv6Address) -> list:
+        """IPv4 addresses an IPv6 address stands for: ``::ffff:a.b.c.d``, 6to4 (``2002:aabb:ccdd::``), NAT64
+        and the deprecated IPv4-compatible form. A guard that only looked at the IPv6 shell would let
+        ``2002:7f00:1::`` (127.0.0.1) or ``64:ff9b::a9fe:a9fe`` (the cloud metadata address) through."""
+        found = []
+        if ip.ipv4_mapped is not None:
+            found.append(ip.ipv4_mapped)
+        if ip.sixtofour is not None:
+            found.append(ip.sixtofour)
+        if ip in Utils._NAT64:
+            found.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+        if 1 < int(ip) < 2 ** 32:  # ::a.b.c.d (IPv4-compatible); :: and ::1 are judged as themselves
+            found.append(ipaddress.IPv4Address(int(ip)))
+        return found
+
     @staticmethod
     def _validate_ip(
         ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address],
         label: str,
     ) -> None:
-        """Reject private/reserved IP addresses (loopback is allowed).
+        """Accept only globally routable addresses.
+
+        Refused: loopback, private, link-local, shared (CGNAT), multicast, unspecified, documentation,
+        benchmarking, reserved and other special-purpose ranges (everything ``ipaddress`` does not call
+        global), IPv6 forms that embed an IPv4 address (mapped, 6to4, NAT64, IPv4-compatible) when that
+        address is refused (mapped and NAT64 forms of a public address stay allowed: that address is what is
+        reached), and Teredo tunnels. Loopback is refused too: a URL a model or a web page can
+        influence must not reach services on this machine (Ollama, a database console, an unauthenticated
+        ``maki serve``). Operators who need it set ``MAKI_ALLOW_LOOPBACK_URLS=1``; endpoints they configure
+        themselves (Ollama, llama.cpp, vLLM, remote agents) are not checked here at all (``allow_private=True``).
 
         Args:
             ip:    The parsed IP address to check.
@@ -54,14 +82,29 @@ class Utils:
                    host string, or "host -> addr" for resolved addresses).
 
         Raises:
-            ValueError: If the address is private, link-local, or reserved.
+            ValueError: If the address, or an IPv4 address it embeds, is not publicly routable.
         """
+        if ip.version == 6 and ip.teredo is not None:
+            raise ValueError(f"Access to Teredo tunnel address '{label}' is not allowed")
+        if ip.version == 6 and (ip.ipv4_mapped is not None or ip in Utils._NAT64):
+            # translation forms reach the IPv4 address they carry, so that address is what is judged
+            candidates = Utils._embedded_ipv4(ip)[:1] if ip.ipv4_mapped is not None else Utils._embedded_ipv4(ip)
+        else:  # 6to4 and the IPv4-compatible form: the IPv6 range itself is refused as well as what it embeds
+            candidates = [ip] + (Utils._embedded_ipv4(ip) if ip.version == 6 else [])
+        for candidate in candidates:
+            Utils._validate_single_ip(candidate, label)
+
+    @staticmethod
+    def _validate_single_ip(ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address], label: str) -> None:
         if ip.is_loopback:
-            return
+            if os.environ.get("MAKI_ALLOW_LOOPBACK_URLS", "").strip().lower() in ("1", "true", "yes", "on"):
+                return
+            raise ValueError(f"Access to loopback address '{label}' is not allowed "
+                             "(set MAKI_ALLOW_LOOPBACK_URLS=1 to permit it)")
         for ip_range in Utils.PRIVATE_IP_RANGES:
             if ip in ipaddress.ip_network(ip_range):
                 raise ValueError(f"Access to private IP address '{label}' is not allowed")
-        if ip.is_link_local or ip.is_reserved:
+        if ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified or not ip.is_global:
             raise ValueError(f"Access to special IP address '{label}' is not allowed")
 
     @staticmethod

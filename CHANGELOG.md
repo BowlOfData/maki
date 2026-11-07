@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Packaging and project
+- The wheel no longer contains the test suite and dev tools (`maki/test`); the sdist still does. `include-package-data` is off, so only declared data (`py.typed`, the GUI's QML) ships
+- SPDX `license = "MIT"` with `license-files` (needs setuptools >= 77); `Development Status :: 4 - Beta` classifier
+- CI: coverage floor (85%), `pip-audit`, a package job (build, `twine check`, install the wheel and import it); publishing now runs the test suite first and `twine check`s the artifacts. Dependabot for pip and GitHub Actions
+- Added `SECURITY.md`, `CONTRIBUTING.md` (with the stability and deprecation policy), `CODE_OF_CONDUCT.md`, `CODEOWNERS`, issue and PR templates; `.vscode/` is no longer tracked
+
+### Testing
+- Mutation check (`python -m maki.test.mutation_check FILE --tests ...`): changes one thing at a time in a source file (a comparison flipped, `and`/`or` swapped, a `not` dropped, a constant changed, a `raise` removed, a return value replaced) inside throw-away copies of the package and reports which changes no test noticed. Used to find and close gaps in the SSRF validators, the connector and the server
+- Load and soak check (`python -m maki.test.load_check`): the real server stack over real sockets with a mixed workload (valid calls plus malformed JSON, oversized bodies, missing and wrong credentials, unknown paths, wrong methods) that samples memory, threads and file descriptors and fails on errors, hangs or drift
+- Adversarial tests: every file plugin against 30 hostile paths (traversal, symlinks out, a sibling directory sharing the base's prefix, NUL bytes, odd separators) with a check that nothing outside `base_dir` changes; SSRF differential and fuzz tests against an independent oracle (every IANA special-purpose range, IPv6 forms that embed IPv4, thousands of spellings of 127.0.0.1 and 169.254.169.254); a check that every server route rejects missing or wrong credentials; concurrency stress tests for the shared usage ledger, a shared fallback chain, one agent used from many threads, the served app and async fan-out with cancellations
+- Tests for connector edge cases (TLS settings, request-body replay, mid-stream failures, async error classes), server error reporting and response shapes, and the request-size limiter
+
+### Fixed
+- The SSRF guard now refuses multicast, the whole 6to4 range (including `2002:7f00:1::`, which stands for 127.0.0.1, and the metadata address), Teredo, documentation and other non-global ranges, and judges IPv6 forms that embed an IPv4 address (mapped, NAT64, IPv4-compatible) on the IPv4 address they carry. These were found by the differential test; the 6to4 and Teredo cases only matter on hosts with such tunnels, but a guard like this should not depend on that
+- A malformed URL such as `http://[::1` raised a bare `ValueError` instead of `MakiValidationError`
+- `POST /loop/{id}/resume` on a loop that was still running answered 404 "Loop not found" when it had no checkpoint yet; it now answers 409 "this loop is still running"
+- A 429 retry could resend an already-consumed file upload as an empty body when `files=` was given in the list form `[(name, (filename, fileobj))]`
+
+### Security
+- **Content-derived URLs can no longer reach loopback.** The connector used by the web plugins refused private ranges but allowed `127.0.0.1` and `localhost`, so a prompt-injected page could point an agent at services on the same machine (Ollama, a database console, an unauthenticated `maki serve`). Loopback is now refused, including `::ffff:127.0.0.1` and legacy spellings (`127.1`, `2130706433`) that resolve to it. Set `MAKI_ALLOW_LOOPBACK_URLS=1` to permit it. Endpoints you configure yourself (Ollama, llama.cpp, vLLM, remote agents, RAG) are unaffected. **Behaviour change:** a web plugin can no longer fetch a page served from the same machine unless you set the switch
+- `maki serve`: every request body is now capped (default 4 MiB, `--max-body-mb`; 413 beyond it, including chunked uploads without a Content-Length), where before only `/loop` was
+- `maki serve`: the API key can come from `MAKI_API_KEY` (the `--api-key` flag still works but now warns that it is visible in the process list); a server listening off-loopback without a key, or without TLS and a key, prints a warning
+- `maki serve`: with an API key set, `/docs`, `/redoc` and `/openapi.json` are switched off (they were served unauthenticated)
+- Connector error messages and retry log lines mask credential-looking query parameters (`?api_key=`, `?token=`, `?key=`, ...)
+- `Agent.remember()` (and so `POST /memory/set`) refuses new keys beyond `Agent.MAX_MEMORY_ENTRIES` (10,000) and keys over 512 characters, so a caller cannot grow an agent's memory without end
+
+### Changed
+- Minimum dependency versions raised to the oldest releases with no published security advisory (`pip-audit`; the suite passes on exactly these): `requests>=2.33.0`, `httpx>=0.28.1`, `python-dotenv>=1.2.2`. The old floors (`requests>=2.25.0` and the like) allowed versions with dozens of advisories. `urllib3>=2.8.0` is now declared because the connector imports it directly (it was only an undeclared transitive dependency)
+- `maki serve`: `/health` is an `async` endpoint and answers while every worker thread is busy waiting for the agent (verified: 40 of 40 probes in 10 ms with 60 queued tasks); new `--max-concurrency` (503 beyond N requests in flight) and `--graceful-timeout` (default 30 s for in-flight requests on shutdown); the OpenAPI version now reports the real maki version instead of `0.1.0`
+
+### Added
+- `maki.eval`: `run_eval(cases, models, runs=)` compares models on tasks run through the whole agent (tools, memory, policies) and reports pass rate, median time and tokens per model, plus a per-case matrix and JSON. Cases check with `contains`, a `check(answer[, agent])` callable, or a judged `criteria`; each run gets a fresh agent, runs are grouped by model and a warm-up keeps local model load time out of the timings. Built-in suites `basic`, `tool_calling`, `long_context` and `memory` (`maki.eval_suites`); CLI `python -m maki eval --suite ... --models ... --runs N [--no-think] [--judge] [--json]`
+- Context-window awareness (`maki.context`): a local server that silently cuts a prompt is now noticed. Ollama, llama.cpp and vLLM backends compare the prompt tokens the server reports with what was sent and, on a large shortfall, log it (`last_truncation`) or raise `MakiContextError` (`on_truncation="warn" | "error" | "ignore"`). Verified live: Ollama at `num_ctx` 2048 evaluated 1,027 of about 7,900 tokens
+- `MakiLLama(num_ctx=..., num_ctx_cap=...)`: an integer sets Ollama's context window; `"auto"` picks one value per model (reusing an already loaded window, else the smallest of 8k/16k/32k that fits the agent's budget with headroom, capped) and keeps it, since changing it reloads the model. `Agent` hints its history budget to the backend. `context_info()` reports a server's context: Ollama (`/api/show`, `/api/ps`), llama.cpp (`/props`), vLLM (model list `max_model_len`)
+- Agent Skills (`maki.skills`): `Agent(skills=True | folders | SkillRegistry)` adds the open `SKILL.md` format shared with Claude Code and Codex. The model sees a size-capped catalog and two read-only tools, `skills.load` and `skills.read` (confined to the skill's folder); skills are looked up in explicit folders, then project `.maki`/`.agents`/`.claude` skills folders up to the git root (**opt-in with `trust_project=True`**), then the same under `~`. Skill scripts are never executed and `allowed-tools` is ignored. `skills:` is also an agent YAML section
+
 ## [0.5.0] - 2026-11-07
 
 ### Added

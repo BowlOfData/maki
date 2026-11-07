@@ -26,6 +26,8 @@ from .config import (
     DEFAULT_REQUEST_TIMEOUT,
     LLAMACPP_API_KEY_ENV,
 )
+from .connector import Connector
+from .context import ContextInfo
 from .makiOpenAICompat import OpenAICompatServer
 from .objects import BackendType, GenerationConfig
 
@@ -66,11 +68,19 @@ class MakiLlamaCpp(OpenAICompatServer):
         timeout: int = DEFAULT_REQUEST_TIMEOUT,
         rate_limit: Optional[int] = None,
         base_url: str = DEFAULT_LLAMACPP_BASE_URL,
+        on_truncation: str = "warn",
     ) -> None:
         super().__init__(
             model=model, base_url=base_url, api_key=api_key, config=config,
-            system_prompt=system_prompt, timeout=timeout, rate_limit=rate_limit,
+            system_prompt=system_prompt, timeout=timeout, rate_limit=rate_limit, on_truncation=on_truncation,
         )
+
+    def _probe_context(self) -> ContextInfo:
+        """The window the server runs with, from ``/props`` (``default_generation_settings.n_ctx``)."""
+        props = Connector.json_or_raise(self._http.get(
+            f"{self._server_root}/props", headers=self._headers(), timeout=5))
+        n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
+        return ContextInfo(loaded_length=n_ctx if isinstance(n_ctx, int) and n_ctx > 0 else None, source="llama.cpp")
 
     def _server_extra_body(self, cfg: GenerationConfig) -> dict:
         """Add the llama.cpp sampling parameters the OpenAI schema lacks."""

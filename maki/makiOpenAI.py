@@ -125,7 +125,11 @@ class MakiOpenAI(LLMBackend):
             msgs.append({"role": "user", "content": content})
         else:
             msgs.append({"role": "user", "content": prompt})
+        self._note_request(msgs)
         return msgs
+
+    def _note_request(self, messages: list, context_length: Optional[int] = None) -> None:
+        """Hook for backends that check what the server evaluated against what was sent (a no-op here)."""
 
     def _request_kwargs(self, cfg: GenerationConfig) -> dict:
         """Generation kwargs for chat.completions.create(); subclasses extend."""
@@ -350,6 +354,7 @@ class MakiOpenAI(LLMBackend):
         if effective_system:
             full_messages.append({"role": "system", "content": effective_system})
         full_messages.extend(messages)
+        self._note_request(full_messages)
 
         kwargs = self._request_kwargs(cfg)
         if tools:

@@ -1,0 +1,5 @@
+graft maki/test
+graft docs
+graft examples
+prune docs/ideas
+global-exclude *.pyc __pycache__

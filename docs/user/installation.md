@@ -4,7 +4,7 @@
 pip install maki-framework
 ```
 
-The core install has three dependencies: `requests`, `httpx` and `python-dotenv`. Python 3.10 or newer is required.
+The core install has three dependencies: `requests`, `httpx` and `python-dotenv` (plus `urllib3`, which `requests` already pulls in and the connector imports directly). Their minimum versions are the oldest releases with no published security advisory when they were last audited, so an old pinned environment may need upgrading. Python 3.10 or newer is required.
 
 ## Extras
 

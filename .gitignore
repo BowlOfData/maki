@@ -231,3 +231,5 @@ plans/*
 plans/
 .claude/
 docs/ideas/launch-post.md
+docs/ideas/crewai-inspiration.md
+.vscode/

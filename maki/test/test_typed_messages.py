@@ -318,8 +318,7 @@ class TestFallbackTyped(unittest.TestCase):
 class TestPlainChatIgnoresTraces(unittest.TestCase):
     def test_ollama_chat_history_carries_text_only(self):
         from maki.test.test_backend_conformance import OllamaAdapter
-        case = unittest.TestCase()
-        adapter = OllamaAdapter(case)
+        adapter = OllamaAdapter(self)
         backend = adapter.make()
         adapter.script_text(backend, "ok")
         trace = [Message("assistant", "", tool_calls=[call()]), Message("tool", "r", tool_call_id="c1")]
@@ -334,8 +333,7 @@ class TestWireFormats(unittest.TestCase):
 
     def _backends(self):
         from maki.test.test_backend_conformance import AnthropicAdapter, OllamaAdapter, OpenAIAdapter
-        case = unittest.TestCase()
-        return {name: cls(case).make() for name, cls in
+        return {name: cls(self).make() for name, cls in
                 (("ollama", OllamaAdapter), ("openai", OpenAIAdapter), ("anthropic", AnthropicAdapter))}
 
     MESSAGES = [Message("system", "ignored by anthropic"), Message("user", "q"),

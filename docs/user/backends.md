@@ -63,6 +63,36 @@ shared conformance suite then checks it.
 Callbacks: with a typed backend `on_model_start` receives the typed `Message` list and `on_model_end`
 receives the full response (token counts included) instead of None on a tool round.
 
+## Context windows on local servers
+
+A local server with a small context window does not fail on a long prompt: it drops the start of the prompt and answers anyway. On Ollama with `num_ctx` 2048, a 7,000-token prompt was evaluated as 1,027 tokens and the model answered wrongly with `done_reason: stop` and no error.
+
+maki compares the prompt tokens a server reports with the size of what it sent (estimated at four characters per token) and reports a large shortfall:
+
+```python
+llm = MakiLLama(model="gemma4:26b", num_ctx=2048)          # on_truncation="warn" is the default
+llm.chat(very_long_prompt)                                 # logs: the server evaluated only 1027 prompt tokens ...
+llm.last_truncation                                        # the same text, or None
+
+MakiLLama(model="gemma4:26b", num_ctx=2048, on_truncation="error")   # raises MakiContextError instead
+MakiLlamaCpp(on_truncation="error")                        # the same for llama.cpp and vLLM
+```
+
+`on_truncation` takes `"warn"`, `"error"` or `"ignore"`. The check runs on every non-streaming response path, tool rounds included, and skips prompts under about 500 estimated tokens. It is a heuristic: it flags a server that evaluated less than half of what was sent, or about a whole window while more than a window was sent. Cached tokens are part of the reported total on Ollama (`prompt_eval_count`) and in OpenAI-style `usage.prompt_tokens`, so a fully cached prompt is not mistaken for a cut. When no `num_ctx` was sent, maki asks Ollama once for the window the model is loaded with after a big response, so a server left on a small default (4,096 of a 7,000-token prompt) is caught too. The request size is tracked per thread and per asyncio task, so concurrent `async_chat` calls do not mix. Streaming through `stream()` is not checked.
+
+### Choosing `num_ctx` for Ollama
+
+`MakiLLama(num_ctx=8192)` sets it. `num_ctx="auto"` chooses one value per model and keeps it, because changing `num_ctx` makes Ollama reload the model (7 to 10 seconds in measurements; the same value costs nothing):
+
+1. A `num_ctx` you set in the `GenerationConfig` always wins.
+2. If the model is already loaded with a window that covers the need, that window is reused.
+3. Otherwise the smallest of 8k, 16k or 32k that covers about 1.25 times the need, limited by the model's maximum and by `num_ctx_cap` (default 32768). Going higher takes an explicit value.
+4. After the first request the choice does not change.
+
+The need comes from the first request or, better, from an `Agent`, which tells its backend its history budget plus 2,048 tokens for the system message and tools (`hint_context`). `llm.context_info()` returns what the server reports: the model's maximum context (`/api/show`) and the window it is currently loaded with (`/api/ps`).
+
+For llama.cpp, `context_info()` reads `/props` (`n_ctx`); for vLLM it reads `max_model_len` from the model list when the server reports it. Those servers take their window from their own flags (`--ctx-size`, `--max-model-len`), so maki only reports and checks. Not verified: what each of them does when a prompt alone exceeds the window (error or silent cut); the check handles both.
+
 ## Rate limits (429)
 
 A 429 is retried before it reaches your code. The OpenAI, Anthropic and OpenRouter backends rely on
