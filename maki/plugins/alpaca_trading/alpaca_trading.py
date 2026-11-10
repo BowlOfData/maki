@@ -109,7 +109,7 @@ class AlpacaTrading:
         tif_enum = TimeInForce.GTC if time_in_force.lower() == "gtc" else TimeInForce.DAY
 
         if order_type == "market":
-            req = MarketOrderRequest(
+            req: Any = MarketOrderRequest(
                 symbol=symbol,
                 qty=qty,
                 side=side_enum,

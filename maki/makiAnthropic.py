@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Generator, Optional
+from typing import Any, Generator, Optional
 
 from .backend import LLMBackend
 from .config import (
@@ -92,9 +92,9 @@ class MakiAnthropic(LLMBackend):
         prompt: str,
         history: Optional[list[Message]] = None,
         images: Optional[list[str]] = None,
-    ) -> list[dict]:
+    ) -> list[Any]:
         """Build messages list. System prompt is handled separately at the call site."""
-        msgs: list[dict] = []
+        msgs: list[Any] = []
         if history:
             for m in history:
                 # Anthropic only accepts "user" / "assistant" roles in messages;

@@ -9,7 +9,7 @@ are served via Yahoo Finance (yfinance) since Alpaca does not offer FX data.
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ class AlpacaData:
         api_secret = os.environ.get("APCA_API_SECRET_KEY")
         tc = TradingClient(api_key=api_key, secret_key=api_secret, paper=True)
         req = GetAssetsRequest(asset_class=AssetClass.CRYPTO)
-        assets = tc.get_all_assets(req)
+        assets = cast(List[Any], tc.get_all_assets(req))
         return [a.symbol for a in assets if a.tradable]
 
     # ------------------------------------------------------------------
@@ -216,7 +216,7 @@ class AlpacaData:
         client = StockHistoricalDataClient(api_key=api_key, secret_key=api_secret)
         start = datetime.now(timezone.utc) - timedelta(minutes=lookback * _tf_minutes(timeframe))
         req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf, start=start, limit=lookback)
-        bars = client.get_stock_bars(req)
+        bars = cast(Any, client.get_stock_bars(req))
         symbol_bars = bars.data.get(symbol) or []
         return [
             {

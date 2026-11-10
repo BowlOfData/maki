@@ -539,7 +539,7 @@ def create_app(agent: Agent, api_key: Optional[str] = None, judge: Optional[Agen
     """
     if isinstance(max_body_bytes, bool) or not isinstance(max_body_bytes, int) or max_body_bytes < 1:
         raise ValueError("max_body_bytes must be a positive integer")
-    docs = {} if api_key is None else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    docs: Dict[str, Any] = {} if api_key is None else {"docs_url": None, "redoc_url": None, "openapi_url": None}
     app = FastAPI(title="Maki Agent Server", version=_framework_version(), **docs)
     app.state.agent = agent
     app.state.api_key = api_key

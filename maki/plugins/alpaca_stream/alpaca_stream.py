@@ -90,7 +90,7 @@ class AlpacaStream:
                     # Recreate the underlying stream so the old connection is dropped
                     api_key = os.environ.get("APCA_API_KEY_ID")
                     api_secret = os.environ.get("APCA_API_SECRET_KEY")
-                    self._stream = CryptoDataStream(api_key=api_key, secret_key=api_secret)
+                    self._stream = CryptoDataStream(api_key=api_key, secret_key=api_secret)  # type: ignore[arg-type]
                     for symbol in self._subscribed_symbols:
                         self._stream.subscribe_bars(self._on_bar, symbol)
                 else:

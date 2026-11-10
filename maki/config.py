@@ -10,7 +10,7 @@ import os
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional convenience dependency
-    load_dotenv = None
+    load_dotenv = None  # type: ignore[assignment]
 
 if load_dotenv is not None:
     load_dotenv()

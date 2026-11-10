@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Generator, Optional
+from typing import Any, Generator, Optional, cast
 
 from .backend import LLMBackend
 from .config import (
@@ -98,8 +98,9 @@ class MakiOpenAI(LLMBackend):
         history: Optional[list[Message]] = None,
         system: Optional[str] = None,
         images: Optional[list[str]] = None,
-    ) -> list[dict]:
-        msgs: list[dict] = []
+    ) -> list[Any]:
+        # Plain dicts in the wire format; the SDK's TypedDict message params are checked by the API, not here.
+        msgs: list[Any] = []
         effective_system = system if system is not None else self.system_prompt
         if effective_system:
             msgs.append({"role": "system", "content": effective_system})
@@ -206,7 +207,7 @@ class MakiOpenAI(LLMBackend):
         cfg = config or self.config
         messages = self._build_messages(prompt, history, system=system)
         try:
-            with self._client.chat.completions.create(
+            with cast(Any, self._client.chat.completions.create)(
                 model=self.model,
                 messages=messages,
                 stream=True,
@@ -350,7 +351,7 @@ class MakiOpenAI(LLMBackend):
         cfg = config or self.config
 
         effective_system = system if system is not None else self.system_prompt
-        full_messages = []
+        full_messages: list[Any] = []
         if effective_system:
             full_messages.append({"role": "system", "content": effective_system})
         full_messages.extend(messages)
