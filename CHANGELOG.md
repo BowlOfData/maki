@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-10
+
+Highlights: `maki.eval` (compare models through the whole agent), context-window awareness for local models, Agent Skills, a production-hardening pass on the connector and `maki serve`, much deeper tests, and a cleaner package (no tests in the wheel, mypy-clean, stricter CI).
+
+**Upgrade notes**
+- Content-derived URLs (web plugins) can no longer reach loopback; set `MAKI_ALLOW_LOOPBACK_URLS=1` to allow it (see Security)
+- Minimum dependency versions are higher (see Changed)
+- The wheel no longer ships `maki/test`; use a source checkout or the sdist to run the suite or the dev tools
+
 ### Packaging and project
 - The wheel no longer contains the test suite and dev tools (`maki/test`); the sdist still does. `include-package-data` is off, so only declared data (`py.typed`, the GUI's QML) ships
 - SPDX `license = "MIT"` with `license-files` (needs setuptools >= 77); `Development Status :: 4 - Beta` classifier
