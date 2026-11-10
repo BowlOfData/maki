@@ -151,10 +151,12 @@ class TestErrorReporting(unittest.TestCase):
                                ({"json": {"task": "x", "use_plugins": "maybe"}}, 422),
                                ({"content": b"not json", "headers": {"content-type": "application/json"}}, 422),
                                ({"content": b"\xff\xfe\x00", "headers": {"content-type": "application/json"}}, 400),
-                               ({"content": b"[" * 5000, "headers": {"content-type": "application/json"}}, 422)):
+                               ({"content": b"[" * 5000, "headers": {"content-type": "application/json"}}, (400, 422))):
             with self.subTest(case=str(kwargs)[:60]):
                 response = client.post("/execute", **kwargs)
-                self.assertEqual(response.status_code, status)
+                # Unparseable bodies (deeply nested JSON) are 400 or 422 depending on the FastAPI/Starlette version;
+                # what matters is a client error, never a 500.
+                self.assertIn(response.status_code, status if isinstance(status, tuple) else (status,))
                 self.assertNotIn("Traceback", response.text)
 
     def test_wrong_methods_and_unknown_paths(self):
