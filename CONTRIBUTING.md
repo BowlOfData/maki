@@ -9,7 +9,7 @@ flake8 . --select=E9,F63,F7,F82
 black .
 ```
 
-- Python 3.10+ must keep working; CI runs 3.10–3.13.
+- Python 3.10+ must keep working; CI runs 3.10–3.14.
 - Add a test with every fix or feature. Core must keep only its three runtime dependencies (`requests`, `httpx`,
   `python-dotenv`, plus `urllib3`); anything heavier belongs in an extra.
 - All outbound HTTP goes through `maki/connector.py`.

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+- CI also runs the suite on Python 3.14 (classifier added)
+
 ## [0.6.0] - 2026-11-10
 
 Highlights: `maki.eval` (compare models through the whole agent), context-window awareness for local models, Agent Skills, a production-hardening pass on the connector and `maki serve`, much deeper tests, and a cleaner package (no tests in the wheel, mypy-clean, stricter CI).
