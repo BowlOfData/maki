@@ -6,7 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-11
+
+A documentation and CI release; no change to the library code.
+
+### Documentation
+- New guide, [Running Maki in production](docs/user/production.md): pre-requirements, the difference between the server key (`MAKI_API_KEY`) and model-provider keys, llama.cpp as the suggested self-hosted backend (with `--api-key`), service setup on Linux (systemd), macOS (launchd) and Windows (NSSM), TLS and rate limiting through a reverse proxy, verification steps and key rotation
+- `configuration.md` lists `MAKI_API_KEY` and the provider keys, and says where a `.env` file is found (searched upward from the installed package, not the working directory; real environment variables win)
+- Fixed the `AgentProxy` example in `serving.md` (the first argument is the endpoint URL); noted that `maki.test.load_check` is not in the wheel
+- The README no longer hard-codes a release number
+
+### CI
 - CI also runs the suite on Python 3.14 (classifier added)
+- GitHub Actions updated: `actions/checkout` 7, `actions/setup-python` 7, `actions/upload-artifact` 7, `actions/download-artifact` 8, `actions/deploy-pages` 5
 
 ## [0.6.0] - 2026-11-10
 
