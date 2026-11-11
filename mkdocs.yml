@@ -51,6 +51,7 @@ nav:
       - Skills: skills.md
       - Evaluating models: eval.md
       - Serving agents: serving.md
+      - Running in production: production.md
   - Reference:
       - Configuration: configuration.md
       - Architecture: architecture.md

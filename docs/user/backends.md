@@ -206,6 +206,7 @@ print(response.reasoning)           # thinking text from reasoning models, else 
 - `top_k` and `repeat_penalty` from `GenerationConfig` are sent to the server.
 - `chat_collect()` (used by `Agent(use_streaming=True)`) streams internally so the timeout applies per chunk.
 - **Router mode:** start `llama serve` without a model and pass the name, e.g. `MakiLlamaCpp(model="ggml-org/gemma-3-4b-it-qat-GGUF:Q4_0")`.
+- **Production:** llama.cpp is the suggested self-hosted backend. Start it with `--api-key` on loopback and set `LLAMACPP_API_KEY` for Maki; see [Running in production](production.md#step-2-prepare-the-model-server-and-the-key-it-needs).
 - **Other servers:** pass `base_url="http://192.168.1.20:8080/v1"` for a LAN host and `api_key=` (or `LLAMACPP_API_KEY`) if the server uses `--api-key`.
 
 Embeddings and reranking need a server started with `--embedding` or `--rerank`:
@@ -300,7 +301,7 @@ llm = MakiOpenRouter(model="meta-llama/llama-3.1-70b-instruct")
 print(llm.chat("What is the capital of France?").content)
 ```
 
-API keys are read from the vendor's usual environment variable (for example `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or can be passed explicitly. Hosted-model traffic goes through the vendors' own SDKs.
+API keys are read from the vendor's usual environment variable (for example `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or can be passed explicitly. Hosted-model traffic goes through the vendors' own SDKs. When the agent is served with `maki serve`, these keys must be set in the server's environment (the agent YAML has no key field); see [Running in production](production.md#provider-keys-hosted-backends-only).
 
 ## HuggingFace Transformers
 

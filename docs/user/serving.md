@@ -24,9 +24,11 @@ plugins:
 maki serve --config agent.yaml --host 127.0.0.1 --port 8100
 ```
 
-Options: `--api-key KEY` or the `MAKI_API_KEY` environment variable (bearer-token auth), `--tls-cert FILE` and `--tls-key FILE` (HTTPS), `--max-body-mb`, `--max-concurrency` and `--graceful-timeout` (see [Running in production](#running-in-production)). The server exposes `/execute`, `/stream`, `/health` and memory endpoints, plus `/loop` endpoints when the config has a `judge:` section (see [Agent loops](loops.md)).
+Options: `--api-key KEY` or the `MAKI_API_KEY` environment variable (bearer-token auth for callers of this server; a key you invent, separate from any model-provider key), `--tls-cert FILE` and `--tls-key FILE` (HTTPS), `--max-body-mb`, `--max-concurrency` and `--graceful-timeout` (see [Running in production](#running-in-production)). The server exposes `/execute`, `/stream`, `/health` and memory endpoints, plus `/loop` endpoints when the config has a `judge:` section (see [Agent loops](loops.md)).
 
 ## Running in production
+
+For a complete step-by-step setup (pre-requirements, keys, systemd, TLS, verification) see [Running Maki in production](production.md). The table below is the short reference.
 
 `maki serve` is a small, single-agent server. Before exposing it beyond your own machine:
 
@@ -43,7 +45,7 @@ Options: `--api-key KEY` or the `MAKI_API_KEY` environment variable (bearer-toke
 
 With a key set, `/docs`, `/redoc` and `/openapi.json` are switched off (they are served without authentication); without a key they stay on for development. Errors returned to callers are generic; details are logged on the server only, and URLs in log lines and error messages have credential-like query parameters (`?api_key=`, `?token=`, ...) masked.
 
-To check a deployment under load, `python -m maki.test.load_check --url http://host:8100 --api-key KEY --duration 60 --concurrency 8` drives a running server (execute, health and info only) and reports latency percentiles and any unexpected response. Without `--url` it starts the real server stack with a fake backend in a separate process and runs a mixed workload (valid calls plus malformed JSON, oversized bodies, wrong credentials, unknown paths) while sampling the server's memory, threads and open file descriptors; it fails on errors, hangs, or sustained drift.
+To check a deployment under load (from a source checkout; the tool is not in the pip package), `python -m maki.test.load_check --url http://host:8100 --api-key KEY --duration 60 --concurrency 8` drives a running server (execute, health and info only) and reports latency percentiles and any unexpected response. Without `--url` it starts the real server stack with a fake backend in a separate process and runs a mixed workload (valid calls plus malformed JSON, oversized bodies, wrong credentials, unknown paths) while sampling the server's memory, threads and open file descriptors; it fails on errors, hangs, or sustained drift.
 
 What it does not do: one agent per process (run several processes for several agents), no persistence of a conversation across restarts, no metrics endpoint, and logs are plain text. Hosted backends other than OpenRouter were verified against test doubles, not live; try your own model and provider under your own load before relying on them.
 
@@ -67,7 +69,7 @@ Remote loops take text requirements only and run one at a time. The server refus
 ```python
 from maki.distributed.proxy import AgentProxy
 
-agent = AgentProxy(name="MyAgent", base_url="http://127.0.0.1:8100")
+agent = AgentProxy("http://127.0.0.1:8100")
 print(agent.execute_task("Summarize the latest AI news."))
 ```
 
