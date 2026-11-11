@@ -25,7 +25,7 @@ ollama pull llama3.2
 pip install maki-framework
 ```
 
-The current release is [0.4.1](https://pypi.org/project/maki-framework/0.4.1/); to pin it, use `pip install maki-framework==0.4.1`.
+Releases are listed on [PyPI](https://pypi.org/project/maki-framework/) and in the [changelog](CHANGELOG.md). To pin a version, use `pip install maki-framework==X.Y.Z`.
 
 ```python
 from maki import MakiLLama

@@ -84,7 +84,7 @@ sudo -u maki /opt/maki/venv/bin/pip install "maki-framework[distributed,anthropi
 sudo -u maki /opt/maki/venv/bin/pip install "maki-framework[distributed,openrouter]"
 ```
 
-Add extras for the plugins you enable (for example `web` for `web_search` and `web_to_md`); see [Installation](installation.md#extras). Pin the version you tested (for example `maki-framework==0.6.0`) so a redeploy does not upgrade you by surprise.
+Add extras for the plugins you enable (for example `web` for `web_search` and `web_to_md`); see [Installation](installation.md#extras). Pin the version you tested (`pip install "maki-framework[...]==X.Y.Z"`, with the version from `pip show maki-framework`) so a redeploy does not upgrade you by surprise.
 
 Check it:
 
