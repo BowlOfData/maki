@@ -50,6 +50,7 @@ nav:
       - Agent loops: loops.md
       - Skills: skills.md
       - Evaluating models: eval.md
+      - Run traces: trace.md
       - Serving agents: serving.md
       - Running in production: production.md
   - Reference:

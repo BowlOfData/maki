@@ -49,6 +49,7 @@ _LAZY_EXPORTS = {
     "AgentCallback":  (".callbacks",     "AgentCallback"),
     "LoggingCallback": (".callbacks",    "LoggingCallback"),
     "ToolPolicy":     (".agents.tool_policy", "ToolPolicy"),
+    "TraceCallback":  (".trace",         "TraceCallback"),
     "FallbackBackend": (".fallback",     "FallbackBackend"),
     "EvalCase":       (".eval",          "EvalCase"),
     "SkillRegistry":  (".skills",        "SkillRegistry"),

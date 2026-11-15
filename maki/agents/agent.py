@@ -51,7 +51,8 @@ class Agent(PluginHandler, ReasoningEngine):
                  memory: Optional[Union[MemoryPolicy, dict]] = None,
                  tool_policy: Optional[Union[ToolPolicy, dict]] = None,
                  callbacks: Optional[List[AgentCallback]] = None,
-                 skills: Any = None):
+                 skills: Any = None,
+                 trace: Any = None):
         """
         Initialize an agent.
 
@@ -74,6 +75,8 @@ class Agent(PluginHandler, ReasoningEngine):
             tool_policy: Optional ``ToolPolicy`` (or a dict of its fields): tool round limit,
                 per-tool retries with backoff, parallel tool calls. ``None`` keeps the defaults.
             callbacks: Optional ``AgentCallback`` observers for task, model and tool events.
+            trace: A file path (or a :class:`~maki.trace.TraceCallback`) that records every task, model round and
+                tool call as JSON lines; read it with ``maki trace show``. See :mod:`maki.trace`.
             skills: Agent Skills the model can load on demand: ``True`` (user skills), a folder or list of
                 folders, a :class:`~maki.skills.SkillRegistry`, or an options dict (see :mod:`maki.skills`).
                 Adds the ``skills`` plugin (``skills.load``, ``skills.read``) and, for tasks run with
@@ -114,6 +117,9 @@ class Agent(PluginHandler, ReasoningEngine):
         if self.tool_policy is not None and not isinstance(self.tool_policy, ToolPolicy):
             raise TypeError("tool_policy must be a ToolPolicy, a dict of its fields, or None")
         self.callbacks: List[AgentCallback] = list(callbacks or [])
+        if trace is not None and trace is not False:
+            from ..trace import TraceCallback
+            self.callbacks.append(trace if isinstance(trace, TraceCallback) else TraceCallback(trace))
         # Optional override for the summary tier: summarizer(previous_summary, [Message, ...]) -> str.
         self.summarizer = None
         if self.memory_policy is not None and self.memory_policy.summarize_older:

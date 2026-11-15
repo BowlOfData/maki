@@ -17,6 +17,7 @@ think: false                # optional, ollama only: false turns model thinking 
                             # model can leak its reasoning into the reply, which pollutes loop artifacts)
 stateful: false             # optional, default false
 use_streaming: false        # optional, default false
+trace: runs.jsonl            # optional; record every task, model round and tool call (maki trace show runs.jsonl)
 memory:                     # optional; limits on what the agent keeps and sends
   history_mode: messages    # text (default) | messages: prior turns as structured chat history
   token_budget: 4096        # stateful conversation budget, in estimated tokens
@@ -204,6 +205,7 @@ def _agent_from_cfg(cfg: dict) -> Agent:
         memory=_memory_from_cfg(cfg.get("memory")),
         tool_policy=_tool_policy_from_cfg(cfg.get("tool_policy")),
         skills=_skills_from_cfg(cfg.get("skills")),
+        trace=cfg.get("trace") or None,
     )
 
     for plugin_name in plugin_names:

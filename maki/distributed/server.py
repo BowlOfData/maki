@@ -62,6 +62,7 @@ from ..exceptions import (
     MakiTimeoutError,
     MakiValidationError,
 )
+from ..trace import PARENT_SPAN_HEADER, TRACE_HEADER, set_inherited, trace_context, valid_id
 from .loop_jobs import LOOP_ID_PATTERN, LoopCaps, LoopJobBusy, LoopJobNotFound, LoopJobs, NoPendingApproval
 
 logger = logging.getLogger(__name__)
@@ -193,11 +194,13 @@ router = APIRouter()
 
 class _TracingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        trace_id = request.headers.get("X-Maki-Trace-Id") or str(uuid.uuid4())
+        # A header is client input: only a short, plain id is echoed into logs, responses and trace files.
+        trace_id = valid_id(request.headers.get(TRACE_HEADER)) or str(uuid.uuid4())
         request.state.trace_id = trace_id
+        request.state.parent_span = valid_id(request.headers.get(PARENT_SPAN_HEADER))
         logger.debug("[trace=%s] → %s %s", trace_id, request.method, request.url.path)
         response = await call_next(request)
-        response.headers["X-Maki-Trace-Id"] = trace_id
+        response.headers[TRACE_HEADER] = trace_id
         logger.debug("[trace=%s] ← %d", trace_id, response.status_code)
         return response
 
@@ -263,7 +266,8 @@ def execute(req: ExecuteRequest, request: Request, _: None = Depends(_auth)):
     # is logged in full server-side only, so internal URLs/paths never
     # reach remote callers.
     try:
-        result = ag.execute_task(req.task, req.context, req.use_plugins)
+        with trace_context(trace_id, getattr(request.state, "parent_span", None)):
+            result = ag.execute_task(req.task, req.context, req.use_plugins)
     except (MakiValidationError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except MakiTimeoutError as e:
@@ -294,8 +298,13 @@ def execute(req: ExecuteRequest, request: Request, _: None = Depends(_auth)):
 @router.post("/stream")
 def stream(req: ExecuteRequest, request: Request, _: None = Depends(_auth)):
     ag: Agent = request.app.state.agent
+    trace_id = getattr(request.state, "trace_id", None)
+    parent_span = getattr(request.state, "parent_span", None)
 
     def _sse():
+        # The generator runs on pool threads that copy the context per step; the task span opens during this
+        # first step, so the ids are set here rather than around the response.
+        set_inherited(trace_id, parent_span)
         try:
             for chunk in ag.stream_task(req.task, req.context, use_plugins=req.use_plugins):
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"

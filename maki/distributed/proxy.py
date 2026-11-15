@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 _RETRYABLE = (MakiNetworkError, MakiTimeoutError)
 
 TRACE_HEADER = "X-Maki-Trace-Id"
+PARENT_SPAN_HEADER = "X-Maki-Parent-Span"
 
 _LOOP_OPTIONS = ("max_iterations", "max_seconds", "stall_limit", "context", "use_plugins", "max_tokens", "require_approval")
 _MAX_STREAM_RECONNECTS = 5
@@ -124,13 +125,27 @@ class AgentProxy:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _headers(self, trace_id: Optional[str] = None) -> dict:
+    def _headers(self, trace_id: Optional[str] = None, parent_span: Optional[str] = None) -> dict:
         h: dict = {}
         if self._api_key:
             h["Authorization"] = f"Bearer {self._api_key}"
         if trace_id:
             h[TRACE_HEADER] = trace_id
+            if parent_span:
+                h[PARENT_SPAN_HEADER] = parent_span
         return h
+
+    @staticmethod
+    def _trace_for_request(trace_id: Optional[str]):
+        """``(trace id, parent span)`` to send. Inside a traced run on this side the call joins that trace under
+        the open span, so the server's spans hang below the caller's; an explicit *trace_id* is used as given."""
+        from ..trace import current_trace
+        current = current_trace()
+        if trace_id:
+            return trace_id, (current[1] if current and current[0] == trace_id else None)
+        if current:
+            return current[0], current[1]
+        return str(uuid.uuid4()), None
 
     def _url(self, path: str) -> str:
         return f"{self.endpoint}{path}"
@@ -138,9 +153,9 @@ class AgentProxy:
     def _get(self, path: str, trace_id: Optional[str] = None):
         return self._http.get(self._url(path), headers=self._headers(trace_id))
 
-    def _post(self, path: str, payload: dict, trace_id: Optional[str] = None):
+    def _post(self, path: str, payload: dict, trace_id: Optional[str] = None, parent_span: Optional[str] = None):
         return self._http.post(
-            self._url(path), json=payload, headers=self._headers(trace_id)
+            self._url(path), json=payload, headers=self._headers(trace_id, parent_span)
         )
 
     def _delete(self, path: str, trace_id: Optional[str] = None):
@@ -194,13 +209,13 @@ class AgentProxy:
                 f"({self._circuit_breaker.failure_count} consecutive failures)"
             )
 
-        request_trace = trace_id or str(uuid.uuid4())
+        request_trace, parent_span = self._trace_for_request(trace_id)
         payload: dict = {"task": task, "use_plugins": use_plugins}
         if context:
             payload["context"] = context
 
         try:
-            r = self._post("/execute", payload, trace_id=request_trace)
+            r = self._post("/execute", payload, trace_id=request_trace, parent_span=parent_span)
             self._circuit_breaker.record_success()
             body = r.json()
             self.last_trace_id = body.get("trace_id", request_trace)
@@ -271,8 +286,8 @@ class AgentProxy:
             raise MakiNetworkError(
                 f"Circuit breaker OPEN for {self.endpoint}: streaming unavailable"
             )
-        request_trace = trace_id or str(uuid.uuid4())
-        return self._stream_generator(task, context, use_plugins, request_trace)
+        request_trace, parent_span = self._trace_for_request(trace_id)
+        return self._stream_generator(task, context, use_plugins, request_trace, parent_span)
 
     def _stream_generator(
         self,
@@ -280,11 +295,12 @@ class AgentProxy:
         context: Optional[Dict],
         use_plugins: bool,
         trace_id: str,
+        parent_span: Optional[str] = None,
     ) -> Generator[str, None, None]:
         payload: dict = {"task": task, "use_plugins": use_plugins}
         if context:
             payload["context"] = context
-        headers = self._headers(trace_id)
+        headers = self._headers(trace_id, parent_span)
 
         try:
             response = self._http.post(

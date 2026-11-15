@@ -161,11 +161,19 @@ def main() -> None:
     from .eval import add_cli_arguments
     add_cli_arguments(evaluate)
 
+    # maki trace
+    trace = sub.add_parser("trace", help="Show the run traces an agent recorded with trace=")
+    from .trace import add_cli_arguments as add_trace_arguments
+    add_trace_arguments(trace)
+
     args = parser.parse_args()
     configure_logging()
 
     if args.command == "serve":
         _cmd_serve(args)
+    elif args.command == "trace":
+        from .trace import run_cli as run_trace_cli
+        raise SystemExit(run_trace_cli(args))
     elif args.command == "eval":
         from .eval import run_cli
         raise SystemExit(run_cli(args))
