@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from .callbacks import AgentCallback
+from .connector import redact
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ TRACE_HEADER = "X-Maki-Trace-Id"
 PARENT_SPAN_HEADER = "X-Maki-Parent-Span"
 SCHEMA_VERSION = 1
 
-_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _SECRET_KEY = re.compile(r"(key|token|secret|passw|authoriz|credential|cookie)", re.IGNORECASE)
 
 
@@ -49,7 +50,7 @@ def new_id() -> str:
 def valid_id(value: Any) -> Optional[str]:
     """*value* if it is safe to write into a trace file and a log line (1-64 of ``A-Za-z0-9._-``), else None.
     Ids arrive in request headers, so they are never trusted as they are."""
-    return value if isinstance(value, str) and _ID_PATTERN.match(value) else None
+    return value if isinstance(value, str) and _ID_PATTERN.fullmatch(value) else None
 
 
 @dataclass
@@ -95,11 +96,14 @@ class trace_context:
 
     def __exit__(self, *exc: Any) -> None:
         if self._token is not None:
-            _inherited.reset(self._token)
+            try:
+                _inherited.reset(self._token)
+            except ValueError:  # exited in another context than it was entered in (an async generator)
+                _inherited.set(None)
 
 
 def _clip(text: Any, limit: int) -> str:
-    text = text if isinstance(text, str) else str(text)
+    text = redact(text if isinstance(text, str) else str(text))  # a URL with ?api_key=... in a result or error
     return text if len(text) <= limit else text[:limit] + f"…[+{len(text) - limit} chars]"
 
 
@@ -112,6 +116,59 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     if isinstance(value, (list, tuple)):
         return [_scrub(v, depth + 1) for v in value]
     return value
+
+
+class _Sink:
+    """One append-only file shared by every TraceCallback that writes to the same path in this process, so
+    their lines never interleave inside a write and the size count and rollover agree."""
+
+    def __init__(self, path: str, max_bytes: int) -> None:
+        self.path, self.max_bytes = path, max_bytes
+        self.lock = threading.Lock()
+        self.fd: Optional[int] = None
+        self.size = 0
+
+    def _open(self) -> None:
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        self.size = os.fstat(self.fd).st_size
+
+    def append(self, line: bytes) -> None:
+        with self.lock:
+            if self.fd is None:
+                self._open()
+            if self.max_bytes and self.size and self.size + len(line) > self.max_bytes:
+                os.close(self.fd)  # type: ignore[arg-type]
+                os.replace(self.path, self.path + ".1")
+                self._open()
+            os.write(self.fd, line)  # type: ignore[arg-type]
+            self.size += len(line)
+
+    def close(self) -> None:
+        with self.lock:
+            if self.fd is not None:
+                os.close(self.fd)
+                self.fd = None
+
+
+_sinks: Dict[Tuple[str, int], _Sink] = {}
+_sinks_lock = threading.Lock()
+
+
+def _sink_for(path: str, max_bytes: int) -> _Sink:
+    key = (os.path.abspath(path), max_bytes)
+    with _sinks_lock:
+        if key not in _sinks:
+            _sinks[key] = _Sink(*key)
+        return _sinks[key]
+
+
+def close_all() -> None:
+    """Close every open trace file (they reopen on the next event). For tests and orderly shutdown."""
+    with _sinks_lock:
+        sinks = list(_sinks.values())
+    for sink in sinks:
+        sink.close()
 
 
 class TraceCallback(AgentCallback):
@@ -130,9 +187,8 @@ class TraceCallback(AgentCallback):
             raise ValueError("max_chars must be >= 1 and max_bytes >= 0")
         self.path = os.fspath(path)
         self.max_chars, self.max_bytes, self.include_content = max_chars, max_bytes, include_content
-        self._lock = threading.Lock()
-        self._fd: Optional[int] = None
-        self._size = 0
+        self._sink = _sink_for(self.path, max_bytes)
+        self._lock = threading.Lock()  # guards the open-span tables below
         self._warned = False
         # Streaming hops threads between chunks, which loses context variables, so task spans are also
         # found by (agent, task) here; model and tool spans only ever occur on one thread.
@@ -187,33 +243,21 @@ class TraceCallback(AgentCallback):
             record["seconds"] = round(time.perf_counter() - frame.started, 4)
         record.update({k: v for k, v in fields.items() if v is not None})
         try:
-            line = (json.dumps(record, default=str, ensure_ascii=False) + "\n").encode("utf-8")
-            with self._lock:
-                self._append(line)
+            self._sink.append((json.dumps(record, default=str, ensure_ascii=False) + "\n").encode("utf-8"))
         except Exception:
             if not self._warned:  # one warning, not one per event
                 self._warned = True
                 logger.warning("TraceCallback could not write %s", self.path, exc_info=True)
 
-    def _append(self, line: bytes) -> None:
-        if self._fd is not None and self.max_bytes and self._size + len(line) > self.max_bytes:
-            os.close(self._fd)
-            self._fd = None
-            os.replace(self.path, self.path + ".1")
-        if self._fd is None:
-            directory = os.path.dirname(os.path.abspath(self.path))
-            os.makedirs(directory, exist_ok=True)
-            self._fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-            self._size = os.fstat(self._fd).st_size
-        os.write(self._fd, line)
-        self._size += len(line)
-
     def close(self) -> None:
         """Close the file (it is reopened by the next event)."""
-        with self._lock:
-            if self._fd is not None:
-                os.close(self._fd)
-                self._fd = None
+        self._sink.close()
+
+    def _error(self, error: BaseException) -> str:
+        """The error for a record: type and message, or just the type when content is not recorded."""
+        if not self.include_content:
+            return type(error).__name__
+        return _clip(f"{type(error).__name__}: {error}", 300)
 
     def _text(self, value: Any) -> Optional[str]:
         return _clip(value, self.max_chars) if self.include_content and value is not None else None
@@ -221,22 +265,25 @@ class TraceCallback(AgentCallback):
     def _close_orphans(self, orphans: Iterable[_Frame], agent: Any) -> None:
         for frame in orphans:
             self._write(frame, "end", agent, status="abandoned")
-            self._open_tools = {k: v for k, v in self._open_tools.items() if v is not frame}
+            with self._lock:
+                self._open_tools = {k: v for k, v in self._open_tools.items() if v is not frame}
 
     # -- task ----------------------------------------------------------------------------------------------
 
     def on_task_start(self, agent: Any, task: str) -> None:
         frame = self._push("task")
-        self._open_tasks.setdefault((id(agent), task), []).append(frame)
+        with self._lock:
+            self._open_tasks.setdefault((id(agent), task), []).append(frame)
         self._write(frame, "start", agent, task=self._text(task))
 
     def _finish_task(self, agent: Any, task: str, phase: str, **fields: Any) -> None:
-        frames = self._open_tasks.get((id(agent), task))
-        if not frames:
-            return
-        frame = frames.pop(0)
-        if not frames:
-            del self._open_tasks[(id(agent), task)]
+        with self._lock:
+            frames = self._open_tasks.get((id(agent), task))
+            if not frames:
+                return
+            frame = frames.pop(0)
+            if not frames:
+                del self._open_tasks[(id(agent), task)]
         self._close_orphans(self._pop(frame), agent)
         self._write(frame, phase, agent, **fields)
 
@@ -244,7 +291,7 @@ class TraceCallback(AgentCallback):
         self._finish_task(agent, task, "end", status="ok", result=self._text(result))
 
     def on_task_error(self, agent: Any, task: str, error: BaseException, elapsed: float) -> None:
-        self._finish_task(agent, task, "error", status="error", error=_clip(f"{type(error).__name__}: {error}", 300))
+        self._finish_task(agent, task, "error", status="error", error=self._error(error))
 
     # -- model ---------------------------------------------------------------------------------------------
 
@@ -267,7 +314,8 @@ class TraceCallback(AgentCallback):
 
     def on_tool_start(self, agent: Any, call: Any) -> None:
         frame = self._push("tool")
-        self._open_tools[id(call)] = frame
+        with self._lock:
+            self._open_tools[id(call)] = frame
         args = getattr(call, "args", None)
         text = None
         if self.include_content and args is not None:
@@ -278,13 +326,16 @@ class TraceCallback(AgentCallback):
         self._write(frame, "start", agent, tool=getattr(call, "name", None), args=text)
 
     def _tool_frame(self, call: Any) -> Optional[_Frame]:
-        return self._open_tools.get(id(call)) or self._top("tool")
+        with self._lock:
+            known = self._open_tools.get(id(call))
+        return known or self._top("tool")
 
     def on_tool_end(self, agent: Any, call: Any, result: str, elapsed: float) -> None:
         frame = self._tool_frame(call)
         if frame is None:
             return
-        self._open_tools.pop(id(call), None)
+        with self._lock:
+            self._open_tools.pop(id(call), None)
         self._close_orphans(self._pop(frame), agent)
         self._write(frame, "end", agent, status="ok", tool=getattr(call, "name", None), result=self._text(result))
 
@@ -292,16 +343,17 @@ class TraceCallback(AgentCallback):
         frame = self._tool_frame(call)
         if frame is None:
             return
-        self._open_tools.pop(id(call), None)
+        with self._lock:
+            self._open_tools.pop(id(call), None)
         self._close_orphans(self._pop(frame), agent)
         self._write(frame, "error", agent, status="error", tool=getattr(call, "name", None),
-                    error=_clip(f"{type(error).__name__}: {error}", 300))
+                    error=self._error(error))
 
     def on_tool_retry(self, agent: Any, call: Any, error: BaseException, attempt: int, delay: float) -> None:
         frame = self._tool_frame(call)
         if frame is not None:
             self._write(frame, "retry", agent, attempt=attempt, delay=round(delay, 3),
-                        error=_clip(f"{type(error).__name__}: {error}", 300))
+                        error=self._error(error))
 
 
 # ----------------------------------------------------------------------------------------------------------

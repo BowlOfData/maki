@@ -7,6 +7,7 @@ or via the native tool-calling APIs of capable backends.
 """
 
 import asyncio
+import contextvars
 import functools
 import importlib
 import importlib.util
@@ -511,8 +512,12 @@ class PluginHandler:
             return [(tc, self._execute_tool_call(tc)) for tc in tool_calls]
         relay = TokenRelay(getattr(self.maki, "usage", None))
         try:
+            run = relay.wrap(self._execute_tool_call)
+            # Each worker runs in a copy of this context, so run traces see the tool calls as part of the
+            # task (a pool thread starts with an empty context) and parallel calls do not share span state.
+            contexts = [contextvars.copy_context() for _ in tool_calls]
             with ThreadPoolExecutor(max_workers=min(policy.max_workers, len(tool_calls))) as pool:
-                results = list(pool.map(relay.wrap(self._execute_tool_call), tool_calls))
+                results = list(pool.map(lambda tc, ctx: ctx.run(run, tc), tool_calls, contexts))
         finally:
             relay.settle()
         return list(zip(tool_calls, results))

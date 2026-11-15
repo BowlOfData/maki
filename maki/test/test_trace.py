@@ -66,6 +66,7 @@ class Base(unittest.TestCase):
         from maki import trace as trace_module
         trace_module._stack.set(())  # a test that leaves a span open must not leak it into the next one
         self.addCleanup(trace_module._stack.set, ())
+        self.addCleanup(trace_module.close_all)
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         self.path = os.path.join(self.dir.name, "runs.jsonl")
@@ -384,12 +385,115 @@ class TestWriterDetails(Base):
         self.assertIn("0 in / 3 out tokens", render_trace("T1", build_spans(records)["T1"]))
 
 
+class TestReviewFixes(Base):
+
+    def test_parallel_tool_calls_stay_in_the_same_trace_under_the_task(self):
+        agent = _agent(self.path, tool_policy=ToolPolicy(parallel=True, max_workers=4))
+        _run(agent, [ToolCall("1", "p__add", {"a": 1}), ToolCall("2", "p__add", {"a": 2}), ToolCall("3", "p__add", {"a": 3})])
+        records = self.records()
+        self.assertEqual(len({r["trace"] for r in records}), 1, "pool threads must not start traces of their own")
+        (task,) = build_spans(records)[records[0]["trace"]]
+        self.assertEqual(sorted(c.kind for c in task.children), ["model", "model", "tool", "tool", "tool"])
+        self.assertTrue(all(c.status == "ok" for c in task.children))
+        self.assertIsNone(current_trace())
+
+    def test_a_stream_abandoned_before_its_first_chunk_closes_its_span(self):
+        agent = _agent(self.path)
+        agent.maki.stream.side_effect = lambda *a, **k: iter(["a", "b"])
+        chunks = agent.stream_task("hello")
+        chunks.close()  # never started: the body has not run, nothing was opened
+        self.assertFalse(os.path.exists(self.path))
+        chunks = agent.stream_task("hello")
+        next(chunks)
+        chunks.close()
+        self.assertIsNone(current_trace(), "no span is left on the stack to become the next task's parent")
+        task = build_spans(self.records())
+        (root,) = next(iter(task.values()))
+        self.assertEqual(root.status, "ok")
+        # An empty stream closes its span too, and the next task is a new trace, not a child of it.
+        agent.maki.stream.side_effect = lambda *a, **k: iter([])
+        list(agent.stream_task("empty"))
+        agent.maki.stream.side_effect = lambda *a, **k: iter(["z"])
+        list(agent.stream_task("next"))
+        roots = [r for rs in build_spans(self.records()).values() for r in rs]
+        self.assertEqual(len(roots), 3)
+        self.assertTrue(all(r.status == "ok" and r.parent is None for r in roots))
+
+    def test_urls_with_credentials_are_redacted_in_results_and_errors(self):
+        cb = TraceCallback(self.path)
+        agent = SimpleNamespace(name="a")
+        call = SimpleNamespace(name="web__fetch", args={"url": "https://x.test/a?api_key=SECRET123&q=1"})
+        cb.on_task_start(agent, "t")
+        cb.on_tool_start(agent, call)
+        cb.on_tool_error(agent, call, ValueError("GET https://x.test/a?token=TOPSECRET failed"), 0.0)
+        cb.on_task_end(agent, "t", "see https://x.test/b?key=KEY999", 0.0)
+        text = open(self.path).read()
+        for leaked in ("SECRET123", "TOPSECRET", "KEY999"):
+            self.assertNotIn(leaked, text)
+        self.assertIn("q=1", text)
+
+    def test_without_content_an_error_is_only_its_type(self):
+        cb = TraceCallback(self.path, include_content=False)
+        agent = SimpleNamespace(name="a")
+        cb.on_task_start(agent, "t")
+        cb.on_task_error(agent, "t", ValueError("contains the user's private text"), 0.0)
+        text = open(self.path).read()
+        self.assertNotIn("private", text)
+        self.assertIn('"error": "ValueError"', text)
+
+    def test_two_callbacks_on_one_path_share_the_file_and_the_rollover(self):
+        a, b = TraceCallback(self.path, max_bytes=2000), TraceCallback(self.path, max_bytes=2000)
+        self.assertIs(a._sink, b._sink)
+        self.assertIsNot(a._sink, TraceCallback(self.path, max_bytes=999)._sink)
+        agent = SimpleNamespace(name="a")
+        for i in range(30):
+            cb = a if i % 2 else b
+            cb.on_task_start(agent, f"task {i}")
+            cb.on_task_end(agent, f"task {i}", "r", 0.0)
+        self.assertTrue(os.path.exists(self.path + ".1"))
+        self.assertLessEqual(os.path.getsize(self.path), 2000)
+        for path in (self.path, self.path + ".1"):
+            for line in open(path):
+                json.loads(line)  # no torn or interleaved lines
+
+    def test_concurrent_writers_never_interleave_lines(self):
+        cbs = [TraceCallback(self.path) for _ in range(4)]
+        agent = SimpleNamespace(name="a")
+
+        def work(cb, n):
+            for i in range(50):
+                cb.on_task_start(agent, f"{n}-{i}-" + "x" * 300)
+                cb.on_task_end(agent, f"{n}-{i}-" + "x" * 300, "r", 0.0)
+        threads = [threading.Thread(target=work, args=(cb, n)) for n, cb in enumerate(cbs)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        self.assertEqual(len(self.records()), 4 * 50 * 2)
+
+    def test_trace_context_exited_in_another_context_does_not_raise(self):
+        import asyncio
+
+        async def gen():
+            with trace_context("agen-trace"):
+                yield 1
+                yield 2
+
+        async def main():
+            g = gen()
+            await g.__anext__()
+            await g.aclose()  # closed from a different context than it was entered in
+
+        asyncio.run(main())
+
+    def test_shared_state_is_cleared_for_the_next_test(self):
+        self.assertIsNone(current_trace())
+
+
 class TestIds(unittest.TestCase):
 
     def test_valid_id(self):
         for good in ("abc", "A1._-", "x" * 64, new_id()):
             self.assertEqual(valid_id(good), good)
-        for bad in ("", "x" * 65, "has space", "line\nbreak", "../x", None, 5, "a/b", "é"):
+        for bad in ("", "x" * 65, "has space", "line\nbreak", "../x", None, 5, "a/b", "é", "abc\n", "\nabc", "abc\r"):
             self.assertIsNone(valid_id(bad), bad)
 
     def test_trace_context_joins_the_trace_and_unsafe_ids_are_ignored(self):
@@ -663,6 +767,15 @@ class TestServerAndProxy(Base):
                                  headers={"X-Maki-Trace-Id": "ok", "X-Maki-Parent-Span": "bad parent\n"})
         self.assertEqual(bad_parent.status_code, 200)
         self.assertIsNone([r for r in self.records() if r["trace"] == "ok" and r["kind"] == "task"][0]["parent"])
+
+    def test_a_parent_span_without_a_valid_trace_id_is_ignored(self):
+        client, _ = self._client()
+        for headers in ({"X-Maki-Parent-Span": "orphan"},
+                        {"X-Maki-Trace-Id": "bad id", "X-Maki-Parent-Span": "orphan"}):
+            client.post("/execute", json={"task": "hi"}, headers=headers)
+        tasks = [r for r in self.records() if r["kind"] == "task" and r["ph"] == "start"]
+        self.assertEqual(len(tasks), 2)
+        self.assertTrue(all(t["parent"] is None for t in tasks))
 
     def test_streaming_carries_the_ids_too(self):
         client, _ = self._client()

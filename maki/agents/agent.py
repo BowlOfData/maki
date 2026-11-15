@@ -578,10 +578,12 @@ class Agent(PluginHandler, ReasoningEngine):
                     elapsed = time.time() - start_time
                     if failure is not None:
                         fire(self.callbacks, "on_task_error", self, task, failure, elapsed)
+                    if failure is None:
+                        # Always closes what on_task_start opened, also when the stream ended or was
+                        # abandoned before its first chunk.
+                        fire(self.callbacks, "on_task_end", self, task, "".join(chunks), elapsed)
                     if chunks:
                         full_result = "".join(chunks)
-                        if failure is None:
-                            fire(self.callbacks, "on_task_end", self, task, full_result, elapsed)
                         self._record_task(task, context, full_result)
                         if self.stateful:
                             self._conversation_memory.append(Message("user", task))

@@ -195,9 +195,11 @@ router = APIRouter()
 class _TracingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # A header is client input: only a short, plain id is echoed into logs, responses and trace files.
-        trace_id = valid_id(request.headers.get(TRACE_HEADER)) or str(uuid.uuid4())
+        sent = valid_id(request.headers.get(TRACE_HEADER))
+        trace_id = sent or str(uuid.uuid4())
         request.state.trace_id = trace_id
-        request.state.parent_span = valid_id(request.headers.get(PARENT_SPAN_HEADER))
+        # A parent span only means something inside the trace it belongs to.
+        request.state.parent_span = valid_id(request.headers.get(PARENT_SPAN_HEADER)) if sent else None
         logger.debug("[trace=%s] → %s %s", trace_id, request.method, request.url.path)
         response = await call_next(request)
         response.headers[TRACE_HEADER] = trace_id
