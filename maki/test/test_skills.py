@@ -9,7 +9,7 @@ from unittest.mock import patch
 from maki import Agent
 from maki.backend import LLMBackend
 from maki.objects import LLMResponse, ToolCall
-from maki.skills import (DEFAULT_CATALOG_CHARS, SKILL_FILE, Skill, SkillRegistry, SkillsPlugin, _simple_yaml,
+from maki.skills import (DEFAULT_CATALOG_CHARS, SKILL_FILE, SkillRegistry, SkillsPlugin, _simple_yaml,
                          coerce_registry, load_skill, parse_skill_text, project_roots)
 
 

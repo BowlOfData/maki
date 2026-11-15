@@ -55,7 +55,7 @@ Traces hold prompts, answers and tool arguments, so:
 - the file is created readable by you only (`0600`);
 - every text field is clipped to 500 characters by default, and arguments stored under keys that look like credentials (`key`, `token`, `secret`, `password`, ...) are replaced by `***`;
 - `TraceCallback(path, include_content=False)` records timing, token counts and names only, never text;
-- the file rolls over to `<path>.1` at 50 MB (`max_bytes`, 0 turns it off; one backup is kept);
+- the file rolls over to `<path>.1` at 50 MB (`max_bytes`, 0 turns it off; one backup is kept) (`maki trace show runs.jsonl.1 runs.jsonl` reads both);
 - a trace that cannot be written logs one warning and never breaks the run.
 
 ```python

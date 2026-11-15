@@ -74,7 +74,7 @@ except ImportError as _e:
 import importlib
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from ..agents.agent import Agent
 from ..agents.tool_policy import ToolPolicy
@@ -205,13 +205,21 @@ def _agent_from_cfg(cfg: dict) -> Agent:
         memory=_memory_from_cfg(cfg.get("memory")),
         tool_policy=_tool_policy_from_cfg(cfg.get("tool_policy")),
         skills=_skills_from_cfg(cfg.get("skills")),
-        trace=cfg.get("trace") or None,
+        trace=_trace_from_cfg(cfg.get("trace")),
     )
 
     for plugin_name in plugin_names:
         agent.load_plugin(plugin_name)
 
     return agent
+
+
+def _trace_from_cfg(value: Any) -> Optional[str]:
+    if value in (None, False, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid 'trace' (a file path): {value!r}")
+    return value
 
 
 def load_agent_from_config(path: str) -> Agent:

@@ -1,8 +1,7 @@
 """Context-window awareness: estimation, truncation detection, the sticky num_ctx policy and the probes."""
-import logging
 import threading
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from maki import Agent, FallbackBackend
 from maki.backend import LLMBackend

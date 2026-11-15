@@ -53,7 +53,7 @@ def valid_id(value: Any) -> Optional[str]:
     return value if isinstance(value, str) and _ID_PATTERN.fullmatch(value) else None
 
 
-@dataclass
+@dataclass(eq=False)
 class _Frame:
     owner: int
     trace: str
@@ -61,6 +61,7 @@ class _Frame:
     parent: Optional[str]
     kind: str
     started: float = field(default_factory=time.perf_counter)
+    closed: bool = False  # ended (possibly on another thread, whose context still lists it)
 
 
 #: the open spans of the current thread or asyncio task, outermost first
@@ -72,7 +73,7 @@ _inherited: contextvars.ContextVar = contextvars.ContextVar("maki_trace_inherite
 def current_trace() -> Optional[Tuple[str, str]]:
     """``(trace id, span id)`` of the innermost open span in this context, or None. The remote proxy sends
     these so the server's spans hang under the caller's."""
-    stack = _stack.get()
+    stack = [f for f in _stack.get() if not f.closed]
     return (stack[-1].trace, stack[-1].span) if stack else None
 
 
@@ -139,6 +140,7 @@ class _Sink:
                 self._open()
             if self.max_bytes and self.size and self.size + len(line) > self.max_bytes:
                 os.close(self.fd)  # type: ignore[arg-type]
+                self.fd = None  # never keep a closed descriptor: its number may be reused by another file
                 os.replace(self.path, self.path + ".1")
                 self._open()
             os.write(self.fd, line)  # type: ignore[arg-type]
@@ -156,7 +158,7 @@ _sinks_lock = threading.Lock()
 
 
 def _sink_for(path: str, max_bytes: int) -> _Sink:
-    key = (os.path.abspath(path), max_bytes)
+    key = (os.path.realpath(path), max_bytes)
     with _sinks_lock:
         if key not in _sinks:
             _sinks[key] = _Sink(*key)
@@ -185,7 +187,7 @@ class TraceCallback(AgentCallback):
                  include_content: bool = True) -> None:
         if max_chars < 1 or max_bytes < 0:
             raise ValueError("max_chars must be >= 1 and max_bytes >= 0")
-        self.path = os.fspath(path)
+        self.path = os.path.abspath(os.fspath(path))  # absolute: a later chdir must not split the file
         self.max_chars, self.max_bytes, self.include_content = max_chars, max_bytes, include_content
         self._sink = _sink_for(self.path, max_bytes)
         self._lock = threading.Lock()  # guards the open-span tables below
@@ -194,15 +196,16 @@ class TraceCallback(AgentCallback):
         # found by (agent, task) here; model and tool spans only ever occur on one thread.
         self._open_tasks: Dict[Tuple[int, str], List[_Frame]] = {}
         self._open_tools: Dict[int, _Frame] = {}
+        self._open_models: Dict[int, List[_Frame]] = {}
 
     # -- frames --------------------------------------------------------------------------------------------
 
     def _mine(self) -> List[_Frame]:
-        return [f for f in _stack.get() if f.owner == id(self)]
+        return [f for f in _stack.get() if f.owner == id(self) and not f.closed]
 
     def _push(self, kind: str) -> _Frame:
         stack = _stack.get()
-        mine = [f for f in stack if f.owner == id(self)]
+        mine = [f for f in stack if f.owner == id(self) and not f.closed]
         inherited = _inherited.get()
         if mine:
             trace, parent = mine[-1].trace, mine[-1].span
@@ -211,11 +214,12 @@ class TraceCallback(AgentCallback):
         else:
             trace, parent = None, None
         frame = _Frame(id(self), trace or new_id(), new_id(), parent, kind)
-        _stack.set(stack + (frame,))
+        _stack.set(tuple(f for f in stack if not f.closed) + (frame,))
         return frame
 
     def _pop(self, frame: _Frame) -> List[_Frame]:
         """Remove *frame* from this context's stack; the frames above it were never closed and come back."""
+        frame.closed = True
         stack = list(_stack.get())
         if frame not in stack:
             return []
@@ -264,9 +268,12 @@ class TraceCallback(AgentCallback):
 
     def _close_orphans(self, orphans: Iterable[_Frame], agent: Any) -> None:
         for frame in orphans:
+            frame.closed = True
             self._write(frame, "end", agent, status="abandoned")
             with self._lock:
                 self._open_tools = {k: v for k, v in self._open_tools.items() if v is not frame}
+                self._open_models = {k: [f for f in v if f is not frame] for k, v in self._open_models.items()}
+                self._open_models = {k: v for k, v in self._open_models.items() if v}
 
     # -- task ----------------------------------------------------------------------------------------------
 
@@ -297,10 +304,16 @@ class TraceCallback(AgentCallback):
 
     def on_model_start(self, agent: Any, messages: list) -> None:
         frame = self._push("model")
+        with self._lock:
+            self._open_models.setdefault(id(agent), []).append(frame)
         self._write(frame, "start", agent, messages=len(messages) if hasattr(messages, "__len__") else None)
 
     def on_model_end(self, agent: Any, response: Any, tool_calls: Any) -> None:
-        frame = self._top("model")
+        with self._lock:
+            open_here = self._open_models.get(id(agent))
+            frame = open_here.pop() if open_here else None  # a stream can end on another thread than it began
+            if open_here is not None and not open_here:
+                del self._open_models[id(agent)]
         if frame is None:
             return
         self._close_orphans(self._pop(frame), agent)

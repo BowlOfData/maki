@@ -608,6 +608,102 @@ class TestGapsClosed(Base):
         self.assertIsNone(parser.parse_args([]).trace)
 
 
+class TestSecondReview(Base):
+
+    def test_a_stream_finished_on_another_thread_does_not_become_the_next_tasks_parent(self):
+        agent = _agent(self.path)
+        agent.maki.stream.side_effect = lambda *a, **k: iter(["a", "b"])
+        agent.maki.chat.return_value = _r("later")
+        chunks = agent.stream_task("hello")
+        started, finish, done = threading.Event(), threading.Event(), threading.Event()
+        seen = {}
+
+        def worker():
+            next(chunks)  # opens the task span in this thread's context
+            started.set()
+            finish.wait(5)
+            seen["during"] = current_trace()  # the span was closed elsewhere: it must not count here
+            agent.execute_task("second")  # a new root, not a child of the stale span
+            done.set()
+        t = threading.Thread(target=worker)
+        t.start()
+        started.wait(5)
+        list(chunks)  # finishes the stream on this thread
+        finish.set()
+        done.wait(5)
+        t.join()
+        self.assertIsNone(seen["during"])
+        roots = [r for rs in build_spans(self.records()).values() for r in rs]
+        self.assertEqual(len(roots), 2)
+        self.assertTrue(all(r.parent is None for r in roots))
+
+    def test_a_failed_rollover_never_keeps_a_closed_descriptor(self):
+        from unittest.mock import patch
+        cb = TraceCallback(self.path, max_bytes=500)
+        agent = SimpleNamespace(name="a")
+        for i in range(3):
+            cb.on_task_start(agent, f"t{i}")
+        with patch("maki.trace.os.replace", side_effect=OSError("busy")), self.assertLogs("maki.trace", "WARNING"):
+            for i in range(10):
+                cb.on_task_start(agent, f"u{i}" + "x" * 100)
+        self.assertIsNone(cb._sink.fd, "the descriptor that was closed for the rollover must not be reused")
+        cb.on_task_end(agent, "t0", "r", 0.0)  # recovers on the next event
+        self.assertTrue(os.path.exists(self.path))
+
+    def test_relative_path_survives_a_chdir(self):
+        old = os.getcwd()
+        self.addCleanup(os.chdir, old)
+        os.chdir(self.dir.name)
+        cb = TraceCallback("rel.jsonl")
+        agent = SimpleNamespace(name="a")
+        cb.on_task_start(agent, "one")
+        with tempfile.TemporaryDirectory() as other:
+            os.chdir(other)
+            cb.on_task_end(agent, "one", "r", 0.0)
+            self.assertEqual(os.listdir(other), [])
+        self.assertEqual(len(read_trace(os.path.join(self.dir.name, "rel.jsonl"))), 2)
+
+    def test_bad_trace_values_are_rejected_clearly(self):
+        for bad in (True, 5, ["a"], {"p": 1}):
+            with self.assertRaises(TypeError):
+                Agent("a", MagicMock(), trace=bad)
+        Agent("a", MagicMock(), trace=os.path.join(self.dir.name, "p.jsonl"))
+        from pathlib import Path
+        self.assertTrue(Agent("a", MagicMock(), trace=Path(self.dir.name) / "q.jsonl").callbacks)
+
+    def test_config_loader_trace(self):
+        from maki.distributed.config_loader import _trace_from_cfg
+        self.assertEqual(_trace_from_cfg("runs.jsonl"), "runs.jsonl")
+        for empty in (None, False, ""):
+            self.assertIsNone(_trace_from_cfg(empty))
+        for bad in (["a"], 5, True):
+            with self.assertRaises(ValueError):
+                _trace_from_cfg(bad)
+
+    def test_eval_does_not_duplicate_the_callback_on_a_reused_agent(self):
+        from maki.backend import LLMBackend
+        from maki.eval import EvalCase, run_eval
+        backend = MagicMock(spec=LLMBackend)
+        backend.chat.return_value = _r("four")
+        shared = Agent("shared", backend)
+        run_eval([EvalCase("a", "2+2?", contains="four"), EvalCase("b", "2+2?", contains="four")], {"m": backend},
+                 warmup=False, trace=self.path, make_agent=lambda b: shared)
+        self.assertEqual(sum(isinstance(c, TraceCallback) for c in shared.callbacks), 1)
+        self.assertEqual(sum(r["ph"] == "start" and r["kind"] == "task" for r in self.records()), 2)
+
+    def test_eval_without_trace_leaves_an_enclosing_trace_context_alone(self):
+        from maki.backend import LLMBackend
+        from maki.eval import EvalCase, run_eval
+        backend = MagicMock(spec=LLMBackend)
+        backend.chat.return_value = _r("four")
+        agent = Agent("traced", backend, trace=self.path)
+        with trace_context("outer-trace"):
+            run_eval([EvalCase("a", "2+2?", contains="four")], {"m": backend}, warmup=False,
+                     make_agent=lambda b: agent)
+        task = [r for r in self.records() if r["kind"] == "task"][0]
+        self.assertEqual(task["trace"], "outer-trace")
+
+
 class TestIds(unittest.TestCase):
 
     def test_valid_id(self):

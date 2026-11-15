@@ -25,8 +25,10 @@ Built-in suites live in :mod:`maki.eval_suites`; from the shell::
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
+import os
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -318,9 +320,11 @@ def _one_run(name: str, case: EvalCase, run: int, backend: LLMBackend,
         before = agent.usage.snapshot()
         if trace:
             from .trace import TraceCallback, new_id
-            agent.callbacks.append(TraceCallback(trace))
+            if not any(isinstance(c, TraceCallback) and c.path == os.path.abspath(trace) for c in agent.callbacks):
+                agent.callbacks.append(TraceCallback(trace))  # not twice on an agent a case reuses
             result.trace_id = new_id()
-        with trace_context(result.trace_id or None):  # setup turns and the scored turn are one trace
+        # setup turns and the scored turn are one trace; without trace= an enclosing trace context is left alone
+        with (trace_context(result.trace_id) if result.trace_id else contextlib.nullcontext()):
             for turn in case.setup_turns:
                 agent.execute_task(turn, use_plugins=case.use_plugins)
             answer = agent.execute_task(case.task, context=case.context, use_plugins=case.use_plugins)

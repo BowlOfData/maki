@@ -10,6 +10,7 @@ from collections import deque
 from typing import Dict, Any, List, Optional, Union
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -119,6 +120,8 @@ class Agent(PluginHandler, ReasoningEngine):
         self.callbacks: List[AgentCallback] = list(callbacks or [])
         if trace is not None and trace is not False:
             from ..trace import TraceCallback
+            if not isinstance(trace, (TraceCallback, str, os.PathLike)):
+                raise TypeError("trace must be a file path or a TraceCallback")
             self.callbacks.append(trace if isinstance(trace, TraceCallback) else TraceCallback(trace))
         # Optional override for the summary tier: summarizer(previous_summary, [Message, ...]) -> str.
         self.summarizer = None
