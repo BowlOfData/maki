@@ -327,10 +327,13 @@ class Agent(PluginHandler, ReasoningEngine):
         history = self._history_messages()
         if history is not None:
             chat_kwargs["history"] = history
-        if self.use_streaming:
-            result = self.maki.chat_collect(user_msg, **chat_kwargs).content
-        else:
-            result = self.maki.chat(user_msg, **chat_kwargs).content
+        fire(self.callbacks, "on_model_start", self, list(history or ()) + [user_msg])
+        response = None
+        try:
+            response = (self.maki.chat_collect if self.use_streaming else self.maki.chat)(user_msg, **chat_kwargs)
+        finally:
+            fire(self.callbacks, "on_model_end", self, response, None)  # also closes the span when the call failed
+        result = response.content
         if result is None:
             raise MakiAPIError(f"Backend returned None content for task '{task}'")
 
@@ -559,14 +562,15 @@ class Agent(PluginHandler, ReasoningEngine):
             failure: Optional[BaseException] = None
             with self._execution_lock:
                 fire(self.callbacks, "on_task_start", self, task)
+                fire(self.callbacks, "on_model_start", self, list(history or ()) + [user_msg])
                 try:
-                    raw_stream = self.maki.stream(user_msg, **stream_kwargs)
-                except NotImplementedError as e:
-                    raise NotImplementedError(
-                        f"Backend '{type(self.maki).__name__}' does not support streaming. "
-                        "Use MakiLLama or another streaming-capable backend instead."
-                    ) from e
-                try:
+                    try:
+                        raw_stream = self.maki.stream(user_msg, **stream_kwargs)
+                    except NotImplementedError as e:
+                        raise NotImplementedError(
+                            f"Backend '{type(self.maki).__name__}' does not support streaming. "
+                            "Use MakiLLama or another streaming-capable backend instead."
+                        ) from e
                     for chunk in raw_stream:
                         chunks.append(chunk)
                         yield chunk
@@ -574,6 +578,8 @@ class Agent(PluginHandler, ReasoningEngine):
                     failure = exc
                     raise
                 finally:
+                    # The whole stream is one model round; token counts are not known while streaming.
+                    fire(self.callbacks, "on_model_end", self, None, None)
                     # Always record whatever was produced, even on early abandonment.
                     elapsed = time.time() - start_time
                     if failure is not None:

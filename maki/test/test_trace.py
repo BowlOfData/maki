@@ -488,6 +488,126 @@ class TestReviewFixes(Base):
         self.assertIsNone(current_trace())
 
 
+class TestGapsClosed(Base):
+
+    def test_add_agent_accepts_trace(self):
+        from maki.agents import AgentManager
+        from maki.backend import LLMBackend
+        backend = MagicMock(spec=LLMBackend)
+        backend.chat.return_value = _r("ok")
+        manager = AgentManager(backend)
+        agent = manager.add_agent("traced", "role", "instructions", trace=self.path)
+        self.assertTrue(any(isinstance(c, TraceCallback) for c in agent.callbacks))
+        self.assertFalse(manager.add_agent("plain", "role", "instructions").callbacks)
+        agent.execute_task("hello")
+        (task,) = next(iter(build_spans(self.records()).values()))
+        self.assertEqual((task.agent, task.status), ("traced", "ok"))
+
+    def test_a_plain_task_has_a_model_span_with_tokens(self):
+        agent = _agent(self.path)
+        agent.maki.chat.return_value = _r("hi", prompt=21, completion=4)
+        agent.execute_task("hello")
+        records = self.records()
+        (task,) = build_spans(records)[records[0]["trace"]]
+        (model,) = task.children
+        self.assertEqual((model.kind, model.status, model.end["prompt_tokens"], model.end["completion_tokens"]),
+                         ("model", "ok", 21, 4))
+        self.assertEqual(list_traces(records)[0]["tokens"], 25)
+
+    def test_a_plain_task_whose_model_call_fails_closes_both_spans(self):
+        agent = _agent(self.path)
+        agent.maki.chat.side_effect = MakiNetworkError("down")
+        with self.assertRaises(MakiNetworkError):
+            agent.execute_task("hello")
+        records = self.records()
+        (task,) = build_spans(records)[records[0]["trace"]]
+        self.assertEqual((task.status, [(c.kind, c.status) for c in task.children]), ("error", [("model", "ok")]))
+        self.assertIsNone(current_trace())
+
+    def test_a_streamed_task_has_one_model_span_under_the_task(self):
+        agent = _agent(self.path)
+        agent.maki.stream.side_effect = lambda *a, **k: iter(["a", "b"])
+        self.assertEqual("".join(agent.stream_task("hello")), "ab")
+        records = self.records()
+        (task,) = build_spans(records)[records[0]["trace"]]
+        self.assertEqual([(c.kind, c.status) for c in task.children], [("model", "ok")])
+        self.assertEqual(task.status, "ok")
+        self.assertIsNone(current_trace())
+
+    def test_a_stream_that_fails_marks_task_and_model_and_leaves_no_span_open(self):
+        agent = _agent(self.path)
+
+        def broken(*a, **k):
+            yield "a"
+            raise MakiNetworkError("dropped")
+        agent.maki.stream.side_effect = broken
+        with self.assertRaises(MakiNetworkError):
+            list(agent.stream_task("hello"))
+        records = self.records()
+        (task,) = build_spans(records)[records[0]["trace"]]
+        self.assertEqual(task.status, "error")
+        self.assertEqual([c.kind for c in task.children], ["model"])
+        self.assertIsNone(current_trace())
+
+    def test_a_backend_without_streaming_closes_the_task_span_with_an_error(self):
+        agent = _agent(self.path)
+        agent.maki.stream.side_effect = NotImplementedError("no")
+        with self.assertRaises(NotImplementedError):
+            list(agent.stream_task("hello"))
+        records = self.records()
+        (task,) = build_spans(records)[records[0]["trace"]]
+        self.assertEqual(task.status, "error")
+        self.assertIsNone(current_trace())
+
+    def test_eval_runs_are_recorded_and_linked_to_their_trace(self):
+        from maki.eval import EvalCase, run_eval
+        from maki.backend import LLMBackend
+        backend = MagicMock(spec=LLMBackend)
+        backend.chat.return_value = _r("four")
+        cases = [EvalCase("math", "2+2?", contains="four", setup_turns=["warm up"]),
+                 EvalCase("wrong", "2+3?", contains="five")]
+        report = run_eval(cases, {"m": backend}, runs=2, warmup=False, trace=self.path)
+        ids = [r.trace_id for r in report.results]
+        self.assertEqual(len(ids), 4)
+        self.assertEqual(len(set(ids)), 4, "every run is its own trace")
+        self.assertTrue(all(ids))
+        by_trace = build_spans(self.records())
+        self.assertEqual(set(by_trace), set(ids))
+        setup_case = [r for r in report.results if r.case == "math"][0]
+        self.assertEqual(len(by_trace[setup_case.trace_id]), 2, "setup turn and scored turn share one trace")
+        self.assertEqual(report.to_dict()["results"][0]["trace_id"], report.results[0].trace_id)
+
+    def test_eval_without_trace_leaves_no_trace_ids_and_no_file(self):
+        from maki.eval import EvalCase, run_eval
+        from maki.backend import LLMBackend
+        backend = MagicMock(spec=LLMBackend)
+        backend.chat.return_value = _r("four")
+        report = run_eval([EvalCase("math", "2+2?", contains="four")], {"m": backend}, warmup=False)
+        self.assertEqual([r.trace_id for r in report.results], [""])
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_eval_cli_prints_the_trace_id_of_failures_only(self):
+        from maki.eval import RunResult, _print_result
+        out = io.StringIO()
+        from unittest.mock import patch
+        with patch("sys.stdout", out):
+            _print_result(RunResult("m", "c", 1, False, trace_id="abc123"))
+            _print_result(RunResult("m", "c", 2, True, trace_id="def456"))
+            _print_result(RunResult("m", "c", 3, False))
+        lines = out.getvalue().splitlines()
+        self.assertIn("[trace abc123]", lines[0])
+        self.assertNotIn("trace", lines[1])
+        self.assertNotIn("trace", lines[2])
+
+    def test_eval_cli_has_a_trace_flag(self):
+        import argparse
+        from maki.eval import add_cli_arguments
+        parser = argparse.ArgumentParser()
+        add_cli_arguments(parser)
+        self.assertEqual(parser.parse_args(["--trace", "t.jsonl"]).trace, "t.jsonl")
+        self.assertIsNone(parser.parse_args([]).trace)
+
+
 class TestIds(unittest.TestCase):
 
     def test_valid_id(self):

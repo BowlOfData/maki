@@ -364,7 +364,7 @@ class TestEvalReportDetails(unittest.TestCase):
         data = report.to_dict()
         self.assertEqual(set(data), {"suite", "warmups", "results", "stats"})
         self.assertEqual(set(data["results"][0]), {"target", "case", "run", "passed", "detail", "seconds", "prompt_tokens",
-                                                   "completion_tokens", "calls", "error", "output"})
+                                                   "completion_tokens", "calls", "error", "output", "trace_id"})
         self.assertEqual({s["target"] for s in data["stats"]}, {"good", "bad"})
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "r.json")

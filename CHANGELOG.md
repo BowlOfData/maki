@@ -13,9 +13,13 @@ Run traces, a production guide and CI updates.
 ### Added
 - Run traces (`maki.trace`): `Agent(trace="runs.jsonl")` or `TraceCallback` records every task, model round and tool call as JSON lines with span and parent ids; `maki trace list|show FILE...` prints them as a tree. Files are `0600`, text is clipped, credential-looking tool arguments are masked, and the file rolls over at 50 MB. The trace id crosses `maki serve` (`X-Maki-Trace-Id`, `X-Maki-Parent-Span`; an `AgentProxy` call inside a traced run joins the caller's trace), so client and server files join into one tree; `trace:` in the server YAML. Docs: `docs/user/trace.md`
 - `maki serve` accepts only plain trace ids (`[A-Za-z0-9._-]`, up to 64 characters) from `X-Maki-Trace-Id` and invents its own otherwise (the id is written to logs and trace files)
+- `AgentManager.add_agent(..., trace=)`, `run_eval(..., trace=)` and `maki eval --trace FILE`: eval runs are recorded one trace per run, `RunResult.trace_id` (and the JSON report) say which, and a failed case prints `[trace <id>]`
+
+### Changed
+- `AgentCallback.on_model_start`/`on_model_end` now also fire for a plain task and for a streamed task (one round each; no token counts while streaming), so run traces show model time and tokens for tasks without tools
 
 ### Fixed
-- Task callbacks are paired for streams too: `stream_task` now always fires `on_task_end` (or `on_task_error`) after `on_task_start`, also when the stream is empty or abandoned before its first chunk; before, such a task never closed
+- Task callbacks are paired for streams too: `stream_task` now always fires `on_task_end` (or `on_task_error`) after `on_task_start`, also when the stream is empty, abandoned before its first chunk, or the backend cannot stream; before, such a task never closed
 
 ### Documentation
 - New guide, [Running Maki in production](docs/user/production.md): pre-requirements, the difference between the server key (`MAKI_API_KEY`) and model-provider keys, llama.cpp as the suggested self-hosted backend (with `--api-key`), service setup on Linux (systemd), macOS (launchd) and Windows (NSSM), TLS and rate limiting through a reverse proxy, verification steps and key rotation

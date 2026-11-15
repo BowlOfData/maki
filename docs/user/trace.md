@@ -37,7 +37,16 @@ One JSON object per line, appended as events happen (so a crashed run still show
 | model | `messages`, `prompt_tokens`, `completion_tokens`, `cached_tokens`, `tool_calls` |
 | tool | `tool`, `args`, `result` or `error`, retries as `retry` lines |
 
-Streaming tasks (`stream_task`) record a task span only; model and tool spans come from `execute_task`.
+A plain task (no tools) has one model span; a streamed task (`stream_task`) has one model span for the whole stream, without token counts since they are not known while streaming.
+
+## Other ways in
+
+```python
+manager.add_agent("writer", "writer", "Be brief.", trace="runs.jsonl")   # AgentManager
+report = run_eval(suite, models, trace="evals.jsonl")                       # every eval run
+```
+
+`maki eval --trace evals.jsonl` does the same from the command line, and a failed case prints `[trace <id>]`, so `maki trace show evals.jsonl --trace <id>` shows what the model did in that run. `RunResult.trace_id` (and the JSON report) carry the id; setup turns and the scored turn of a case share one trace.
 
 ## Keeping it safe
 

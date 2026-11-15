@@ -35,6 +35,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from .agents.agent import Agent
 from .agents.loop_judge import build_judge_prompt
 from .backend import LLMBackend
+from .trace import trace_context
 
 CheckResult = Union[bool, Tuple[bool, str]]
 Check = Callable[..., CheckResult]
@@ -110,6 +111,7 @@ class RunResult:
     calls: int = 0
     error: str = ""
     output: str = ""
+    trace_id: str = ""  # set when run_eval(trace=...) recorded this run; see `maki trace show --trace`
 
     @property
     def tokens(self) -> int:
@@ -117,7 +119,7 @@ class RunResult:
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in ("target", "case", "run", "passed", "detail", "seconds",
-                                              "prompt_tokens", "completion_tokens", "calls", "error", "output")}
+                                              "prompt_tokens", "completion_tokens", "calls", "error", "output", "trace_id")}
 
 
 @dataclass
@@ -306,16 +308,22 @@ def _score(case: EvalCase, answer: str, agent: Agent, judge: Optional[Agent]) ->
 
 
 def _one_run(name: str, case: EvalCase, run: int, backend: LLMBackend,
-             make_agent: Callable[[LLMBackend], Agent], judge: Optional[Agent]) -> RunResult:
+             make_agent: Callable[[LLMBackend], Agent], judge: Optional[Agent],
+             trace: Optional[str] = None) -> RunResult:
     result = RunResult(target=name, case=case.name, run=run, passed=False)
     started = time.perf_counter()
     agent = None
     try:
         agent = (case.make_agent or make_agent)(backend)
         before = agent.usage.snapshot()
-        for turn in case.setup_turns:
-            agent.execute_task(turn, use_plugins=case.use_plugins)
-        answer = agent.execute_task(case.task, context=case.context, use_plugins=case.use_plugins)
+        if trace:
+            from .trace import TraceCallback, new_id
+            agent.callbacks.append(TraceCallback(trace))
+            result.trace_id = new_id()
+        with trace_context(result.trace_id or None):  # setup turns and the scored turn are one trace
+            for turn in case.setup_turns:
+                agent.execute_task(turn, use_plugins=case.use_plugins)
+            answer = agent.execute_task(case.task, context=case.context, use_plugins=case.use_plugins)
         spent = agent.usage - before
         result.prompt_tokens, result.completion_tokens, result.calls = (
             spent.prompt_tokens, spent.completion_tokens, spent.calls)
@@ -368,6 +376,7 @@ def run_eval(
     make_agent: Optional[Callable[[LLMBackend], Agent]] = None,
     warmup: bool = True,
     on_result: Optional[Callable[[RunResult], None]] = None,
+    trace: Optional[str] = None,
 ) -> EvalReport:
     """Run every case *runs* times on every model and return the report.
 
@@ -381,6 +390,8 @@ def run_eval(
         warmup: Send one tiny request to each model first so a local model's load time stays out of the
             timings.
         on_result: Called with each finished :class:`RunResult` (for live progress).
+        trace: A trace file: every run of the agent under test is recorded there (see :mod:`maki.trace`) and
+            its :attr:`RunResult.trace_id` says which trace to open with ``maki trace show``.
 
     Raises:
         ValueError: For no cases, ``runs < 1``, duplicate model names, or ``criteria`` without a judge.
@@ -401,7 +412,7 @@ def run_eval(
             _warm_up(backend, label, report)
         for case in cases:
             for run in range(1, runs + 1):
-                result = _one_run(label, case, run, backend, factory, judge)
+                result = _one_run(label, case, run, backend, factory, judge, trace)
                 report.results.append(result)
                 if on_result is not None:
                     on_result(result)
@@ -418,6 +429,7 @@ def add_cli_arguments(parser: Any) -> None:
     parser.add_argument("--runs", type=int, default=1, help="repetitions per case and model (default 1)")
     parser.add_argument("--judge", metavar="SPEC", help="model that judges 'criteria' cases (provider:model)")
     parser.add_argument("--json", metavar="FILE", help="also write the full report as JSON")
+    parser.add_argument("--trace", metavar="FILE", help="record every run in this trace file (maki trace show FILE)")
     parser.add_argument("--no-warmup", action="store_true", help="include model load time in the timings")
     parser.add_argument("--no-think", action="store_true",
                         help="turn model thinking off for ollama: models (thinking models are much slower)")
@@ -444,7 +456,8 @@ def _print_result(result: RunResult) -> None:
     verdict = "PASS" if result.passed else ("ERROR" if result.error else "FAIL")
     note = result.error or result.detail
     print(f"  [{result.target}] {result.case} #{result.run}: {verdict} {result.seconds:.1f}s"
-          f"{' - ' + note[:100] if note else ''}", flush=True)
+          f"{' - ' + note[:100] if note else ''}"
+          f"{' [trace ' + result.trace_id + ']' if result.trace_id and not result.passed else ''}", flush=True)
 
 
 def _cli_suite(args: Any) -> "EvalSuite":
@@ -478,7 +491,8 @@ def run_cli(args: Any) -> int:
     except (ValueError, ImportError) as exc:
         print(f"error: {exc}")
         return 2
-    report = run_eval(suite, models, runs=args.runs, judge=judge, warmup=not args.no_warmup, on_result=_print_result)
+    report = run_eval(suite, models, runs=args.runs, judge=judge, warmup=not args.no_warmup, on_result=_print_result,
+                      trace=getattr(args, "trace", None))
     print()
     print(report.table())
     if args.json:

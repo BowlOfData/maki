@@ -23,6 +23,10 @@ ollama:gemma4:26b        9/9   100%       3.1         212       0
 
 (The numbers above show the shape of the output, not a benchmark.)
 
+## Tracing runs
+
+`run_eval(..., trace="evals.jsonl")` or `maki eval --trace evals.jsonl` records every run of the agent under test, one trace per run. A failed case prints `[trace <id>]`; open it with `maki trace show evals.jsonl --trace <id>`. See [Run traces](trace.md).
+
 ## Cases
 
 An `EvalCase` is a task plus the checks its answer must pass. Give at least one:

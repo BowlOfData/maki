@@ -434,7 +434,15 @@ class TestCallbacks(unittest.TestCase):
         agent.maki.chat.side_effect = MakiNetworkError("x")
         with self.assertRaises(MakiNetworkError):
             agent.execute_task("go")
-        self.assertEqual(rec.events, ["task_start", "task_error"])
+        # the failed model call is a closed round of its own
+        self.assertEqual(rec.events, ["task_start", "model_start", "model_end", "task_error"])
+
+    def test_plain_task_events(self):
+        rec = Recorder()
+        agent = _agent(callbacks=[rec])
+        agent.maki.chat.return_value = _r("fine")
+        agent.execute_task("go")
+        self.assertEqual(rec.events, ["task_start", "model_start", "model_end", "task_end"])
 
     def test_failing_callback_does_not_break_run(self):
         class Bad(AgentCallback):
@@ -449,7 +457,7 @@ class TestCallbacks(unittest.TestCase):
         agent = _agent(callbacks=[rec])
         agent.maki.stream.return_value = iter(["a", "b"])
         self.assertEqual("".join(agent.stream_task("go")), "ab")
-        self.assertEqual(rec.events, ["task_start", "task_end"])
+        self.assertEqual(rec.events, ["task_start", "model_start", "model_end", "task_end"])
 
     def test_stream_task_error_event(self):
         def boom():
@@ -460,7 +468,7 @@ class TestCallbacks(unittest.TestCase):
         agent.maki.stream.return_value = boom()
         with self.assertRaises(MakiNetworkError):
             list(agent.stream_task("go"))
-        self.assertEqual(rec.events, ["task_start", "task_error"])
+        self.assertEqual(rec.events, ["task_start", "model_start", "model_end", "task_error"])
 
     def test_fire_ignores_missing_handler(self):
         fire([object()], "on_anything")  # no AttributeError

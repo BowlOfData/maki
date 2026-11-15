@@ -55,7 +55,7 @@ class AgentManager:
                   stateful: bool = False, allow_dangerous_tools: bool = False,
                   memory: Optional[Union[MemoryPolicy, dict]] = None,
                   tool_policy: Optional[Union[ToolPolicy, dict]] = None,
-                  callbacks: Optional[List[AgentCallback]] = None) -> Agent:
+                  callbacks: Optional[List[AgentCallback]] = None, trace: Any = None) -> Agent:
         """
         Add a new agent to the manager.
 
@@ -68,7 +68,7 @@ class AgentManager:
             use_streaming: If True, execute_task uses streaming internally so the timeout
                            applies per-chunk rather than to the full response. Useful for
                            agents with large prompts or long expected outputs.
-            stateful, allow_dangerous_tools, memory, tool_policy, callbacks: Passed to
+            stateful, allow_dangerous_tools, memory, tool_policy, callbacks, trace: Passed to
                 ``Agent`` unchanged (see its documentation).
 
         Returns:
@@ -90,7 +90,7 @@ class AgentManager:
 
         agent = Agent(name, maki_to_use, role, instructions, stateful=stateful, use_streaming=use_streaming,
                       allow_dangerous_tools=allow_dangerous_tools, memory=memory, tool_policy=tool_policy,
-                      callbacks=callbacks)
+                      callbacks=callbacks, trace=trace)
         self.agents[name] = agent
         logger.info(f"Added agent '{name}' with role '{role}'")
         return agent
