@@ -610,6 +610,15 @@ class TestGapsClosed(Base):
 
 class TestSecondReview(Base):
 
+    def test_text_with_lone_surrogates_is_recorded_not_lost(self):
+        cb = TraceCallback(self.path)
+        agent = SimpleNamespace(name="a")
+        cb.on_task_start(agent, "emoji cut in half \ud83d and more")
+        cb.on_task_end(agent, "emoji cut in half \ud83d and more", "ok \udc00", 0.0)
+        records = self.records()
+        self.assertEqual(len(records), 2)
+        self.assertIn("emoji cut in half", records[0]["task"])
+
     def test_a_stream_finished_on_another_thread_does_not_become_the_next_tasks_parent(self):
         agent = _agent(self.path)
         agent.maki.stream.side_effect = lambda *a, **k: iter(["a", "b"])
@@ -1124,6 +1133,29 @@ class TestServerAndProxy(Base):
         tasks = [r for r in self.records() if r["kind"] == "task" and r["ph"] == "start"]
         self.assertEqual(len(tasks), 2)
         self.assertTrue(all(t["parent"] is None for t in tasks))
+
+    def test_a_loop_started_over_http_joins_the_requests_trace(self):
+        from fastapi.testclient import TestClient
+        from maki.distributed.loop_jobs import LoopCaps
+        from maki.distributed.server import create_app
+        from .loop_helpers import FakeAgent, verdict
+        backend = MagicMock()
+        backend.chat.return_value = _r("draft")
+        maker = Agent("maker", backend, trace=self.path)
+        judge = FakeAgent([verdict({"r1": True})], stateful=False)
+        app = create_app(maker, judge=judge, loop_caps=LoopCaps(max_iterations=3, max_seconds=60,
+                                                                 loop_dir_base=self.dir.name))
+        client = TestClient(app)
+        response = client.post("/loop", json={"goal": "write it", "requirements": ["be done"]},
+                               headers={"X-Maki-Trace-Id": "loop-trace", "X-Maki-Parent-Span": "caller-span"})
+        self.assertEqual(response.status_code, 202)
+        job = app.state.loop_jobs.get(response.json()["id"])
+        job.thread.join(10)
+        self.assertTrue(job.finished)
+        tasks = [r for r in self.records() if r["kind"] == "task" and r["ph"] == "start"]
+        self.assertTrue(tasks)
+        self.assertEqual({t["trace"] for t in tasks}, {"loop-trace"})
+        self.assertEqual({t["parent"] for t in tasks}, {"caller-span"})
 
     def test_streaming_carries_the_ids_too(self):
         client, _ = self._client()

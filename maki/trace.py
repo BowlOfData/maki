@@ -281,7 +281,7 @@ class TraceCallback(AgentCallback):
             record["seconds"] = round(time.perf_counter() - frame.started, 4)
         record.update({k: v for k, v in fields.items() if v is not None})
         try:
-            self._sink.append((json.dumps(record, default=str, ensure_ascii=False) + "\n").encode("utf-8"))
+            self._sink.append((json.dumps(record, default=str, ensure_ascii=False) + "\n").encode("utf-8", "replace"))
         except Exception:
             if not self._warned:  # one warning, not one per event
                 self._warned = True

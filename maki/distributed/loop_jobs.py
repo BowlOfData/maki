@@ -24,6 +24,7 @@ Cancel takes effect between iterations; a model call already in flight finishes 
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import math
@@ -397,7 +398,9 @@ class LoopJobs:
                 raise LoopJobBusy("a loop is already running on this server")
             self._jobs[job.id] = job
             self._evict()
-            job.thread = threading.Thread(target=self._run, args=(job, spec, resume, gated),
+            # The loop runs in the context of the request that started it, so its tasks join that request's trace.
+            job.thread = threading.Thread(target=contextvars.copy_context().run,
+                                          args=(self._run, job, spec, resume, gated),
                                           name=f"maki-{job.id}", daemon=True)
             job.thread.start()
         return job

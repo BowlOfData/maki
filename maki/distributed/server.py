@@ -207,6 +207,11 @@ class _TracingMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _request_trace(request: Request) -> trace_context:
+    """``with`` block that makes the agent runs started inside it part of this request's trace."""
+    return trace_context(getattr(request.state, "trace_id", None), getattr(request.state, "parent_span", None))
+
+
 def _auth(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer),
@@ -340,10 +345,11 @@ def _loop_id(loop_id: str) -> str:
 def loop_start(req: LoopRequest, request: Request, _: None = Depends(_auth)):
     jobs = _jobs(request)
     try:
-        job = jobs.start(req.goal, req.requirements, max_iterations=req.max_iterations,
-                         max_seconds=req.max_seconds, stall_limit=req.stall_limit,
-                         context=req.context, use_plugins=req.use_plugins, max_tokens=req.max_tokens,
-                         require_approval=req.require_approval)
+        with _request_trace(request):
+            job = jobs.start(req.goal, req.requirements, max_iterations=req.max_iterations,
+                             max_seconds=req.max_seconds, stall_limit=req.stall_limit,
+                             context=req.context, use_plugins=req.use_plugins, max_tokens=req.max_tokens,
+                             require_approval=req.require_approval)
     except LoopJobBusy as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
@@ -439,8 +445,9 @@ def loop_resume(loop_id: str, request: Request, req: Optional[LoopResumeRequest]
     loop_id = _loop_id(loop_id)
     req = req or LoopResumeRequest()
     try:
-        job = jobs.resume(loop_id, max_iterations=req.max_iterations, max_seconds=req.max_seconds,
-                          max_tokens=req.max_tokens)
+        with _request_trace(request):
+            job = jobs.resume(loop_id, max_iterations=req.max_iterations, max_seconds=req.max_seconds,
+                              max_tokens=req.max_tokens)
     except LoopJobNotFound:
         raise HTTPException(status_code=404, detail="Loop not found")
     except LoopJobBusy as e:

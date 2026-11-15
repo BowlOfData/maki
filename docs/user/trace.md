@@ -78,6 +78,8 @@ The trace id travels with the request: a client sends it in `X-Maki-Trace-Id` (a
 maki trace show client.jsonl server.jsonl
 ```
 
+A loop started with `POST /loop` (or resumed) runs in its request's trace, so all its iterations show up together.
+
 The server records a trace when its agent has one; in the YAML config:
 
 ```yaml
