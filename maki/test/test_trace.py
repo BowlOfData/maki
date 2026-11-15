@@ -845,6 +845,77 @@ class TestRotationAndWorkflows(Base):
         self.assertIsNotNone(AsyncPlugin.seen)
 
 
+class TestHostileFiles(Base):
+
+    def _write(self, *records):
+        with open(self.path, "w") as f:
+            for r in records:
+                f.write((r if isinstance(r, str) else json.dumps(r)) + "\n")
+
+    def test_records_with_wrong_types_never_crash_the_reader_or_the_cli(self):
+        import argparse
+        from maki.trace import add_cli_arguments
+        good = _rec("s1", "start", "task", task="ok")
+        self._write(
+            {"trace": 5, "span": "x"}, {"trace": "T", "span": ["x"]}, {"trace": "", "span": "x"}, [1, 2], "null", "5",
+            good, _rec("s1", "end", "task", status="ok", seconds="fast"),
+            _rec("s2", "start", "model", "s1", messages="many"),
+            _rec("s2", "end", "model", "s1", prompt_tokens="lots", completion_tokens=True, tool_calls="web__search"),
+            _rec("s3", "start", "tool", "s1", tool=7, args={"a": 1}),
+            _rec("s3", "end", "tool", "s1", status=None, result=["x"], error=5, seconds=None),
+        )
+        records = read_trace(self.path)
+        self.assertEqual(len(records), 6)
+        parser = argparse.ArgumentParser()
+        add_cli_arguments(parser)
+        for argv in (["list", self.path], ["show", self.path], ["show", self.path, "--json"]):
+            out = io.StringIO()
+            self.assertEqual(run_cli(parser.parse_args(argv), out=out), 0, argv)
+            self.assertTrue(out.getvalue())
+        (row,) = list_traces(records)
+        self.assertEqual(row["tokens"], 0)
+
+    def test_terminal_escapes_and_newlines_are_shown_not_acted_on(self):
+        import argparse
+        from maki.trace import _printable, add_cli_arguments
+        evil = "\x1b]0;pwned\x07\x1b[2J line one\nline two\u2028"
+        self._write(_rec("s1", "start", "task", task=evil, agent="a\x1b[31m"),
+                    _rec("s1", "error", "task", status="error", seconds=1.0, error=evil))
+        parser = argparse.ArgumentParser()
+        add_cli_arguments(parser)
+        for argv in (["show", self.path], ["list", self.path]):
+            out = io.StringIO()
+            run_cli(parser.parse_args(argv), out=out)
+            text = out.getvalue()
+            self.assertNotIn("\x1b", text)
+            self.assertNotIn("\x07", text)
+            self.assertNotIn("\u2028", text)
+        out = io.StringIO()
+        run_cli(parser.parse_args(["show", self.path]), out=out)
+        self.assertEqual(len(out.getvalue().strip().splitlines()), 2, "a newline in the data must not add lines")
+        self.assertIn("\\x1b", out.getvalue())
+        self.assertEqual(_printable("a\tb"), "a\\x09b")
+        self.assertEqual(_printable("é ü"), "é ü")
+        self.assertEqual(_printable("\u2028"), "\\u2028")
+        json_out = io.StringIO()
+        run_cli(parser.parse_args(["show", self.path, "--json"]), out=json_out)
+        self.assertNotIn("\x1b", json_out.getvalue(), "json escapes controls itself")
+
+    def test_the_same_task_text_nested_is_closed_innermost_first(self):
+        cb = TraceCallback(self.path)
+        agent = SimpleNamespace(name="a")
+        cb.on_task_start(agent, "same")
+        cb.on_task_start(agent, "same")
+        cb.on_task_end(agent, "same", "inner", 0.0)
+        cb.on_task_end(agent, "same", "outer", 0.0)
+        records = self.records()
+        starts = [r for r in records if r["ph"] == "start"]
+        ends = {r["span"]: r for r in records if r["ph"] == "end"}
+        outer, inner = starts
+        self.assertEqual((ends[inner["span"]]["result"], ends[outer["span"]]["result"]), ("inner", "outer"))
+        self.assertEqual(inner["parent"], outer["span"])
+
+
 class TestIds(unittest.TestCase):
 
     def test_valid_id(self):

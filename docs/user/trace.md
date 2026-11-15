@@ -88,6 +88,8 @@ trace: /var/log/maki/runs.jsonl
 
 The server accepts only short plain ids (letters, digits, `.`, `_`, `-`, up to 64 characters) from the headers and invents its own for anything else, since the id ends up in logs and files.
 
+`maki trace show` and `list` print control characters found in the file (terminal escape sequences, newlines in an error message) as `\x1b`-style text instead of acting on them, and skip lines that are not trace records or whose fields have the wrong type, so a foreign or damaged file cannot break or hijack the output.
+
 ## Reading traces in code
 
 ```python

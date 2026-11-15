@@ -322,7 +322,7 @@ class TraceCallback(AgentCallback):
             frames = self._open_tasks.get((id(agent), task))
             if not frames:
                 return
-            frame = frames.pop(0)
+            frame = frames.pop()  # the innermost run of the same text ends first
             if not frames:
                 del self._open_tasks[(id(agent), task)]
         self._close_orphans(self._pop(frame), agent)
@@ -408,6 +408,41 @@ class TraceCallback(AgentCallback):
 # ----------------------------------------------------------------------------------------------------------
 
 
+_TEXT_FIELDS = ("parent", "kind", "ph", "agent", "ts", "status", "tool", "task", "result", "error", "args")
+_NUMBER_FIELDS = ("seconds", "prompt_tokens", "completion_tokens", "cached_tokens", "messages", "attempt", "delay")
+
+
+def _clean_record(record: Any) -> Optional[Dict[str, Any]]:
+    """*record* with every field the reader uses given the type it expects, or None when it is not a trace
+    record. Trace files are read from disk (possibly foreign or damaged), so no field is trusted."""
+    if not isinstance(record, dict):
+        return None
+    if not all(isinstance(record.get(k), str) and record[k] for k in ("trace", "span")):
+        return None
+    out = dict(record)
+    for key in _TEXT_FIELDS:
+        if out.get(key) is not None and not isinstance(out[key], str):
+            out[key] = str(out[key])
+    for key in _NUMBER_FIELDS:
+        value = out.get(key)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            del out[key]
+    calls = out.get("tool_calls")
+    if calls is not None:
+        out["tool_calls"] = [str(c) for c in calls] if isinstance(calls, list) else None
+        if out["tool_calls"] is None:
+            del out["tool_calls"]
+    return out
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def _printable(text: Any) -> str:
+    """*text* with control characters (terminal escape sequences, newlines) shown as ``\\xNN`` instead of acted on."""
+    return _CONTROL.sub(lambda m: ("\\x%02x" if ord(m.group()) < 256 else "\\u%04x") % ord(m.group()), str(text))
+
+
 def read_trace(*paths: Union[str, "os.PathLike[str]"]) -> List[Dict[str, Any]]:
     """The records of one or more trace files, in time order. Lines that are not JSON objects (a torn last
     line after a crash, a foreign file) are skipped."""
@@ -419,8 +454,9 @@ def read_trace(*paths: Union[str, "os.PathLike[str]"]) -> List[Dict[str, Any]]:
                     record = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(record, dict) and record.get("trace") and record.get("span"):
-                    records.append(record)
+                cleaned = _clean_record(record)
+                if cleaned is not None:
+                    records.append(cleaned)
     records.sort(key=lambda r: str(r.get("ts", "")))
     return records
 
@@ -507,16 +543,16 @@ def _describe(span: Span) -> str:
         parts.append(f"({span.retries} retr{'y' if span.retries == 1 else 'ies'})")
     parts.append(span.status if span.status != "ok" else "")
     seconds = "" if span.seconds is None else f"{span.seconds:.2f}s"
-    return "  ".join(p for p in parts + [seconds, str(detail)] if p)
+    return _printable("  ".join(p for p in parts + [seconds, str(detail)] if p))
 
 
 def render_trace(trace_id: str, roots: Sequence[Span], width: int = 160) -> str:
     """The span tree of one trace as text."""
-    lines = [f"trace {trace_id}"]
+    lines = [f"trace {_printable(trace_id)}"]
 
     def walk(span: Span, prefix: str, last: bool, top: bool) -> None:
         branch = "" if top else ("└─ " if last else "├─ ")
-        note = f" [parent {span.parent} is in another file]" if top and span.parent else ""
+        note = _printable(f" [parent {span.parent} is in another file]") if top and span.parent else ""
         text = f"{prefix}{branch}{_describe(span)}{note}"
         lines.append(text if len(text) <= width else text[:width - 1] + "…")
         child_prefix = prefix if top else prefix + ("   " if last else "│  ")
@@ -579,8 +615,8 @@ def run_cli(args: Any, out: Any = None) -> int:
         if not rows:
             print("no traces found", file=out)
         for row in rows:
-            print(f"{row['trace']}  {row['start']}  {row['spans']:>3} spans  {row['errors']} errors  "
-                  f"{row['tokens']:>6} tokens  {row['seconds']:.2f}s  {', '.join(row['agents'])}", file=out)
+            print(_printable(f"{row['trace']}  {row['start']}  {row['spans']:>3} spans  {row['errors']} errors  "
+                             f"{row['tokens']:>6} tokens  {row['seconds']:.2f}s  {', '.join(row['agents'])}"), file=out)
         return 0
     try:
         trace_id = find_trace(records, args.trace)
