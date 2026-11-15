@@ -22,7 +22,7 @@ import contextvars
 import functools
 import threading
 import weakref
-from typing import Any, AsyncGenerator, AsyncIterator, Callable, Iterable, TypeVar
+from typing import Any, AsyncGenerator, Callable, Iterable, TypeVar
 
 T = TypeVar("T")
 
