@@ -704,6 +704,138 @@ class TestSecondReview(Base):
         self.assertEqual(task["trace"], "outer-trace")
 
 
+class TestRotationAndWorkflows(Base):
+
+    def _writer(self):
+        cb = TraceCallback(self.path)
+        return cb, SimpleNamespace(name="a")
+
+    def _event(self, cb, agent, text):
+        cb.on_task_start(agent, text)
+        cb.on_task_end(agent, text, "r", 0.0)
+
+    def test_a_file_rotated_away_by_another_tool_is_recreated(self):
+        cb, agent = self._writer()
+        self._event(cb, agent, "before")
+        os.rename(self.path, self.path + ".rotated")
+        self._event(cb, agent, "after")
+        self.assertEqual([r["task"] for r in read_trace(self.path) if r["ph"] == "start"], ["after"])
+        self.assertEqual([r["task"] for r in read_trace(self.path + ".rotated") if r["ph"] == "start"], ["before"])
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+
+    def test_a_deleted_file_is_recreated(self):
+        cb, agent = self._writer()
+        self._event(cb, agent, "before")
+        os.remove(self.path)
+        self._event(cb, agent, "after")
+        self.assertEqual([r["task"] for r in read_trace(self.path) if r["ph"] == "start"], ["after"])
+
+    def test_a_copy_truncated_file_keeps_receiving_lines_and_the_size_follows(self):
+        cb = TraceCallback(self.path, max_bytes=100_000)
+        agent = SimpleNamespace(name="a")
+        for i in range(5):
+            self._event(cb, agent, f"one{i}")
+        with open(self.path, "r+b") as f:  # copytruncate: the same file, emptied
+            f.truncate(0)
+        self._event(cb, agent, "two")
+        self.assertEqual([r["task"] for r in read_trace(self.path) if r["ph"] == "start"], ["two"])
+        self.assertEqual(cb._sink.size, os.path.getsize(self.path))
+
+    def test_a_replaced_file_with_a_different_inode_is_followed(self):
+        cb, agent = self._writer()
+        self._event(cb, agent, "old")
+        replacement = self.path + ".new"
+        open(replacement, "w").close()
+        os.replace(replacement, self.path)  # another tool swaps in a fresh file
+        self._event(cb, agent, "new")
+        self.assertEqual([r["task"] for r in read_trace(self.path) if r["ph"] == "start"], ["new"])
+
+    def _manager(self, names):
+        from maki.agents import AgentManager
+        from maki.backend import LLMBackend
+        backend = MagicMock(spec=LLMBackend)
+        backend.chat.return_value = _r("done")
+        manager = AgentManager(backend)
+        for name in names:
+            manager.add_agent(name, "role", "do it", trace=self.path)
+        return manager
+
+    def test_parallel_workflow_tasks_share_one_trace(self):
+        from maki.agents.workflow import WorkflowTask
+        manager = self._manager(["a", "b", "c"])
+        manager.run_workflow([WorkflowTask("t1", "a", "task one", parallelizable=True),
+                              WorkflowTask("t2", "b", "task two", parallelizable=True),
+                              WorkflowTask("t3", "c", "task three", dependencies=["t1", "t2"])])
+        records = self.records()
+        self.assertEqual(len({r["trace"] for r in records}), 1, "one workflow, one trace")
+        roots = build_spans(records)[records[0]["trace"]]
+        self.assertEqual(sorted(r.agent for r in roots), ["a", "b", "c"])
+        self.assertTrue(all(r.status == "ok" and r.children and r.children[0].kind == "model" for r in roots))
+
+    def test_dict_workflows_pipelines_and_collaboration_are_one_trace_each(self):
+        manager = self._manager(["a", "b"])
+        manager.run_workflow([{"name": "s1", "agent": "a", "task": "one", "parallelizable": True},
+                              {"name": "s2", "agent": "b", "task": "two", "parallelizable": True}])
+        manager.coordinate_agents([{"agent": "a", "task": "x"}, {"agent": "b", "task": "y"}])
+        manager.collaborative_task("together", ["a", "b"])
+        traces = build_spans(self.records())
+        self.assertEqual(len(traces), 3)
+        self.assertEqual(sorted(len(rs) for rs in traces.values()), [2, 2, 2])
+
+    def test_a_workflow_run_inside_a_traced_task_joins_that_trace(self):
+        from maki.agents.workflow import WorkflowTask
+        manager = self._manager(["a", "b"])
+        outer = TraceCallback(os.path.join(self.dir.name, "outer.jsonl"))
+        agent = SimpleNamespace(name="outer")
+        outer.on_task_start(agent, "orchestrate")
+        manager.run_workflow([WorkflowTask("t1", "a", "one", parallelizable=True),
+                              WorkflowTask("t2", "b", "two", parallelizable=True)])  # run on a thread pool
+        outer.on_task_end(agent, "orchestrate", "r", 0.0)
+        joined = read_trace(self.path, os.path.join(self.dir.name, "outer.jsonl"))
+        roots = build_spans(joined)
+        self.assertEqual(len(roots), 1)
+        (top,) = next(iter(roots.values()))
+        self.assertEqual((top.agent, sorted(c.agent for c in top.children)), ("outer", ["a", "b"]))
+
+    def test_an_agent_run_by_a_tool_hangs_under_the_tool_span(self):
+        from maki.backend import LLMBackend
+        inner_path = os.path.join(self.dir.name, "inner.jsonl")
+        inner_backend = MagicMock(spec=LLMBackend)
+        inner_backend.chat.return_value = _r("inner answer")
+        inner = Agent("inner", inner_backend, trace=inner_path)
+
+        class Delegate:
+            ALLOWED_METHODS = ["ask"]
+
+            def ask(self, q: str) -> str:
+                return inner.execute_task(q)
+
+        outer = _agent(self.path)
+        outer.plugins["d"] = Delegate()
+        _run(outer, [ToolCall("1", "d__ask", {"q": "inner question"})])
+        joined = read_trace(self.path, inner_path)
+        roots = build_spans(joined)
+        self.assertEqual(len(roots), 1)
+        (top,) = next(iter(roots.values()))
+        tool = [c for c in top.children if c.kind == "tool"][0]
+        self.assertEqual([(c.kind, c.agent) for c in tool.children], [("task", "inner")])
+
+    def test_async_plugins_keep_the_context(self):
+        class AsyncPlugin:
+            ALLOWED_METHODS = ["where"]
+            seen = None
+
+            async def where(self) -> str:
+                AsyncPlugin.seen = current_trace()
+                return "ok"
+
+        outer = _agent(self.path)
+        outer.plugins["p"] = AsyncPlugin()
+        _run(outer, [ToolCall("1", "p__where", {})])
+        self.assertIsNotNone(AsyncPlugin.seen)
+
+
 class TestIds(unittest.TestCase):
 
     def test_valid_id(self):

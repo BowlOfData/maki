@@ -17,6 +17,7 @@ over to ``<path>.1`` at ``max_bytes``. ``include_content=False`` records timing,
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import logging
@@ -27,7 +28,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 from .callbacks import AgentCallback
 from .connector import redact
@@ -84,6 +85,22 @@ def set_inherited(trace_id: Optional[str], parent_span: Optional[str] = None) ->
     _inherited.set((trace_id, parent_span) if trace_id else None)
 
 
+@contextlib.contextmanager
+def shared_trace() -> Iterator[str]:
+    """Make everything run inside this block one trace: the current one when a span is open or a caller handed
+    one over, else a new one. A workflow's tasks, which run on pool threads, then share a trace id."""
+    current = current_trace()
+    inherited = _inherited.get()
+    if current:
+        yield current[0]
+    elif inherited:
+        yield inherited[0]
+    else:
+        trace_id = new_id()
+        with trace_context(trace_id):
+            yield trace_id
+
+
 class trace_context:
     """``with trace_context(trace_id, parent_span): agent.execute_task(...)`` joins that run to a trace."""
 
@@ -134,10 +151,24 @@ class _Sink:
         self.fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         self.size = os.fstat(self.fd).st_size
 
+    def _stale(self) -> bool:
+        """True when the path no longer names the file we hold open (a log rotator renamed or deleted it)."""
+        try:
+            on_disk = os.stat(self.path)
+        except FileNotFoundError:
+            return True
+        held = os.fstat(self.fd)  # type: ignore[arg-type]
+        return bool(on_disk.st_ino and (on_disk.st_ino, on_disk.st_dev) != (held.st_ino, held.st_dev))
+
     def append(self, line: bytes) -> None:
         with self.lock:
+            if self.fd is not None and self._stale():
+                os.close(self.fd)
+                self.fd = None
             if self.fd is None:
                 self._open()
+            else:
+                self.size = os.fstat(self.fd).st_size  # also follows a copy-truncate rotation
             if self.max_bytes and self.size and self.size + len(line) > self.max_bytes:
                 os.close(self.fd)  # type: ignore[arg-type]
                 self.fd = None  # never keep a closed descriptor: its number may be reused by another file
@@ -207,8 +238,11 @@ class TraceCallback(AgentCallback):
         stack = _stack.get()
         mine = [f for f in stack if f.owner == id(self) and not f.closed]
         inherited = _inherited.get()
+        outer = [f for f in stack if not f.closed]  # a span of another callback, e.g. an agent run by a tool
         if mine:
             trace, parent = mine[-1].trace, mine[-1].span
+        elif outer:
+            trace, parent = outer[-1].trace, outer[-1].span
         elif inherited:
             trace, parent = inherited
         else:

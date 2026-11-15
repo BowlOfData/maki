@@ -64,6 +64,12 @@ from maki import Agent, TraceCallback
 agent = Agent("helper", backend, callbacks=[TraceCallback("runs.jsonl", max_chars=200, include_content=False)])
 ```
 
+## Workflows and nested agents
+
+`coordinate_agents`, `collaborative_task` and `run_workflow` (parallel tasks included) put all their agents' tasks in one trace, so each agent's file shows the run as a whole. When an agent's tool runs another agent (or a whole workflow) inside a traced task, the inner spans hang under the tool call's span, also when the two agents write to different files; join the files with `maki trace show a.jsonl b.jsonl`.
+
+If a log rotator renames, deletes or truncates the file while an agent runs, the next event goes to a fresh file at the same path.
+
 ## Across `maki serve`
 
 The trace id travels with the request: a client sends it in `X-Maki-Trace-Id` (and its open span in `X-Maki-Parent-Span`), and the server uses it for its own spans and echoes it back. An `AgentProxy` call made inside a traced run does this automatically, so the two files join into one tree:

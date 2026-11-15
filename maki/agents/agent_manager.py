@@ -6,6 +6,8 @@ collaboration, and workflow execution.
 """
 
 import asyncio
+import contextvars
+import functools
 import json
 import logging
 import threading
@@ -17,6 +19,7 @@ from ..aio import run_in_thread
 from ..backend import LLMBackend
 from ..callbacks import AgentCallback
 from ..objects import MemoryPolicy
+from ..trace import shared_trace
 from .agent import Agent
 from .tool_policy import ToolPolicy
 from .workflow import WorkflowTask, WorkflowState, TaskStatus, TaskOutput
@@ -29,6 +32,16 @@ logger = logging.getLogger(__name__)
 
 
 _WORKFLOW_MAX_WORKERS = 4
+
+
+def _one_trace(method):
+    """Run a multi-agent method inside one trace, so the tasks of a workflow (which run on pool threads) show
+    up together in the trace files of their agents."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with shared_trace():
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 class AgentManager:
@@ -188,6 +201,7 @@ class AgentManager:
         """Awaitable :meth:`run_workflow` (same arguments); the workflow runs on a worker thread."""
         return await run_in_thread(self.run_workflow, workflow, **options)
 
+    @_one_trace
     def coordinate_agents(self, tasks: List[Dict], coordination_prompt: str = "") -> Dict[str, Any]:
         """
         Coordinate multiple agents to complete a set of tasks sequentially.
@@ -260,6 +274,7 @@ class AgentManager:
 
         return results
 
+    @_one_trace
     def collaborative_task(self, task: str, agents: List[str],
                            context: Optional[Dict] = None, strict: bool = False) -> str:
         """
@@ -344,6 +359,7 @@ class AgentManager:
                 f"collaborative_task: synthesis failed after all agents succeeded: {str(e)}"
             ) from e
 
+    @_one_trace
     def run_workflow(
         self,
         workflow: List,
@@ -431,7 +447,7 @@ class AgentManager:
                 base_idx = len(results)
                 with ThreadPoolExecutor(max_workers=_WORKFLOW_MAX_WORKERS) as pool:
                     futures = {
-                        pool.submit(_run_step, step, base_idx + i): step
+                        pool.submit(contextvars.copy_context().run, _run_step, step, base_idx + i): step
                         for i, step in enumerate(batch)
                     }
                     for future in as_completed(futures):
@@ -605,7 +621,7 @@ class AgentManager:
             return self._execute_workflow_task(wt, _snap, state, approval_store)
 
         with ThreadPoolExecutor(max_workers=_WORKFLOW_MAX_WORKERS) as pool:
-            futures = {pool.submit(_run_wf_task, wt): wt for wt in pending}
+            futures = {pool.submit(contextvars.copy_context().run, _run_wf_task, wt): wt for wt in pending}
             for future in as_completed(futures):
                 name, value = future.result()
                 if value is not None:

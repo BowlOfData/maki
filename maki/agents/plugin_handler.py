@@ -116,7 +116,7 @@ def _resolve(result, usage=None):
     relay = TokenRelay(usage)
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(relay.wrap(asyncio.run), _await()).result()
+            return pool.submit(contextvars.copy_context().run, relay.wrap(asyncio.run), _await()).result()
     finally:
         relay.settle()
 
