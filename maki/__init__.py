@@ -50,6 +50,7 @@ _LAZY_EXPORTS = {
     "LoggingCallback": (".callbacks",    "LoggingCallback"),
     "ToolPolicy":     (".agents.tool_policy", "ToolPolicy"),
     "TraceCallback":  (".trace",         "TraceCallback"),
+    "CheckpointStore": (".checkpoint",   "CheckpointStore"),
     "FallbackBackend": (".fallback",     "FallbackBackend"),
     "EvalCase":       (".eval",          "EvalCase"),
     "SkillRegistry":  (".skills",        "SkillRegistry"),

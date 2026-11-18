@@ -533,19 +533,29 @@ class PluginHandler:
             parts.append(history_section)
         return "\n\n".join(parts)
 
-    def _run_typed_tool_loop(self, task: str, context: Optional[Dict], system: str, tool_specs: List[dict]) -> str:
+    def _run_typed_tool_loop(self, task: str, context: Optional[Dict], system: str, tool_specs: List[dict],
+                             resume: Optional[List[Message]] = None) -> str:
         """The native tool loop over typed messages: the backend converts to and from its own format.
 
         Nothing in here depends on a provider's message shape, so the same loop runs on any backend
         with ``supports_typed_messages`` (and a fallback chain can change backend between rounds).
         The messages after the user turn are kept in ``_last_tool_trace`` for the conversation memory.
+
+        *resume* is the saved message list of an interrupted run of this task (its user message and the
+        completed rounds): the loop continues from there, with the rounds already done counted against the limit.
+        After every completed tool round the host agent's ``_checkpoint_round`` (when it has one) saves them.
         """
         prior = getattr(self, "_history_messages", lambda: None)() or []
-        messages: List[Message] = list(prior) + [Message("user", self._native_user_content(task, context))]
-        start = len(messages)
+        if resume:
+            messages: List[Message] = list(prior) + list(resume)
+        else:
+            messages = list(prior) + [Message("user", self._native_user_content(task, context))]
+        start = len(prior) + 1
         self._last_tool_trace = []
         callbacks = self._callbacks()
-        for _ in range(self._tool_policy().max_rounds or _MAX_TOOL_ROUNDS):
+        save_round = getattr(self, "_checkpoint_round", None)
+        done = sum(1 for m in resume or () if m.role == "assistant")
+        for _ in range(max((self._tool_policy().max_rounds or _MAX_TOOL_ROUNDS) - done, 0)):
             fire(callbacks, "on_model_start", self, list(messages))
             response = self.maki.chat_turn(messages, tool_specs, system=system)
             calls = response.tool_calls
@@ -556,6 +566,8 @@ class PluginHandler:
             messages.append(Message("assistant", response.content, tool_calls=list(calls)))
             for call, result in self._execute_tool_calls(calls):
                 messages.append(Message("tool", result, tool_call_id=call.id, name=call.name))
+            if save_round is not None:
+                save_round(task, context, messages[len(prior):])
 
         # Max rounds reached: force a text answer. Some models answer a bare "continue" with nothing
         # after a tool exchange, so this one call carries an instruction (it is not stored in the trace).
@@ -567,7 +579,7 @@ class PluginHandler:
         return response.content or ""
 
     def execute_with_native_tools(
-        self, task: str, context: Optional[Dict], system: str
+        self, task: str, context: Optional[Dict], system: str, resume: Optional[List[Message]] = None
     ) -> str:
         """Drive the native tool-calling loop (up to ``ToolPolicy.max_rounds`` rounds, default ``_MAX_TOOL_ROUNDS``).
 
@@ -579,7 +591,10 @@ class PluginHandler:
         """
         tool_specs = self._build_tool_specs()
         if getattr(self.maki, "supports_typed_messages", False) is True:
-            return self._run_typed_tool_loop(task, context, system, tool_specs)
+            return self._run_typed_tool_loop(task, context, system, tool_specs, resume)
+        if resume:
+            logger.warning("Cannot continue an interrupted tool loop on a backend without typed messages; "
+                           "starting the task again")
         tools = self.maki.to_tool_schemas(tool_specs)
 
         user_content = self._native_user_content(task, context)

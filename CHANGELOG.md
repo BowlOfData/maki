@@ -8,15 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.6.1] - 2026-11-11
 
-Run traces, a production guide and CI updates.
+Run traces, checkpoints and resume, a production guide and CI updates.
 
 ### Added
+- Checkpoints and resume (`maki.checkpoint`): `Agent(checkpoint="agent.db")` saves the agent's state after every task and the unfinished task after every completed tool round (stdlib `sqlite3`, `0600` file, schema version, credentials redacted before writing); `agent.resume()` restores the state and continues a native tool loop at its last round without running finished tools again; an existing checkpoint is never overwritten until `resume()` or `discard_checkpoint()`. Docs: `docs/user/checkpoint.md`
 - Run traces (`maki.trace`): `Agent(trace="runs.jsonl")` or `TraceCallback` records every task, model round and tool call as JSON lines with span and parent ids; `maki trace list|show FILE...` prints them as a tree. Files are `0600`, text is clipped, credential-looking tool arguments are masked, and the file rolls over at 50 MB. The trace id crosses `maki serve` (`X-Maki-Trace-Id`, `X-Maki-Parent-Span`; an `AgentProxy` call inside a traced run joins the caller's trace), so client and server files join into one tree; `trace:` in the server YAML. Docs: `docs/user/trace.md`
 - `maki serve` accepts only plain trace ids (`[A-Za-z0-9._-]`, up to 64 characters) from `X-Maki-Trace-Id` and invents its own otherwise (the id is written to logs and trace files)
 - Run traces follow work across threads and agents: the tasks of `run_workflow` (parallel ones included), `coordinate_agents` and `collaborative_task` share one trace, and an agent run by a tool of another agent hangs under that tool's span; a loop started over HTTP runs in its request's trace; a trace file rotated, deleted or truncated by another tool is picked up again; text with lone surrogates (a cut emoji) is recorded instead of dropping the event; `maki trace show|list` neutralise terminal escape sequences and newlines in recorded text, tolerate records with wrong field types, and a task text run twice at once is closed innermost first
 - `AgentManager.add_agent(..., trace=)`, `run_eval(..., trace=)` and `maki eval --trace FILE`: eval runs are recorded one trace per run, `RunResult.trace_id` (and the JSON report) say which, and a failed case prints `[trace <id>]`
 
 ### Changed
+- `Agent.execute_with_native_tools` takes an optional `resume=` message list; `Agent._load_state` is shared by `from_dict` and `resume`
 - `AgentCallback.on_model_start`/`on_model_end` now also fire for a plain task and for a streamed task (one round each; no token counts while streaming), so run traces show model time and tokens for tasks without tools
 
 ### Fixed

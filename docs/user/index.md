@@ -20,6 +20,7 @@ pip install maki-framework
 - **Agents that iterate.** Give an agent a goal and requirements and let it loop until a judge or your own checks are satisfied; see [Agent loops](loops.md).
 - **Know your model.** `maki eval` runs your tasks through the whole agent on several models and reports pass rate, time and tokens; maki also notices when a local server silently cuts a prompt that does not fit its context window; see [Evaluating models](eval.md) and [Backends](backends.md#context-windows-on-local-servers).
 - **Run traces.** `Agent(trace="runs.jsonl")` records every task, model round and tool call; `maki trace show` prints the tree, across `maki serve` too; see [Run traces](trace.md).
+- **Checkpoints.** `Agent(checkpoint="agent.db")` saves state after every task and tool round; `agent.resume()` continues a killed run without re-running finished tools; see [Checkpoints and resume](checkpoint.md).
 - **Skills.** Agents load Agent Skills (`SKILL.md` folders shared with Claude Code and Codex) only when a task needs them, so small context windows stay small; see [Skills](skills.md).
 - **Memory that stays useful.** An opt-in `MemoryPolicy` shortens old turns, pins the facts that must never be lost and clips oversized tool output, so long conversations keep giving correct answers; see [Agent memory](agent-memory.md).
 
@@ -41,4 +42,5 @@ pip install maki-framework
 | Compare local models on my own tasks | [Evaluating models](eval.md) |
 | Give an agent reusable instructions it loads on demand | [Skills](skills.md) |
 | See what an agent did, step by step | [Run traces](trace.md) |
+| Pick a killed run back up | [Checkpoints and resume](checkpoint.md) |
 | Expose an agent over HTTP | [Serving agents](serving.md) |

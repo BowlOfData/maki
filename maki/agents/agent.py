@@ -53,7 +53,8 @@ class Agent(PluginHandler, ReasoningEngine):
                  tool_policy: Optional[Union[ToolPolicy, dict]] = None,
                  callbacks: Optional[List[AgentCallback]] = None,
                  skills: Any = None,
-                 trace: Any = None):
+                 trace: Any = None,
+                 checkpoint: Any = None):
         """
         Initialize an agent.
 
@@ -78,6 +79,10 @@ class Agent(PluginHandler, ReasoningEngine):
             callbacks: Optional ``AgentCallback`` observers for task, model and tool events.
             trace: A file path (or a :class:`~maki.trace.TraceCallback`) that records every task, model round and
                 tool call as JSON lines; read it with ``maki trace show``. See :mod:`maki.trace`.
+            checkpoint: A file path (or a :class:`~maki.checkpoint.CheckpointStore`) where the agent saves its
+                state after every task and every completed tool round, so a crashed run can continue with
+                :meth:`resume`. If the file already holds a checkpoint for this agent name, the agent refuses
+                to run until you call :meth:`resume` or :meth:`discard_checkpoint`. See :mod:`maki.checkpoint`.
             skills: Agent Skills the model can load on demand: ``True`` (user skills), a folder or list of
                 folders, a :class:`~maki.skills.SkillRegistry`, or an options dict (see :mod:`maki.skills`).
                 Adds the ``skills`` plugin (``skills.load``, ``skills.read``) and, for tasks run with
@@ -123,6 +128,17 @@ class Agent(PluginHandler, ReasoningEngine):
             if not isinstance(trace, (TraceCallback, str, os.PathLike)):
                 raise TypeError("trace must be a file path or a TraceCallback")
             self.callbacks.append(trace if isinstance(trace, TraceCallback) else TraceCallback(trace))
+        self._checkpoint = None
+        self._checkpoint_pending = False   # a saved checkpoint exists that resume()/discard_checkpoint() must settle
+        if checkpoint is not None and checkpoint is not False:
+            from ..checkpoint import CheckpointStore
+            if not isinstance(checkpoint, (CheckpointStore, str, os.PathLike)):
+                raise TypeError("checkpoint must be a file path or a CheckpointStore")
+            self._checkpoint = checkpoint if isinstance(checkpoint, CheckpointStore) else CheckpointStore(checkpoint)
+            try:
+                self._checkpoint_pending = self._checkpoint.load(self.name) is not None
+            except MakiError:
+                self._checkpoint_pending = True  # damaged: resume() reports it, discard_checkpoint() clears it
         # Optional override for the summary tier: summarizer(previous_summary, [Message, ...]) -> str.
         self.summarizer = None
         if self.memory_policy is not None and self.memory_policy.summarize_older:
@@ -315,7 +331,8 @@ class Agent(PluginHandler, ReasoningEngine):
             parts.append(history_section)
         return "\n\n".join(p for p in parts if p)
 
-    def _generate(self, task: str, context: Optional[Dict], use_plugins: bool) -> str:
+    def _generate(self, task: str, context: Optional[Dict], use_plugins: bool,
+                  resume: Optional[List[Message]] = None) -> str:
         """The model round(s) for one task: native tool loop, or chat plus ``TOOL:`` directives."""
         if self.stateful:
             self._fold_summary()
@@ -324,7 +341,10 @@ class Agent(PluginHandler, ReasoningEngine):
 
         if use_plugins and self.plugins and getattr(self.maki, "supports_native_tools", False) is True:
             # Native tool-calling path: backend drives structured tool calls.
-            return self.execute_with_native_tools(task, context, system_msg)
+            return self.execute_with_native_tools(task, context, system_msg, resume=resume)
+        if resume:
+            logger.warning("Agent '%s': the unfinished task was in a native tool loop but this agent no longer "
+                           "runs one; starting the task again", self.name)
         user_msg = self._build_user_message(task, context, use_plugins)
         chat_kwargs: Dict[str, Any] = {"system": system_msg}
         history = self._history_messages()
@@ -367,13 +387,17 @@ class Agent(PluginHandler, ReasoningEngine):
         """
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
+        return self._run_task(task, context, use_plugins)
 
+    def _run_task(self, task: str, context: Optional[Dict], use_plugins: bool,
+                  resume: Optional[List[Message]] = None) -> str:
         with self._execution_lock:
+            self._require_checkpoint_settled()
             start_time = time.time()
             fire(self.callbacks, "on_task_start", self, task)
             try:
                 logger.debug(f"Executing task '{task}' for agent '{self.name}'")
-                result = self._generate(task, context, use_plugins)
+                result = self._generate(task, context, use_plugins, resume)
 
                 execution_time = time.time() - start_time
                 logger.debug(f"Task '{task}' completed in {execution_time:.2f}s for agent '{self.name}'")
@@ -395,8 +419,95 @@ class Agent(PluginHandler, ReasoningEngine):
             if self.stateful:
                 self._conversation_memory.append(Message("user", task))
                 self._conversation_memory.append(Message("assistant", result, tool_trace=self._remembered_trace()))
+            self._checkpoint_done()
 
         return result
+
+    # ------------------------------------------------------------------
+    # Checkpoint / resume
+    # ------------------------------------------------------------------
+
+    def _require_checkpoint_settled(self) -> None:
+        if self._checkpoint_pending and self._checkpoint is not None:
+            from ..checkpoint import CheckpointError
+            raise CheckpointError(
+                f"{self._checkpoint.path} already holds a checkpoint for agent '{self.name}'; call "
+                "agent.resume() to continue from it, or agent.discard_checkpoint() to start over")
+
+    def _checkpoint_done(self) -> None:
+        """Save the finished task's state. A failing disk must not lose the answer, so errors are logged."""
+        if self._checkpoint is None:
+            return
+        try:
+            self._checkpoint.save_state(self.name, self.to_dict())
+        except Exception as exc:
+            logger.warning("Agent '%s': could not save the checkpoint: %s", self.name, exc)
+
+    def _checkpoint_round(self, task: str, context: Optional[Dict], messages: List[Message]) -> None:
+        """Save the unfinished task after a completed tool round (*messages*: its user message onward)."""
+        if self._checkpoint is None:
+            return
+        try:
+            self._checkpoint.save_inflight(
+                self.name,
+                {"task": task, "context": context, "use_plugins": True,
+                 "messages": [m.to_dict() for m in messages], "saved": time.time()},
+                self.to_dict)
+        except Exception as exc:
+            logger.warning("Agent '%s': could not save the checkpoint: %s", self.name, exc)
+
+    def resume(self) -> Optional[str]:
+        """Restore the saved state and finish the task that was running when the process stopped.
+
+        Returns the task's answer, or ``None`` when nothing was in flight (the state is restored
+        anyway, so a stateful conversation carries on). A task in a native tool loop continues from its
+        last completed round: finished tool calls are not run again. A tool call of the interrupted
+        round may have run, because a round is saved only once all its tools are done. A task without a
+        tool loop (plain chat, ``TOOL:`` directives, streaming) is not resumable mid-way.
+
+        Raises:
+            ValueError: When the agent has no checkpoint.
+        """
+        if self._checkpoint is None:
+            raise ValueError("this agent has no checkpoint; create it with Agent(checkpoint=path)")
+        from ..checkpoint import CheckpointError
+        saved = self._checkpoint.load(self.name)
+        if saved is None:
+            self._checkpoint_pending = False
+            return None
+        inflight = saved.inflight
+        task: Any = None
+        messages: List[Message] = []
+        if inflight:
+            try:
+                task = inflight["task"]
+                context = inflight.get("context")
+                if not isinstance(task, str) or not task.strip() or not isinstance(context, (dict, type(None))):
+                    raise ValueError("the task or its context has the wrong type")
+                messages = [Message.from_dict(m) for m in inflight.get("messages") or []]
+                if messages and messages[0].role != "user":
+                    raise ValueError("the saved messages do not start with the user's")
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise CheckpointError(f"the unfinished task of agent '{self.name}' is damaged: {exc}") from exc
+        with self._execution_lock:
+            if self._checkpoint_pending:
+                # Only the first resume() of a process loads the file. Later calls (a task that failed again) keep
+                # the live state: remember() calls made since the last save are not in the file.
+                try:
+                    self._load_state(saved.state, keep_limits=True)
+                except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                    raise CheckpointError(f"the saved state of agent '{self.name}' is damaged: {exc}") from exc
+                self._checkpoint_pending = False
+        if not inflight:
+            return None
+        return self._run_task(task, inflight.get("context"), bool(inflight.get("use_plugins", True)), messages)
+
+    def discard_checkpoint(self) -> None:
+        """Delete this agent's saved checkpoint and let it run from its current (empty) state."""
+        if self._checkpoint is None:
+            raise ValueError("this agent has no checkpoint; create it with Agent(checkpoint=path)")
+        self._checkpoint.delete(self.name)
+        self._checkpoint_pending = False
 
     @property
     def usage(self) -> Usage:
@@ -549,6 +660,7 @@ class Agent(PluginHandler, ReasoningEngine):
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Task must be a non-empty string")
 
+        self._require_checkpoint_settled()  # a flag read: creating a stream must not wait for a running task
         if self.stateful:
             with self._execution_lock:
                 self._fold_summary()
@@ -597,6 +709,7 @@ class Agent(PluginHandler, ReasoningEngine):
                         if self.stateful:
                             self._conversation_memory.append(Message("user", task))
                             self._conversation_memory.append(Message("assistant", full_result))
+                        self._checkpoint_done()
 
         return _tracked()
 
@@ -671,6 +784,46 @@ class Agent(PluginHandler, ReasoningEngine):
             'conversation_pending': self._conversation_memory.pending_to_list(),
         }
 
+    def _load_state(self, data: dict, keep_limits: bool = False) -> None:
+        """Replace this agent's identity, memory and conversation with a saved ``to_dict()`` snapshot.
+
+        Name, role, instructions and policies stay as configured. With ``keep_limits`` the history size and
+        token budget of this agent are kept too, instead of the saved ones (what ``resume()`` wants)."""
+        self.agent_id = data.get('agent_id', self.agent_id)
+        self.memory = dict(data.get('memory', {}))
+        self._pinned = dict(data.get('pinned', {}))
+        if keep_limits:
+            max_entries = self._max_history_entries
+            token_budget = self._conversation_memory.token_budget
+        else:
+            max_entries = data.get('max_history_entries', 1000)
+            token_budget = data.get('conversation_token_budget', ConversationMemory.DEFAULT_TOKEN_BUDGET)
+        self._max_history_entries = max_entries
+        self.task_history = deque(data.get('task_history', []), maxlen=max_entries)
+        if 'conversation_memory' in data:
+            self._conversation_memory = ConversationMemory.from_list(
+                data['conversation_memory'],
+                token_budget=token_budget,
+                max_entries=max_entries,
+            )
+        elif 'conversation_history' in data:
+            # Migration from old {'task': ..., 'result': ...} format
+            self._conversation_memory = ConversationMemory(
+                token_budget=token_budget, max_entries=max_entries,
+            )
+            for turn in data['conversation_history']:
+                self._conversation_memory._messages.append(Message('user', turn.get('task', '')))
+                self._conversation_memory._messages.append(Message('assistant', turn.get('result', '')))
+        else:
+            self._conversation_memory = ConversationMemory(
+                token_budget=token_budget, max_entries=max_entries,
+            )
+        self._conversation_memory.dropped_pairs = data.get('conversation_dropped', 0)
+        self._conversation_memory.summary = data.get('conversation_summary', '')
+        self._conversation_memory.summarized_pairs = data.get('conversation_summarized', 0)
+        self._conversation_memory.restore_pending(data.get('conversation_pending', []))
+        self._apply_tiers()
+
     @classmethod
     def from_dict(cls, data: dict, maki_instance: LLMBackend) -> 'Agent':
         """Reconstruct an Agent from a dict produced by to_dict().
@@ -689,36 +842,7 @@ class Agent(PluginHandler, ReasoningEngine):
             memory=data.get('memory_policy'),
             tool_policy=data.get('tool_policy'),
         )
-        agent.agent_id = data['agent_id']
-        agent.memory = dict(data.get('memory', {}))
-        agent._pinned = dict(data.get('pinned', {}))
-        max_entries = data.get('max_history_entries', 1000)
-        agent._max_history_entries = max_entries
-        agent.task_history = deque(data.get('task_history', []), maxlen=max_entries)
-        token_budget = data.get('conversation_token_budget', ConversationMemory.DEFAULT_TOKEN_BUDGET)
-        if 'conversation_memory' in data:
-            agent._conversation_memory = ConversationMemory.from_list(
-                data['conversation_memory'],
-                token_budget=token_budget,
-                max_entries=max_entries,
-            )
-        elif 'conversation_history' in data:
-            # Migration from old {'task': ..., 'result': ...} format
-            agent._conversation_memory = ConversationMemory(
-                token_budget=token_budget, max_entries=max_entries,
-            )
-            for turn in data['conversation_history']:
-                agent._conversation_memory._messages.append(Message('user', turn.get('task', '')))
-                agent._conversation_memory._messages.append(Message('assistant', turn.get('result', '')))
-        else:
-            agent._conversation_memory = ConversationMemory(
-                token_budget=token_budget, max_entries=max_entries,
-            )
-        agent._conversation_memory.dropped_pairs = data.get('conversation_dropped', 0)
-        agent._conversation_memory.summary = data.get('conversation_summary', '')
-        agent._conversation_memory.summarized_pairs = data.get('conversation_summarized', 0)
-        agent._conversation_memory.restore_pending(data.get('conversation_pending', []))
-        agent._apply_tiers()
+        agent._load_state(data)
         return agent
 
     def set_max_history_entries(self, max_entries: int):

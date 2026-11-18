@@ -90,6 +90,7 @@ agent = Agent(name="Reviewer", maki_instance=backend, role="code reviewer")
 | [Agent memory](https://bowlofdata.github.io/maki/docs/agent-memory/) | Keep long conversations correct and prompts small |
 | [Evaluating models](https://bowlofdata.github.io/maki/docs/eval/) | Compare models on your own tasks with `maki eval` |
 | [Run traces](https://bowlofdata.github.io/maki/docs/trace/) | See what an agent did, step by step, with `Agent(trace=...)` and `maki trace show` |
+| [Checkpoints](https://bowlofdata.github.io/maki/docs/checkpoint/) | Resume a killed run at its last tool round with `Agent(checkpoint=...)` and `agent.resume()` |
 | [Skills](https://bowlofdata.github.io/maki/docs/skills/) | Load Agent Skills on demand (shared with Claude Code and Codex) |
 | [Agent loops](https://bowlofdata.github.io/maki/docs/loops/) | Iterate an agent until its requirements are met |
 | [Plugins](https://bowlofdata.github.io/maki/docs/plugins/) | Built-in plugins and the safety model |
