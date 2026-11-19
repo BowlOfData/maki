@@ -83,6 +83,7 @@ agent = Agent(name="Reviewer", maki_instance=backend, role="code reviewer")
 | | |
 |---|---|
 | [Quickstart](https://bowlofdata.github.io/maki/docs/quickstart/) | Install to first agent in 5 minutes |
+| [Learning course](https://bowlofdata.net/learning/) | Build a small research assistant step by step on a local model, no API key (code: [maki-learning](https://github.com/BowlOfData/maki-learning)) |
 | [Installation and extras](https://bowlofdata.github.io/maki/docs/installation/) | Optional dependencies per backend and plugin |
 | [Backends](https://bowlofdata.github.io/maki/docs/backends/) | Ollama, llama.cpp, vLLM, OpenAI, Anthropic, OpenRouter, HuggingFace |
 | [Agents](https://bowlofdata.github.io/maki/docs/agents/) | Memory, reasoning, streaming, tools |

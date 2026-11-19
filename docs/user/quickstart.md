@@ -73,6 +73,7 @@ llm = MakiAnthropic(model="claude-sonnet-4-5")
 
 ## Next steps
 
+- [Learning course](https://bowlofdata.net/learning/): build a small research assistant step by step, from this first agent to tools and a pipeline
 - [Backends](backends.md): llama.cpp, vLLM, OpenAI, Anthropic, OpenRouter, HuggingFace
 - [Agents](agents.md): memory, reasoning, streaming
 - [Workflows](workflows.md): multi-agent pipelines

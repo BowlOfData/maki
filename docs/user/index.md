@@ -32,6 +32,7 @@ pip install maki-framework
 | I want to... | Read |
 |---|---|
 | Run my first agent | [Quickstart](quickstart.md) |
+| Learn step by step by building a small research assistant | [Learning course](https://bowlofdata.net/learning/) (code: [maki-learning](https://github.com/BowlOfData/maki-learning)) |
 | Use OpenAI, Anthropic, llama.cpp, vLLM or HuggingFace | [Backends](backends.md) |
 | Give an agent memory, streaming or tools | [Agents](agents.md) |
 | Chain several agents together | [Workflows](workflows.md) |
