@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Links to the Learning course (https://bowlofdata.net/learning/, code in https://github.com/BowlOfData/maki-learning) in the README, the docs home and quickstart, the landing page, and the PyPI project URLs
+
 ## [0.6.1] - 2026-11-11
 
 Run traces, checkpoints and resume, a production guide and CI updates.

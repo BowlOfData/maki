@@ -98,6 +98,7 @@ all = [
 [project.urls]
 Homepage = "https://bowlofdata.github.io/maki/"
 Documentation = "https://bowlofdata.github.io/maki/docs/"
+Learning = "https://bowlofdata.net/learning/"
 Source = "https://github.com/BowlOfData/maki"
 Issues = "https://github.com/BowlOfData/maki/issues"
 Changelog = "https://github.com/BowlOfData/maki/blob/main/CHANGELOG.md"
